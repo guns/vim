@@ -19,6 +19,8 @@ task :configure do
     --disable-gui
     --with-features=huge
     --with-x
+    --x-includes=/opt/x11/include
+    --x-libraries=/opt/x11/lib
   ]
 
   # show off our command and run it
