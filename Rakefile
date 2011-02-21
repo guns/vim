@@ -13,6 +13,7 @@ task :configure do
   env = { 'PATH' => '/usr/bin:' + ENV['PATH'] }
   opts = %W[
     --prefix=/usr/local
+    --enable-perlinterp
     --enable-rubyinterp
     --enable-pythoninterp
     --disable-darwin
@@ -27,4 +28,10 @@ task :configure do
   puts env.map { |ary| ary.join '=' }.join(' ') + ' \\'
   puts ([configure] + opts).join(" \\\n    ") + "\n\n"
   system env, configure, *opts
+
+  if RUBY_PLATFORM[/darwin/]
+    print "Stripping `-arch' flags... "
+    system 'perl', '-i', '-pe', 's/-arch (ppc|i386) ?//g', *%x(git ls-files -o).split("\n").grep(/auto/)
+    puts 'OK'
+  end
 end
