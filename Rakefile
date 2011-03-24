@@ -35,7 +35,7 @@ task :configure do
   opts += %W[
     --x-includes=#{ENV['X11']}/include
     --x-libraries=#{ENV['X11']}/lib
-  ] if File.directory? ENV['X11']
+  ] if ENV['X11']
 
   # show off our command and run it
   puts env.map { |ary| ary.join '=' }.join(' ') + ' \\'
