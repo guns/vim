@@ -13,13 +13,13 @@ task :configure do
   # for passing autoconf path variables
   env = {}
 
-  if File.executable? ENV['RUBY']
+  if ENV['RUBY']
     rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print Config::CONFIG['libdir']")
     env['vi_cv_path_ruby'] = ENV['RUBY']
     env['LDFLAGS'] = " -L#{rubylib} "
   end
 
-  env['vi_cv_path_python'] = ENV['PYTHON'] if File.executable? ENV['PYTHON']
+  env['vi_cv_path_python'] = ENV['PYTHON'] if ENV['PYTHON']
 
   opts = %W[
     --prefix=#{ENV['PREFIX'] || '/usr/local'}
