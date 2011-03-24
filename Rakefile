@@ -1,4 +1,4 @@
-# Copyright (c) 2010 Sung Pae <sung@metablu.com>
+# Copyright (c) 2011 Sung Pae <sung@metablu.com>
 # Distributed under the MIT license.
 # http://www.opensource.org/licenses/mit-license.php
 
@@ -10,10 +10,19 @@ task :configure do
   configure = File.expand_path 'configure'
   abort "Could not execute #{configure.inspect}!" unless File.executable? configure
 
-  env = { 'PATH' => '/usr/bin:' + ENV['PATH'] }
+  # for passing autoconf path variables
+  env = {}
 
-  opts = %w[
-    --prefix=/usr/local
+  if File.executable? ENV['RUBY']
+    rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print Config::CONFIG['libdir']")
+    env['vi_cv_path_ruby'] = ENV['RUBY']
+    env['LDFLAGS'] = " -L#{rubylib} "
+  end
+
+  env['vi_cv_path_python'] = ENV['PYTHON'] if File.executable? ENV['PYTHON']
+
+  opts = %W[
+    --prefix=#{ENV['PREFIX'] || '/usr/local'}
     --enable-rubyinterp
     --enable-pythoninterp
     --disable-darwin
@@ -22,10 +31,11 @@ task :configure do
     --with-x
   ]
 
-  opts += %w[
-    --x-includes=/opt/X11/include
-    --x-libraries=/opt/X11/lib
-  ] if File.directory? '/opt/X11'
+  # using an alternate X installation?
+  opts += %W[
+    --x-includes=#{ENV['X11']}/include
+    --x-libraries=#{ENV['X11']}/lib
+  ] if File.directory? ENV['X11']
 
   # show off our command and run it
   puts env.map { |ary| ary.join '=' }.join(' ') + ' \\'
