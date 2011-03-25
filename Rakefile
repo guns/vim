@@ -40,5 +40,11 @@ task :configure do
   # show off our command and run it
   puts env.map { |ary| ary.join '=' }.join(' ') + ' \\'
   puts ([configure] + opts).join(" \\\n    ") + "\n\n"
-  system env, configure, *opts
+
+  if RUBY_VERSION < '1.9'
+    env.each { |k,v| ENV[k] = v }
+    system configure, *opts
+  else
+    system env, configure, *opts
+  end
 end
