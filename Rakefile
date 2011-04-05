@@ -2,14 +2,22 @@
 # Distributed under the MIT license.
 # http://www.opensource.org/licenses/mit-license.php
 
+def execute env, cmd
+  puts (env.map { |k,v| "#{k}=#{v.inspect}" } + cmd).join(' ')
+
+  if RUBY_VERSION < '1.9'
+    env.each { |k,v| ENV[k] = v }
+    system *cmd
+  else
+    system env, *cmd
+  end
+end
+
 verbose false
 task :default => :configure
 
 desc 'Configure Vim'
 task :configure do
-  configure = File.expand_path 'configure'
-  abort "Could not execute #{configure.inspect}!" unless File.executable? configure
-
   # for passing autoconf path variables
   env = {}
 
@@ -21,8 +29,9 @@ task :configure do
 
   env['vi_cv_path_python'] = ENV['PYTHON'] if ENV['PYTHON']
 
-  opts = %W[
-    --prefix=#{ENV['PREFIX'] || '/usr/local'}
+  cmd = %W[
+    #{File.expand_path 'configure'}
+    --prefix=#{ENV['PREFIX'] || '/opt/vim'}
     --enable-rubyinterp
     --enable-pythoninterp
     --disable-darwin
@@ -32,19 +41,10 @@ task :configure do
   ]
 
   # using an alternate X installation?
-  opts += %W[
+  cmd += %W[
     --x-includes=#{ENV['X11']}/include
     --x-libraries=#{ENV['X11']}/lib
   ] if ENV['X11']
 
-  # show off our command and run it
-  puts env.map { |ary| ary.join '=' }.join(' ') + ' \\'
-  puts ([configure] + opts).join(" \\\n    ") + "\n\n"
-
-  if RUBY_VERSION < '1.9'
-    env.each { |k,v| ENV[k] = v }
-    system configure, *opts
-  else
-    system env, configure, *opts
-  end
+  execute env, cmd
 end
