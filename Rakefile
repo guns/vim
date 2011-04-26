@@ -21,13 +21,19 @@ task :configure do
   # for passing autoconf path variables
   env = {}
 
+  if ENV['DEBUG']
+    env['CFLAGS'] = '-g -DDEBUG -Wall -Wshadow -Wmissing-prototypes'
+  end
+
   if ENV['RUBY']
     rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print Config::CONFIG['libdir']")
     env['vi_cv_path_ruby'] = ENV['RUBY']
     env['LDFLAGS'] = " -L#{rubylib} "
   end
 
-  env['vi_cv_path_python'] = ENV['PYTHON'] if ENV['PYTHON']
+  if ENV['PYTHON']
+    env['vi_cv_path_python'] = ENV['PYTHON']
+  end
 
   cmd = %W[
     #{File.expand_path 'configure'}
