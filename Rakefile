@@ -54,3 +54,9 @@ task :configure do
 
   execute env, cmd
 end
+
+desc 'Clean the repo'
+task :clean do
+  system 'make clean'
+  system 'git clean -fdx'
+end
