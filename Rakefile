@@ -41,8 +41,8 @@ task :configure do
     --enable-rubyinterp
     --enable-pythoninterp
     --disable-darwin
-    --disable-gui
-    --with-features=huge
+    #{'--disable-gui' unless ENV['GUI']}
+    --with-features=#{ENV['FEATURES'] || 'huge'}
     --with-x
   ]
 
