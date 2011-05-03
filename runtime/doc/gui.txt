@@ -454,9 +454,10 @@ When using this register under X11, also see |x11-selection|.  This also
 explains the related "+ register.
 
 Note that when pasting text from one Vim into another separate Vim, the type
-of selection (character, line, or block) will also be copied.  For other
-applications the type is always character.  However, if the text gets
-transferred via the |x11-cut-buffer|, the selection type is ALWAYS lost.
+of selection (character, line, or block) will also be copied.  When pasting
+from other applications the type is character, unless the selection ends in a
+newline or carriage return, in which case the type is line.  This is also true
+for text transferred via the |x11-cut-buffer|.
 
 When the "unnamed" string is included in the 'clipboard' option, the unnamed
 register is the same as the "* register.  Thus you can yank to and paste the

@@ -568,8 +568,9 @@ requested X selection is empty or unavailable, Vim reverts to reading the
 current value of the CUT_BUFFER0.
 
 Note that when text is copied to CUT_BUFFER0 in this way, the type of
-selection (character, line or block) is always lost, even if it is a Vim which
-later pastes it.
+selection (character, line or block) is always lost. However, when pasting
+from CUT_BUFFER0, the selection will be pasted as line if the text ends in
+a newline or carriage return, and as character otherwise.
 
 Xterm, by default, always writes visible selections to both PRIMARY and
 CUT_BUFFER0.  When it pastes, it uses PRIMARY if this is available, or else
