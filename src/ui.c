@@ -2130,7 +2130,6 @@ clip_x11_request_selection_cb(w, success, sel_atom, type, value, length,
 	XTextProperty	text_prop;
 	int		n_text = 0;
 	int		status;
-	char_u		z;
 
 	text_prop.value = (unsigned char *)value;
 	text_prop.encoding = *type;
@@ -2151,11 +2150,6 @@ clip_x11_request_selection_cb(w, success, sel_atom, type, value, length,
 	}
 	p = (char_u *)text_list[0];
 	len = STRLEN(p);
-
-	/* This may be a linewise selection */
-	z = p[len - 1];
-	if (z == '\n' || z == '\r')
-	    motion_type = MLINE;
     }
     clip_yank_selection(motion_type, p, (long)len, cbd);
 
