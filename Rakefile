@@ -18,17 +18,16 @@ task :default => :configure
 
 desc 'Configure Vim'
 task :configure do
-  # for passing autoconf path variables
-  env = {}
+  env = { 'CFLAGS' => '', 'LDFLAGS' => '', 'LIBS' => '' }
 
   if ENV['DEBUG']
-    env['CFLAGS'] = '-g -DDEBUG -Wall -Wshadow -Wmissing-prototypes'
+    env['CFLAGS'] += ' -g -DDEBUG -Wall -Wshadow -Wmissing-prototypes '
   end
 
   if ENV['RUBY']
     rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print Config::CONFIG['libdir']")
     env['vi_cv_path_ruby'] = ENV['RUBY']
-    env['LDFLAGS'] = " -L#{rubylib} "
+    env['LDFLAGS'] += " -L#{rubylib} "
   end
 
   if ENV['PYTHON']
@@ -41,12 +40,20 @@ task :configure do
     --enable-rubyinterp
     --enable-pythoninterp
     --disable-darwin
-    #{'--disable-gui' unless ENV['GUI']}
     --with-features=#{ENV['FEATURES'] || 'huge'}
     --with-x
   ]
 
-  # using an alternate X installation?
+  # Suppress Mac specific features and enable POSIX threads
+  if RUBY_PLATFORM =~ /darwin/i
+    env['CFLAGS'] += ' -D_THREAD_SAFE '
+    env['LIBS']   += ' -pthread '
+    cmd << '--disable-darwin'
+  end
+
+  cmd << '--disable-gui' unless ENV['GUI']
+
+  # Specify alternate X installation
   cmd += %W[
     --x-includes=#{ENV['X11']}/include
     --x-libraries=#{ENV['X11']}/lib
