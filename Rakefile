@@ -25,7 +25,7 @@ task :configure do
   end
 
   if ENV['RUBY']
-    rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print Config::CONFIG['libdir']")
+    rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print RbConfig::CONFIG['libdir']")
     env['vi_cv_path_ruby'] = ENV['RUBY']
     env['LDFLAGS'] += " -L#{rubylib} "
   end
