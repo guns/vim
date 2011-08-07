@@ -967,6 +967,7 @@ enum
     , BV_FF
     , BV_FLP
     , BV_FO
+    , BV_FP
 #ifdef FEAT_AUTOCMD
     , BV_FT
 #endif

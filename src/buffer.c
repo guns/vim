@@ -1967,6 +1967,7 @@ free_buf_options(buf, free_p_ff)
     clear_string_option(&buf->b_p_efm);
 #endif
     clear_string_option(&buf->b_p_ep);
+    clear_string_option(&buf->b_p_fp);
     clear_string_option(&buf->b_p_path);
     clear_string_option(&buf->b_p_tags);
 #ifdef FEAT_INS_EXPAND

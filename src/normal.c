@@ -2110,7 +2110,7 @@ do_pending_operator(cap, old_col, gui_yank)
 		op_formatexpr(oap);	/* use expression */
 	    else
 #endif
-		if (*p_fp != NUL)
+		if (*get_formatprg() != NUL)
 		op_colon(oap);		/* use external command */
 	    else
 		op_format(oap, FALSE);	/* use internal function */
@@ -2278,10 +2278,10 @@ op_colon(oap)
     }
     else if (oap->op_type == OP_FORMAT)
     {
-	if (*p_fp == NUL)
+	if (*get_formatprg() == NUL)
 	    stuffReadbuff((char_u *)"fmt");
 	else
-	    stuffReadbuff(p_fp);
+	    stuffReadbuff(get_formatprg());
 	stuffReadbuff((char_u *)"\n']");
     }
 
