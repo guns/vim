@@ -9079,7 +9079,7 @@ nv_esc(cap)
 		&& !VIsual_active
 #endif
 		&& no_reason)
-	    MSG(_("Type  :quit<Enter>  to exit Vim"));
+	    MSG("");
 
 	/* Don't reset "restart_edit" when 'insertmode' is set, it won't be
 	 * set again below when halfway a mapping. */
