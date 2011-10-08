@@ -1,41 +1,32 @@
+# -*- encoding: utf-8 -*-
+#
 # Copyright (c) 2011 Sung Pae <sung@metablu.com>
 # Distributed under the MIT license.
 # http://www.opensource.org/licenses/mit-license.php
 
-def execute env, cmd
-  puts (env.map { |k,v| "#{k}=#{v.inspect}" } + cmd).join(' ')
-
-  if RUBY_VERSION < '1.9'
-    env.each { |k,v| ENV[k] = v }
-    system *cmd
-  else
-    system env, *cmd
-  end
-end
-
-verbose false
 task :default => :configure
 
 desc 'Configure Vim'
 task :configure do
-  env = { 'CFLAGS' => '', 'LDFLAGS' => '', 'LIBS' => '' }
+  ENV['CFLAGS' ] ||= ''
+  ENV['LDFLAGS'] ||= ''
 
   if ENV['DEBUG']
-    env['CFLAGS'] += ' -g -DDEBUG -Wall -Wshadow -Wmissing-prototypes '
+    ENV['CFLAGS'] += ' -g -DDEBUG -Wall -Wshadow -Wmissing-prototypes '
   end
 
   if ENV['RUBY']
-    rubylib = %x(#{ENV['RUBY']} -r mkmf -e "print RbConfig::CONFIG['libdir']")
-    env['vi_cv_path_ruby'] = ENV['RUBY']
-    env['LDFLAGS'] += " -L#{rubylib} "
+    libdir = %x(#{ENV['RUBY']} -r mkmf -e "print RbConfig::CONFIG['libdir']")
+    ENV['LDFLAGS'] += " -L#{libdir} "
+    ENV['vi_cv_path_ruby'] = ENV['RUBY']
   end
 
   if ENV['PYTHON']
-    env['vi_cv_path_python'] = ENV['PYTHON']
+    ENV['vi_cv_path_python'] = ENV['PYTHON']
   end
 
   cmd = %W[
-    #{File.expand_path 'configure'}
+    ./configure
     --prefix=#{ENV['PREFIX'] || '/opt/vim'}
     --enable-rubyinterp
     --enable-pythoninterp
@@ -44,26 +35,19 @@ task :configure do
     --with-x
   ]
 
-  # Suppress Mac specific features and enable POSIX threads
+  # Compile without Mac specific features
   if RUBY_PLATFORM =~ /darwin/i
-    env['CFLAGS'] += ' -D_THREAD_SAFE '
-    env['LIBS']   += ' -pthread '
     cmd << '--disable-darwin'
   end
 
-  cmd << '--disable-gui' unless ENV['GUI']
+  unless ENV['GUI']
+    cmd << '--disable-gui'
+  end
 
   # Specify alternate X installation
-  cmd += %W[
-    --x-includes=#{ENV['X11']}/include
-    --x-libraries=#{ENV['X11']}/lib
-  ] if ENV['X11']
+  if ENV['X11']
+    cmd += %W[--x-includes=#{ENV['X11']}/include --x-libraries=#{ENV['X11']}/lib]
+  end
 
-  execute env, cmd
-end
-
-desc 'Clean the repo'
-task :clean do
-  system 'make clean'
-  system 'git clean -fdx'
+  sh *cmd
 end
