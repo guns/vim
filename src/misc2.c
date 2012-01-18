@@ -4623,7 +4623,6 @@ vim_findfile_init(path, filename, stopdirs, level, free_visited, find_what,
 	{
 	    if (len + 5 >= MAXPATHL)
 	    {
-		EMSG(_(e_pathtoolong));
 		break;
 	    }
 	    if (STRNCMP(wc_part, "**", 2) == 0)
