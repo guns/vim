@@ -4673,7 +4673,6 @@ vim_findfile_init(path, filename, stopdirs, level, free_visited, find_what,
     if (STRLEN(search_ctx->ffsc_start_dir)
 			  + STRLEN(search_ctx->ffsc_fix_path) + 3 >= MAXPATHL)
     {
-	EMSG(_(e_pathtoolong));
 	goto error_return;
     }
     STRCPY(ff_expand_buffer, search_ctx->ffsc_start_dir);
