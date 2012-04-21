@@ -8863,6 +8863,10 @@ get_expr_indent()
     if (indent < 0)
 	indent = get_indent();
 
+#ifdef CURSOR_SHAPE
+    ui_cursor_shape();
+#endif
+
     return indent;
 }
 # endif
