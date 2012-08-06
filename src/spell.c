@@ -10187,9 +10187,19 @@ spell_suggest(count)
     int		selected = count;
     int		badlen = 0;
     int		msg_scroll_save = msg_scroll;
+    int		wo_spell_save = curwin->w_p_spell;
 
-    if (no_spell_checking(curwin))
+    if (!curwin->w_p_spell)
+    {
+	did_set_spelllang(curwin);
+	curwin->w_p_spell = TRUE;
+    }
+
+    if (*curwin->w_s->b_p_spl == NUL)
+    {
+	EMSG(_("E756: Spell checking is not possible"));
 	return;
+    }
 
 #ifdef FEAT_VISUAL
     if (VIsual_active)
@@ -10199,6 +10209,7 @@ spell_suggest(count)
 	if (curwin->w_cursor.lnum != VIsual.lnum)
 	{
 	    vim_beep();
+	    curwin->w_p_spell = wo_spell_save;
 	    return;
 	}
 	badlen = (int)curwin->w_cursor.col - (int)VIsual.col;
@@ -10230,6 +10241,7 @@ spell_suggest(count)
 	if (!spell_iswordp_nmw(p, curwin))		/* No word found. */
 	{
 	    beep_flush();
+	    curwin->w_p_spell = wo_spell_save;
 	    return;
 	}
 	curwin->w_cursor.col = (colnr_T)(p - line);
@@ -10408,6 +10420,7 @@ spell_suggest(count)
 
     spell_find_cleanup(&sug);
 skip:
+    curwin->w_p_spell = wo_spell_save;
     vim_free(line);
 }
 
