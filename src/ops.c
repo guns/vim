@@ -4480,7 +4480,7 @@ do_join(count, insert_space, save_undo, use_formatoptions)
 	if (insert_space && t > 0)
 	{
 	    curr = skipwhite(curr);
-	    if (*curr != ')' && currsize != 0 && endcurr1 != TAB
+	    if (*curr != ')' && *curr != ']' && currsize != 0 && endcurr1 != TAB
 #ifdef FEAT_MBYTE
 		    && (!has_format_option(FO_MBYTE_JOIN)
 			|| (mb_ptr2char(curr) < 0x100 && endcurr1 < 0x100))
