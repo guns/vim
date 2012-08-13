@@ -47,6 +47,10 @@ task :configure do
   # Specify alternate X installation
   if ENV['X11']
     cmd += %W[--x-includes=#{ENV['X11']}/include --x-libraries=#{ENV['X11']}/lib]
+    ENV['PKG_CONFIG_PATH'] = [
+      File.expand_path('../../lib/pkgconfig', %x(/bin/sh -c 'command -v pkg-config').chomp),
+      "#{ENV['X11']}/lib/pkgconfig"
+    ].join ':'
   end
 
   sh *cmd
