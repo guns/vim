@@ -2530,8 +2530,8 @@ utf_class(c)
 	{0x2030, 0x205e, 1},		/* punctuation and symbols */
 	{0x205f, 0x205f, 0},
 	{0x2060, 0x27ff, 1},		/* punctuation and symbols */
-	{0x2070, 0x207f, 0x2070},	/* superscript */
-	{0x2080, 0x2094, 0x2080},	/* subscript */
+	{0x2070, 0x207f, 2},		/* superscript */
+	{0x2080, 0x2094, 2},		/* subscript */
 	{0x20a0, 0x27ff, 1},		/* all kinds of symbols */
 	{0x2800, 0x28ff, 0x2800},	/* braille */
 	{0x2900, 0x2998, 1},		/* arrows, brackets, etc. */

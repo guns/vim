@@ -926,6 +926,9 @@ vim_iswordc_buf(c, buf)
 	if (enc_utf8)
 	    return utf_class(c) >= 2;
     }
+    /* Special case: SUPERSCRIPT ONE, SUPERSCRIPT TWO, SUPERSCRIPT THREE */
+    if (c == 0xB9 || c == 0xB2 || c == 0xB3)
+	return TRUE;
 #endif
     return (c > 0 && c < 0x100 && GET_CHARTAB(buf, c) != 0);
 }
