@@ -12,7 +12,7 @@ task :configure do
   ENV['LDFLAGS'] ||= ''
 
   if ENV['DEBUG']
-    ENV['CFLAGS'] += ' -g -DDEBUG -Wall -Wshadow -Wmissing-prototypes '
+    ENV['CFLAGS'] += ' -g -DDEBUG '
   end
 
   if ENV['RUBY']
