@@ -4220,8 +4220,7 @@ A jump table for the options with a short description can be found at |Q_op|.
 	and |lispindent()|.
 	The evaluation of the expression must not have side effects!  It must
 	not change the text, jump to another window, etc.  Afterwards the
-	cursor position is always restored, thus the cursor may be moved (but
-	not via |:normal| commands).
+	cursor position is always restored, thus the cursor may be moved.
 	Normally this option would be set to call a function: >
 		:set indentexpr=GetMyIndent()
 <	Error messages will be suppressed, unless the 'debug' option contains
