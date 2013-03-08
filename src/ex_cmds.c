@@ -1040,9 +1040,6 @@ do_bang(addr_count, eap, forceit, do_in, do_out)
 	windgoto(msg_row, msg_col);
 
 	do_shell(newcmd, 0);
-
-	if (msg_silent)
-	    redraw_later_clear();
     }
     else				/* :range! */
     {
