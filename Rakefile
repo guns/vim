@@ -30,6 +30,7 @@ task :configure do
     --prefix=#{ENV['PREFIX'] || '/opt/vim'}
     --enable-rubyinterp
     --enable-pythoninterp
+    --enable-luainterp
     --with-features=#{ENV['FEATURES'] || 'huge'}
     --with-x
   ]
