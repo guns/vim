@@ -24,9 +24,18 @@
 #ifdef DEBUG
 # define NFA_REGEXP_ERROR_LOG	"nfa_regexp_error.log"
 # define ENABLE_LOG
-# define NFA_REGEXP_DUMP_LOG	"nfa_regexp_dump.log"
-# define NFA_REGEXP_RUN_LOG	"nfa_regexp_run.log"
-# define NFA_REGEXP_DEBUG_LOG	"nfa_regexp_debug.log"
+# ifdef INCLUDE_NFA_DUMP
+#  define NFA_REGEXP_DUMP_LOG	"nfa_regexp.log"
+# else
+#  define NFA_REGEXP_DUMP_LOG	"/dev/null"
+# endif
+# define NFA_REGEXP_RUN_LOG	"/dev/null"
+# define NFA_REGEXP_DEBUG_LOG	"/dev/null"
+# define LOG(fmt, ...) do {			\
+    FILE *log = fopen("nfa_regexp.log", "a");	\
+    fprintf(log, fmt, __VA_ARGS__);		\
+    fclose(log);				\
+} while (0)
 #endif
 
 /* Added to NFA_ANY - NFA_NUPPER_IC to include a NL. */
@@ -5395,6 +5404,8 @@ nfa_regmatch(prog, start, submatch, m)
 	goto theend;
 
 #ifdef ENABLE_LOG
+    LOG("START nfa_regmatch: alloc=%d pattern=\"%s\"\n", size*2, prog->pattern);
+
     log_fd = fopen(NFA_REGEXP_RUN_LOG, "a");
     if (log_fd != NULL)
     {
@@ -5481,6 +5492,8 @@ nfa_regmatch(prog, start, submatch, m)
 	nextlist->id = nfa_listid + 1;
 
 #ifdef ENABLE_LOG
+	LOG("# states=%d reginput=\"%s\"\n", thislist->n, reginput);
+
 	fprintf(log_fd, "------------------------------------------\n");
 	fprintf(log_fd, ">>> Reginput is \"%s\"\n", reginput);
 	fprintf(log_fd, ">>> Advanced one character ... Current char is %c (code %d) \n", curc, (int)curc);
@@ -5513,6 +5526,7 @@ nfa_regmatch(prog, start, submatch, m)
 	    fprintf(debug, "%s, ", code);
 #endif
 #ifdef ENABLE_LOG
+	    LOG("## computing nextlist: code=\"%s\"\n", code);
 	    {
 		int col;
 
