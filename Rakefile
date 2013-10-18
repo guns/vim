@@ -8,50 +8,25 @@ task :default => :configure
 
 desc 'Configure Vim'
 task :configure do
-  ENV['CFLAGS' ] ||= ''
-  ENV['LDFLAGS'] ||= ''
-
   if ENV['DEBUG']
-    ENV['CFLAGS'] += ' -g -DDEBUG '
+    ENV['CFLAGS'] = '-g -DDEBUG'
   end
 
-  if ENV['RUBY']
-    libdir = %x(#{ENV['RUBY']} -r mkmf -e "print RbConfig::CONFIG['libdir']")
-    ENV['LDFLAGS'] += " -L#{libdir} "
-    ENV['vi_cv_path_ruby'] = ENV['RUBY']
-  end
-
-  if ENV['PYTHON']
-    ENV['vi_cv_path_python'] = ENV['PYTHON']
-  end
+  pydir = %x(#{ENV['PYTHON'] || 'python'} -c "import sysconfig; print sysconfig.get_config_var('LIBPL')").chomp
 
   cmd = %W[
     ./configure
     --prefix=#{ENV['PREFIX'] || '/opt/vim'}
     --enable-rubyinterp
     --enable-pythoninterp
+    --with-python-config-dir=#{pydir}
     --enable-luainterp
     --with-features=#{ENV['FEATURES'] || 'huge'}
     --with-x
   ]
 
-  # Compile without Mac specific features
-  if RUBY_PLATFORM =~ /darwin/i
-    cmd << '--disable-darwin'
-  end
-
-  unless ENV['GUI']
-    cmd << '--disable-gui'
-  end
-
-  # Specify alternate X installation
-  if ENV['X11']
-    cmd += %W[--x-includes=#{ENV['X11']}/include --x-libraries=#{ENV['X11']}/lib]
-    ENV['PKG_CONFIG_PATH'] = [
-      File.expand_path('../../lib/pkgconfig', %x(/bin/sh -c 'command -v pkg-config').chomp),
-      "#{ENV['X11']}/lib/pkgconfig"
-    ].join ':'
-  end
+  cmd << '--disable-darwin' if RUBY_PLATFORM =~ /darwin/i
+  cmd << '--disable-gui' unless ENV['GUI']
 
   sh *cmd
 end
