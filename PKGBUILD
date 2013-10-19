@@ -1,6 +1,6 @@
 # Maintainer: Sung Pae <self@sungpae.com>
-pkgname=vim
-pkgver=7.4.052.74.g8478fa4.guns
+pkgname=vim-guns
+pkgver=7.4.052.75.gad927f0
 pkgrel=1
 pkgdesc="Sung Pae's vim build"
 arch=('x86_64')
@@ -12,7 +12,7 @@ makedepends=('git')
 conflicts=('vi')
 
 pkgver() {
-    printf '%s.guns' "$(git describe --long --tags | sed -e 's/^v//' | tr - .)"
+    printf %s "$(git describe --long --tags | sed -e 's/^v//' | tr - .)"
 }
 
 build() {
