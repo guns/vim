@@ -9,7 +9,8 @@ license=('custom:vim')
 groups=('guns')
 depends=('ruby' 'python2' 'lua')
 makedepends=('git')
-conflicts=('vi')
+conflicts=('vi' 'vim')
+provides=('vim')
 
 pkgver() {
     printf %s "$(git describe --long --tags | sed -e 's/^v//' | tr - .)"
