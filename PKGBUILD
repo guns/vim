@@ -8,7 +8,7 @@ url="https://github.com/guns/vim"
 license=('custom:vim')
 groups=('guns')
 depends=('ruby' 'python2' 'lua')
-makedepends=('git')
+makedepends=('git' 'ruby')
 conflicts=('vi' 'vim')
 provides=('vim')
 
