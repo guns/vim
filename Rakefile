@@ -22,11 +22,11 @@ task :configure do
     --with-python-config-dir=#{pydir}
     --enable-luainterp
     --with-features=#{ENV['FEATURES'] || 'huge'}
-    --with-x
   ]
 
   cmd << '--disable-darwin' if RUBY_PLATFORM =~ /darwin/i
   cmd << '--disable-gui' unless ENV['GUI']
+  cmd << (ENV['NOX'] ? '--without-x' : '--with-x')
 
   sh *cmd
 end

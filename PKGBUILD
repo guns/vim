@@ -1,13 +1,12 @@
 # Maintainer: Sung Pae <self@sungpae.com>
-pkgname=vim-guns
-pkgver=7.4.052.75.gad927f0
-pkgrel=1
+pkgname=('vim-guns' 'vim-nox-guns')
+pkgver=7.4.110.83.g3eac7e8
+pkgrel=3
 pkgdesc="Sung Pae's vim build"
 arch=('x86_64')
 url="https://github.com/guns/vim"
 license=('custom:vim')
 groups=('guns')
-depends=('ruby' 'python2' 'lua')
 makedepends=('git' 'ruby')
 conflicts=('vi' 'vim')
 provides=('vim')
@@ -16,13 +15,18 @@ pkgver() {
     printf %s "$(git describe --long --tags | sed -e 's/^v//' | tr - .)"
 }
 
-build() {
+package_vim-guns() {
+    depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm' 'libx11' 'libsm' 'libice' 'libxt')
+
     cd "$startdir"
     PREFIX=/usr PYTHON=python2 rake configure
-    make -j $(grep -c ^processor /proc/cpuinfo)
+    make DESTDIR="$pkgdir/" -j $(grep -c ^processor /proc/cpuinfo) install
 }
 
-package() {
+package_vim-nox-guns() {
+    depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm')
+
     cd "$startdir"
-    make DESTDIR="$pkgdir/" install
+    PREFIX=/usr PYTHON=python2 NOX=1 rake configure
+    make DESTDIR="$pkgdir/" -j $(grep -c ^processor /proc/cpuinfo) install
 }
