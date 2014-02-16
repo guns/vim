@@ -135,6 +135,7 @@
 #define PV_KP		OPT_BOTH(OPT_BUF(BV_KP))
 #ifdef FEAT_LISP
 # define PV_LISP	OPT_BUF(BV_LISP)
+# define PV_LW		OPT_BOTH(OPT_BUF(BV_LW))
 #endif
 #define PV_MA		OPT_BUF(BV_MA)
 #define PV_ML		OPT_BUF(BV_ML)
@@ -1719,7 +1720,7 @@ static struct vimoption
 			    {(char_u *)FALSE, (char_u *)0L} SCRIPTID_INIT},
     {"lispwords",   "lw",   P_STRING|P_VI_DEF|P_COMMA|P_NODUP,
 #ifdef FEAT_LISP
-			    (char_u *)&p_lispwords, PV_NONE,
+			    (char_u *)&p_lispwords, PV_LW,
 			    {(char_u *)LISPWORD_VALUE, (char_u *)0L}
 #else
 			    (char_u *)NULL, PV_NONE,
@@ -5413,6 +5414,9 @@ check_buf_options(buf)
 #ifdef FEAT_INS_EXPAND
     check_string_option(&buf->b_p_dict);
     check_string_option(&buf->b_p_tsr);
+#endif
+#ifdef FEAT_LISP
+    check_string_option(&buf->b_p_lw);
 #endif
 }
 
@@ -9881,6 +9885,11 @@ unset_global_local_option(name, from)
 	case PV_UL:
 	    buf->b_p_ul = NO_LOCAL_UNDOLEVEL;
 	    break;
+#ifdef FEAT_LISP
+	case PV_LW:
+	    clear_string_option(&buf->b_p_lw);
+	    break;
+#endif
     }
 }
 
@@ -9931,6 +9940,9 @@ get_varp_scope(p, opt_flags)
 	    case PV_STL:  return (char_u *)&(curwin->w_p_stl);
 #endif
 	    case PV_UL:   return (char_u *)&(curbuf->b_p_ul);
+#ifdef FEAT_LISP
+	    case PV_LW:   return (char_u *)&(curbuf->b_p_lw);
+#endif
 	}
 	return NULL; /* "cannot happen" */
     }
@@ -9999,6 +10011,10 @@ get_varp(p)
 #endif
 	case PV_UL:	return curbuf->b_p_ul != NO_LOCAL_UNDOLEVEL
 				    ? (char_u *)&(curbuf->b_p_ul) : p->var;
+#ifdef FEAT_LISP
+	case PV_LW:	return *curbuf->b_p_lw != NUL
+				    ? (char_u *)&(curbuf->b_p_lw) : p->var;
+#endif
 
 #ifdef FEAT_ARABIC
 	case PV_ARAB:	return (char_u *)&(curwin->w_p_arab);
@@ -10583,6 +10599,9 @@ buf_copy_options(buf, flags)
 #endif
 #ifdef FEAT_PERSISTENT_UNDO
 	    buf->b_p_udf = p_udf;
+#endif
+#ifdef FEAT_LISP
+	    buf->b_p_lw = empty_option;
 #endif
 
 	    /*
