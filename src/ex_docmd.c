@@ -1921,6 +1921,7 @@ do_one_cmd(cmdlinep, sourcing,
 			    ++emsg_silent;
 			    ++did_esilent;
 			}
+			redraw_later(CLEAR);
 			continue;
 
 	    case 't':	if (checkforcmd(&p, "tab", 3))
