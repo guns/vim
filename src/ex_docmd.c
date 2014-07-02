@@ -1919,7 +1919,6 @@ do_one_cmd(cmdlinep, sourcing,
 			    ea.cmd = skipwhite(ea.cmd + 1);
 			    ++emsg_silent;
 			    ++did_esilent;
-			    redraw_later(CLEAR);
 			}
 			continue;
 
