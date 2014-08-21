@@ -1,7 +1,7 @@
 # Maintainer: Sung Pae <self@sungpae.com>
 pkgname=('vim-guns' 'vim-nox-guns')
-pkgver=7.4.110.83.g3eac7e8
-pkgrel=3
+pkgver=
+pkgrel=1
 pkgdesc="Sung Pae's vim build"
 arch=('x86_64')
 url="https://github.com/guns/vim"
