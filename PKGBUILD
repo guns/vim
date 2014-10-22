@@ -15,18 +15,19 @@ pkgver() {
     printf %s "$(git describe --long --tags | sed -e 's/^v//' | tr - .)"
 }
 
+__build__() {
+    cd "$startdir"
+    make DESTDIR="$pkgdir/" -j $(grep -c ^processor /proc/cpuinfo) install
+}
+
 package_vim-guns() {
     depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm' 'libx11' 'libsm' 'libice' 'libxt')
-
-    cd "$startdir"
     PREFIX=/usr PYTHON=python2 rake configure
-    make DESTDIR="$pkgdir/" -j $(grep -c ^processor /proc/cpuinfo) install
+    __build__
 }
 
 package_vim-nox-guns() {
     depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm')
-
-    cd "$startdir"
     PREFIX=/usr PYTHON=python2 NOX=1 rake configure
-    make DESTDIR="$pkgdir/" -j $(grep -c ^processor /proc/cpuinfo) install
+    __build__
 }
