@@ -8,7 +8,7 @@ url="https://github.com/guns/vim"
 license=('custom:vim')
 groups=('guns')
 makedepends=('git' 'ruby')
-conflicts=('vi' 'vim')
+conflicts=('vim')
 provides=('vim')
 
 pkgver() {
