@@ -17,7 +17,7 @@ task :configure do
   cmd = %W[
     ./configure
     --prefix=#{ENV['PREFIX'] || '/opt/vim'}
-    --enable-rubyinterp=dynamic
+    --enable-rubyinterp
     --enable-luainterp=dynamic
     --enable-pythoninterp=dynamic
     --with-python-config-dir=#{pydir}
