@@ -1500,6 +1500,11 @@ do_shell(cmd, flags)
 		redraw_later_clear();
 	    need_wait_return = FALSE;
 	}
+	else if (msg_silent)
+	{
+	    redraw_later(CLEAR);
+	    need_wait_return = FALSE;
+	}
 	else
 	{
 	    /*
