@@ -1630,11 +1630,7 @@ static struct vimoption
 #endif
 			    SCRIPTID_INIT},
     {"keymodel",    "km",   P_STRING|P_VI_DEF|P_COMMA|P_NODUP,
-#ifdef FEAT_VISUAL
 			    (char_u *)&p_km, PV_NONE,
-#else
-			    (char_u *)NULL, PV_NONE,
-#endif
 			    {(char_u *)"", (char_u *)0L} SCRIPTID_INIT},
     {"keywordprg",  "kp",   P_STRING|P_EXPAND|P_VI_DEF|P_SECURE,
 			    (char_u *)&p_kp, PV_KP,
@@ -2191,19 +2187,11 @@ static struct vimoption
 			    (char_u *)&p_secure, PV_NONE,
 			    {(char_u *)FALSE, (char_u *)0L} SCRIPTID_INIT},
     {"selection",   "sel",  P_STRING|P_VI_DEF,
-#ifdef FEAT_VISUAL
 			    (char_u *)&p_sel, PV_NONE,
-#else
-			    (char_u *)NULL, PV_NONE,
-#endif
 			    {(char_u *)"inclusive", (char_u *)0L}
 			    SCRIPTID_INIT},
     {"selectmode",  "slm",  P_STRING|P_VI_DEF|P_COMMA|P_NODUP,
-#ifdef FEAT_VISUAL
 			    (char_u *)&p_slm, PV_NONE,
-#else
-			    (char_u *)NULL, PV_NONE,
-#endif
 			    {(char_u *)"", (char_u *)0L} SCRIPTID_INIT},
     {"sessionoptions", "ssop", P_STRING|P_VI_DEF|P_COMMA|P_NODUP,
 #ifdef FEAT_SESSION
@@ -2980,13 +2968,9 @@ static char *(p_wop_values[]) = {"tagfile", NULL};
 static char *(p_wak_values[]) = {"yes", "menu", "no", NULL};
 #endif
 static char *(p_mousem_values[]) = {"extend", "popup", "popup_setpos", "mac", NULL};
-#ifdef FEAT_VISUAL
 static char *(p_sel_values[]) = {"inclusive", "exclusive", "old", NULL};
 static char *(p_slm_values[]) = {"mouse", "key", "cmd", NULL};
-#endif
-#ifdef FEAT_VISUAL
 static char *(p_km_values[]) = {"startsel", "stopsel", NULL};
-#endif
 #ifdef FEAT_BROWSE
 static char *(p_bsdir_values[]) = {"current", "last", "buffer", NULL};
 #endif
@@ -6580,7 +6564,6 @@ did_set_string_option(opt_idx, varp, new_value_alloced, oldval, errbuf,
     }
 #endif
 
-#ifdef FEAT_VISUAL
     /* 'selection' */
     else if (varp == &p_sel)
     {
@@ -6595,7 +6578,6 @@ did_set_string_option(opt_idx, varp, new_value_alloced, oldval, errbuf,
 	if (check_opt_strings(p_slm, p_slm_values, TRUE) != OK)
 	    errmsg = e_invarg;
     }
-#endif
 
 #ifdef FEAT_BROWSE
     /* 'browsedir' */
@@ -6607,7 +6589,6 @@ did_set_string_option(opt_idx, varp, new_value_alloced, oldval, errbuf,
     }
 #endif
 
-#ifdef FEAT_VISUAL
     /* 'keymodel' */
     else if (varp == &p_km)
     {
@@ -6619,7 +6600,6 @@ did_set_string_option(opt_idx, varp, new_value_alloced, oldval, errbuf,
 	    km_startsel = (vim_strchr(p_km, 'a') != NULL);
 	}
     }
-#endif
 
     /* 'mousemodel' */
     else if (varp == &p_mousem)

@@ -317,7 +317,7 @@
 
 /* Type used for indexes in the word tree need to be at least 4 bytes.  If int
  * is 8 bytes we could use something smaller, but what? */
-#if SIZEOF_INT > 3
+#if VIM_SIZEOF_INT > 3
 typedef int idx_T;
 #else
 typedef long idx_T;
@@ -10201,7 +10201,6 @@ spell_suggest(count)
 	return;
     }
 
-#ifdef FEAT_VISUAL
     if (VIsual_active)
     {
 	/* Use the Visually selected text as the bad word.  But reject
@@ -10220,10 +10219,8 @@ spell_suggest(count)
 	++badlen;
 	end_visual_mode();
     }
-    else
-#endif
-	/* Find the start of the badly spelled word. */
-	if (spell_move_to(curwin, FORWARD, TRUE, TRUE, NULL) == 0
+    /* Find the start of the badly spelled word. */
+    else if (spell_move_to(curwin, FORWARD, TRUE, TRUE, NULL) == 0
 	    || curwin->w_cursor.col > prev_cursor.col)
     {
 	/* No bad word or it starts after the cursor: use the word under the
@@ -12050,7 +12047,7 @@ suggest_trie_walk(su, lp, fword, soundfold)
 		/* Normal byte, go one level deeper.  If it's not equal to the
 		 * byte in the bad word adjust the score.  But don't even try
 		 * when the byte was already changed.  And don't try when we
-		 * just deleted this byte, accepting it is always cheaper then
+		 * just deleted this byte, accepting it is always cheaper than
 		 * delete + substitute. */
 		if (c == fword[sp->ts_fidx]
 #ifdef FEAT_MBYTE
