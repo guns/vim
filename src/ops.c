@@ -686,7 +686,7 @@ op_reindent(oap, how)
 {
     long	i;
     char_u	*l;
-    int		count;
+    int		amount;
     linenr_T	first_changed = 0;
     linenr_T	last_changed = 0;
     linenr_T	start_lnum = curwin->w_cursor.lnum;
@@ -719,11 +719,11 @@ op_reindent(oap, how)
 	{
 	    l = skipwhite(ml_get_curline());
 	    if (*l == NUL)		    /* empty or blank line */
-		count = 0;
+		amount = 0;
 	    else
-		count = how();		    /* get the indent for this line */
+		amount = how();		    /* get the indent for this line */
 
-	    if (set_indent(count, SIN_UNDO))
+	    if (amount >= 0 && set_indent(amount, SIN_UNDO))
 	    {
 		/* did change the indent, call changed_lines() later */
 		if (first_changed == 0)
@@ -5492,6 +5492,8 @@ do_addsub(command, Prenum1, g_cmd)
 
     for (i = lnum; i <= lnume; i++)
     {
+	colnr_T stop = 0;
+
 	t = curwin->w_cursor;
 	curwin->w_cursor.lnum = i;
 	ptr = ml_get_curline();
@@ -5501,30 +5503,27 @@ do_addsub(command, Prenum1, g_cmd)
 	    continue;
 	if (visual)
 	{
-	    if (doalp) /* search for ascii chars */
+	    if (VIsual_mode == 'v'
+		    && i == lnume)
+		stop = curwin->w_cursor.col;
+	    else if (VIsual_mode == Ctrl_V
+		    && curbuf->b_visual.vi_curswant != MAXCOL)
+		stop = curwin->w_cursor.col;
+
+	    while (ptr[col] != NUL
+		    && !vim_isdigit(ptr[col])
+		    && !(doalp && ASCII_ISALPHA(ptr[col])))
 	    {
-		while (!ASCII_ISALPHA(ptr[col]) && ptr[col])
-		    col++;
+		if (col > 0  && col == stop)
+		    break;
+		++col;
 	    }
-	    /* skip to first digit, but allow for leading '-' */
-	    else if (dohex)
+
+	    if (col > startcol && ptr[col - 1] == '-')
 	    {
-		while (!(vim_isxdigit(ptr[col]) || (ptr[col] == '-'
-				    && vim_isxdigit(ptr[col+1]))) && ptr[col])
-		    col++;
+		negative = TRUE;
+		was_positive = FALSE;
 	    }
-	    else /* decimal */
-	    {
-		while (!(vim_isdigit(ptr[col]) || (ptr[col] == '-'
-				     && vim_isdigit(ptr[col+1]))) && ptr[col])
-		    col++;
-	    }
-	}
-	if (visual && ptr[col] == '-')
-	{
-	    negative = TRUE;
-	    was_positive = FALSE;
-	    col++;
 	}
 	/*
 	 * If a number was found, and saving for undo works, replace the number.
