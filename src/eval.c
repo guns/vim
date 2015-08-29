@@ -555,6 +555,7 @@ static void f_getbufline __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_getbufvar __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_getchar __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_getcharmod __ARGS((typval_T *argvars, typval_T *rettv));
+static void f_getcharsearch __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_getcmdline __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_getcmdpos __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_getcmdtype __ARGS((typval_T *argvars, typval_T *rettv));
@@ -688,6 +689,7 @@ static void f_searchpos __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_server2client __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_serverlist __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_setbufvar __ARGS((typval_T *argvars, typval_T *rettv));
+static void f_setcharsearch __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_setcmdpos __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_setline __ARGS((typval_T *argvars, typval_T *rettv));
 static void f_setloclist __ARGS((typval_T *argvars, typval_T *rettv));
@@ -5369,6 +5371,8 @@ eval_index(arg, rettv, evaluate, verbose)
     }
 #endif
 
+    init_tv(&var1);
+    init_tv(&var2);
     if (**arg == '.')
     {
 	/*
@@ -6734,7 +6738,7 @@ list_join_inner(gap, l, sep, echo_style, copyID, join_gap)
 	len = (int)STRLEN(s);
 	sumlen += len;
 
-	ga_grow(join_gap, 1);
+	(void)ga_grow(join_gap, 1);
 	p = ((join_T *)join_gap->ga_data) + (join_gap->ga_len++);
 	if (tofree != NULL || s != numbuf)
 	{
@@ -8149,6 +8153,7 @@ static struct fst
     {"getbufvar",	2, 3, f_getbufvar},
     {"getchar",		0, 1, f_getchar},
     {"getcharmod",	0, 0, f_getcharmod},
+    {"getcharsearch",	0, 0, f_getcharsearch},
     {"getcmdline",	0, 0, f_getcmdline},
     {"getcmdpos",	0, 0, f_getcmdpos},
     {"getcmdtype",	0, 0, f_getcmdtype},
@@ -8285,6 +8290,7 @@ static struct fst
     {"server2client",	2, 2, f_server2client},
     {"serverlist",	0, 0, f_serverlist},
     {"setbufvar",	3, 3, f_setbufvar},
+    {"setcharsearch",	1, 1, f_setcharsearch},
     {"setcmdpos",	1, 1, f_setcmdpos},
     {"setline",		2, 2, f_setline},
     {"setloclist",	2, 3, f_setloclist},
@@ -11664,6 +11670,24 @@ f_getcharmod(argvars, rettv)
 }
 
 /*
+ * "getcharsearch()" function
+ */
+    static void
+f_getcharsearch(argvars, rettv)
+    typval_T	*argvars UNUSED;
+    typval_T	*rettv;
+{
+    if (rettv_dict_alloc(rettv) != FAIL)
+    {
+	dict_T *dict = rettv->vval.v_dict;
+
+	dict_add_nr_str(dict, "char", 0L, last_csearch());
+	dict_add_nr_str(dict, "forward", last_csearch_forward(), NULL);
+	dict_add_nr_str(dict, "until", last_csearch_until(), NULL);
+    }
+}
+
+/*
  * "getcmdline()" function
  */
     static void
@@ -12269,7 +12293,8 @@ f_gettabvar(argvars, rettv)
     {
 	/* Set tp to be our tabpage, temporarily.  Also set the window to the
 	 * first window in the tabpage, otherwise the window is not valid. */
-	if (switch_win(&oldcurwin, &oldtabpage, tp->tp_firstwin, tp, TRUE)
+	if (switch_win(&oldcurwin, &oldtabpage,
+		    tp->tp_firstwin == NULL ? firstwin : tp->tp_firstwin, tp, TRUE)
 									== OK)
 	{
 	    /* look up the variable */
@@ -17004,6 +17029,51 @@ f_setbufvar(argvars, rettv)
     }
 }
 
+    static void
+f_setcharsearch(argvars, rettv)
+    typval_T	*argvars;
+    typval_T	*rettv UNUSED;
+{
+    dict_T	*d;
+    dictitem_T	*di;
+    char_u	*csearch;
+
+    if (argvars[0].v_type != VAR_DICT)
+    {
+	EMSG(_(e_dictreq));
+	return;
+    }
+
+    if ((d = argvars[0].vval.v_dict) != NULL)
+    {
+	csearch = get_dict_string(d, (char_u *)"char", FALSE);
+	if (csearch != NULL)
+	{
+#ifdef FEAT_MBYTE
+	    if (enc_utf8)
+	    {
+		int pcc[MAX_MCO];
+		int c = utfc_ptr2char(csearch, pcc);
+
+		set_last_csearch(c, csearch, utfc_ptr2len(csearch));
+	    }
+	    else
+#endif
+		set_last_csearch(PTR2CHAR(csearch),
+						csearch, MB_PTR2LEN(csearch));
+	}
+
+	di = dict_find(d, (char_u *)"forward", -1);
+	if (di != NULL)
+	    set_csearch_direction(get_tv_number(&di->di_tv)
+							? FORWARD : BACKWARD);
+
+	di = dict_find(d, (char_u *)"until", -1);
+	if (di != NULL)
+	    set_csearch_until(!!get_tv_number(&di->di_tv));
+    }
+}
+
 /*
  * "setcmdpos()" function
  */
@@ -19526,7 +19596,7 @@ error:
 		    goto error;
 	    }
 
-	    ga_grow(&ga, cplen);
+	    (void)ga_grow(&ga, cplen);
 	    mch_memmove((char *)ga.ga_data + ga.ga_len, cpstr, (size_t)cplen);
 	    ga.ga_len += cplen;
 
@@ -19546,7 +19616,7 @@ error:
     }
 
     /* add a terminating NUL */
-    ga_grow(&ga, 1);
+    (void)ga_grow(&ga, 1);
     ga_append(&ga, NUL);
 
     rettv->vval.v_string = ga.ga_data;
@@ -21307,6 +21377,7 @@ find_var_in_ht(ht, htname, varname, no_autoload)
 
 /*
  * Find the hashtab used for a variable name.
+ * Return NULL if the name is not valid.
  * Set "varname" to the start of name without ':'.
  */
     static hashtab_T *
@@ -21316,6 +21387,8 @@ find_var_ht(name, varname)
 {
     hashitem_T	*hi;
 
+    if (name[0] == NUL)
+	return NULL;
     if (name[1] != ':')
     {
 	/* The name must not start with a colon or #. */
@@ -22490,6 +22563,8 @@ ex_function(eap)
 	    break;
 	}
     }
+    if (*p != ')')
+	goto erret;
     ++p;	/* skip the ')' */
 
     /* find extra arguments "range", "dict" and "abort" */

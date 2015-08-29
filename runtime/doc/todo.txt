@@ -1,4 +1,4 @@
-*todo.txt*      For Vim version 7.4.  Last change: 2015 Jul 21
+*todo.txt*      For Vim version 7.4.  Last change: 2015 Aug 25
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -35,6 +35,9 @@ not be repeated below, unless there is extra information.
 -------------------- Known bugs and current work -----------------------
 
 Regexp problems:
+- The regexp engines are not reentrant, causing havoc when interrupted by a
+  remote expression or something else.  Move global variables onto the stack
+  or into an allocated struct.
 - The old engine does not find a match for "/\%#=1\(\)\{80}", the new engine
   matches everywhere.
 - Using win_linetabsize() can still be slow. Cache the result, store col and
@@ -73,39 +76,35 @@ Regexp problems:
 Still using freed memory after using setloclist(). (lcd, 2014 Jul 23)
 More info Jul 24.  Not clear why.
 
-RXVT sends a different background color response. (Higashi, 2015 Jul 5)
-
-More tests for :diffoff. Olaf Dabrunz, (2015 Jul 4)
-
 Problem that a previous silent ":throw" causes a following try/catch not to
 work. (ZyX, 2013 Sep 28)
 
 Problem using ":try" inside ":execute". (ZyX, 2013 Sep 15)
 
-Regression for v_b_A. (Ingo Karkat, 2015 May 18)
-
 ":cd C:\Windows\System32\drivers\etc*" does not work, even though the
 directory exists. (Sergio Gallelli, 2013 Dec 29)
-
-Invalid memory access in regexp.c. (Dominique Pelle, 2015 May 23)
 
 Using ":windo" to set options in all windows has the side effect that it
 changes the window layout and the current window.  Make a variant that saves
 and restores.  Use in the matchparen plugin.
 Perhaps we can use ":silent window"?
 
-C indent: should recognize C11 raw strings. (Mark Lodato, 2015 Mar 1)
-Need to recognize R"string" for 'cindent'.
+Illegal memory access, requires ASAN to see. (Dominique Pelle, 2015 Jul 28)
 
 Crash when changing the 'tags' option from a remote command.
 (Benjamin Fritz, 2015 Mar 18, stack trace Mar 20)
 
 Gvim: when both Tab and CTRL-I are mapped, use CTRL-I not for Tab.
 
+Updated Breton spell script. (pull request 396, Dominique)
+
 Can src/GvimExt/Make_cyg.mak be removed?
 Same for src/xxd/Make_cyg.mak
 
 Python: ":py raw_input('prompt')" doesn't work. (Manu Hack)
+
+Patch to add CTRL-g U to not break undo for the following cursor movement
+command. (Christian Brabandt, 2015 Aug 4)
 
 MS-Windows: When editing a file with a leading space, writing it uses the
 wrong name. (Aram, 2014 Nov 7)  Vim 7.4.
@@ -117,6 +116,8 @@ Value returned by virtcol() changes depending on how lines wrap.  This is
 inconsistent with the documentation.
 
 Better greek spell checking.  Issue 299.
+
+Add bzl filetype support. (David Barnett, 2015 Aug 11)
 
 When complete() first argument is before where insert started and 'backspace'
 is Vi compatible, the completion fails. (Hirohito Higashi, 2015 Feb 19)
@@ -130,24 +131,57 @@ Goes away when disabling the swap file. (might1, Feb 16)
 MS-Windows: Crash opening very long file name starting with "\\".
 (Christian Brock, 2012 Jun 29)
 
+Patch to improve IME handling in the MS-Windows console.
+(Ken Takata, 2015 Aug 8)
+
+Patch to support Unicode I/O in the MS-Windows console.
+(Ken Takata, 2015 Aug 8)  Also by Yasuhiro Matsumoto.
+
 The argument for "-S" is not taken literally, the ":so" command expands
 wildcards.  Add a ":nowild" command modifier?  (ZyX, 2015 March 4)
+
+":set all&" still does not handle all side effects.  Centralize handling side
+effects for when set by the user, on init and when reset to default.
+
+Proposal to make options.txt easier to read. (Arnaud Decara, 2015 Aug 5)
+Update Aug 14.
 
 Build with Python on Mac does not always use the right library.
 (Kazunobu Kuriyama, 2015 Mar 28)
 
+Example in editing.txt uses $HOME with the expectating that it ends in a
+slash.  For me it does, but perhaps not for everybody.  Add a function that
+inserts a slash when needed?  pathconcat(dir, path) (Thilo Six, 2015 Aug 12)
+
 ml_updatechunk() is slow when retrying for another encoding. (John Little,
 2014 Sep 11)
+
+Patch to fix that "zt" in diff mode doesn't always work properly.
+(Christian Brabandt, 2015 Aug 6)  Need to uncomment a line to not have filler
+lines.
+
+Patch to fix checking global option value when not using it.
+(Arnaud Decara, 2015 Jul 23)
 
 When 'showbreak' is set repeating a Visual operation counts the size of the
 'showbreak' text as part of the operation. (Axel Bender, 2015 Jul 20)
 
+Patch to apply 'fileformats' when starting Vim. (Mike Williams, 2015 Jul 22)
+
+Patch for matchit plugin related to multibyte chars. (Ken Takata, 2015 Jul 22)
+
 Patch for multi-byte characters in langmap and applying a mapping on them.
-(Christian Brabandt, 2015 Jun 12)
+(Christian Brabandt, 2015 Jun 12, update July 25)
 Is this the right solution?
 
 Patch to add grepfile(). (Scott Prager, 2015 May 26)
 Work in progress.
+
+Patch for global-local options consistency. (Arnaud Decara, 2015 Jul 22)
+Is this right?
+
+Patch to have CTRL-A and CTRL-X update the '[ and '] marks.
+(Yukihiro Nakadaira, 2015 Aug 23)
 
 Patch to make getregtype() return the right size for non-linux systems.
 (Yasuhiro Matsumoto, 2014 Jul 8)
@@ -161,6 +195,8 @@ Patch to fix that wide characters do not work properly after exiting.
 
 Patch for man.vim. (SungHyun Nam, 2015 May 20)
 Doesn't work completely (Dominique Orban)
+
+Patch to add a "literal" argument to bufnr().  (Olaf Dabrunz, 2015 Aug 4)
 
 When a session file is created and there are "nofile" buffers, these are not
 filled.  Need to trigger BufReadCmd autocommands.  Also handle deleting the
@@ -201,6 +237,11 @@ Adding "~" to 'cdpath' doesn't work for completion?  (Davido, 2013 Aug 19)
 
 Should be easy to highlight all matches with 'incsearch'.  Idea by Itchyny,
 2015 Feb 6.
+
+Patch to add ":ldo" and ":cdo", execute commands over quickfix list and
+location list. (Yegappan Lakshmanan, 2013 Jun 2, update 2015 Mar 21)
+Update by Florian Walch, 2015 Jul 1.
+Update by Yegappan, 2015 Jul 24.
 
 Plugins need to make a lot of effort, lots of mappings, to know what happened
 before pressing the key that triggers a plugin action.  How about keeping the
@@ -605,11 +646,6 @@ Win32: When 'autochdir' is on and 'encoding' is changed, files on the command
 line are opened again, but from the wrong directory.  Apply 'autochdir' only
 after starting up?
 
-Patch to add ":ldo" and ":cdo", execute commands over quickfix list and
-location list. (Yegappan Lakshmanan, 2013 Jun 2, update 2015 Mar 21)
-Update by Florian Walch, 2015 Jul 1.
-Yegappan will send an update in July.
-
 8   "stl" and "stlnc" in 'fillchars' don't work for multi-byte characters.
     Patch by Christian Wellenbrock, 2013 Jul 5.
 
@@ -794,7 +830,7 @@ effects?  (Christian Brabandt, 2012 Aug 5, Update 2013 Aug 12)
 Would also need to do this for spellbadword() and spellsuggest().
 
 Patch for variable tabstops.  On github (Christian Brabandt, 2014 May 15)
-Update Aug 16 (email).
+Update 2015 Jul 25 (email).
 
 On 64 bit MS-Windows "long" is only 32 bits, but we sometimes need to store a
 64 bits value.  Change all number options to use nropt_T and define it to the

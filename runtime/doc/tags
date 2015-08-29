@@ -4353,6 +4353,7 @@ E887	if_pyth.txt	/*E887*
 E888	pattern.txt	/*E888*
 E889	map.txt	/*E889*
 E89	message.txt	/*E89*
+E890	syntax.txt	/*E890*
 E90	message.txt	/*E90*
 E91	options.txt	/*E91*
 E92	message.txt	/*E92*
@@ -6183,6 +6184,7 @@ getbufline()	eval.txt	/*getbufline()*
 getbufvar()	eval.txt	/*getbufvar()*
 getchar()	eval.txt	/*getchar()*
 getcharmod()	eval.txt	/*getcharmod()*
+getcharsearch()	eval.txt	/*getcharsearch()*
 getcmdline()	eval.txt	/*getcmdline()*
 getcmdpos()	eval.txt	/*getcmdpos()*
 getcmdtype()	eval.txt	/*getcmdtype()*
@@ -7793,6 +7795,7 @@ session-file	starting.txt	/*session-file*
 set-option	options.txt	/*set-option*
 set-spc-auto	spell.txt	/*set-spc-auto*
 setbufvar()	eval.txt	/*setbufvar()*
+setcharsearch()	eval.txt	/*setcharsearch()*
 setcmdpos()	eval.txt	/*setcmdpos()*
 setline()	eval.txt	/*setline()*
 setloclist()	eval.txt	/*setloclist()*
