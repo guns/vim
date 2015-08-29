@@ -250,7 +250,7 @@ getcmdline(firstc, count, indent)
     /* autoindent for :insert and :append */
     if (firstc <= 0)
     {
-	copy_spaces(ccline.cmdbuff, indent);
+	vim_memset(ccline.cmdbuff, ' ', indent);
 	ccline.cmdbuff[indent] = NUL;
 	ccline.cmdpos = indent;
 	ccline.cmdspos = indent;
@@ -900,7 +900,7 @@ getcmdline(firstc, count, indent)
 							       firstc != '@');
 		    }
 		    else
-			vim_beep();
+			vim_beep(BO_WILD);
 		}
 #ifdef FEAT_WILDMENU
 		else if (xpc.xp_numfiles == -1)
@@ -3710,7 +3710,7 @@ ExpandOne(xp, str, orig, options, mode)
 	    if (i < xp->xp_numfiles)
 	    {
 		if (!(options & WILD_NO_BEEP))
-		    vim_beep();
+		    vim_beep(BO_WILD);
 		break;
 	    }
 	}
@@ -5917,7 +5917,7 @@ get_list_range(str, num1, num2)
     *str = skipwhite(*str);
     if (**str == '-' || vim_isdigit(**str))  /* parse "from" part of range */
     {
-	vim_str2nr(*str, NULL, &len, FALSE, FALSE, &num, NULL);
+	vim_str2nr(*str, NULL, &len, FALSE, FALSE, &num, NULL, 0);
 	*str += len;
 	*num1 = (int)num;
 	first = TRUE;
@@ -5926,7 +5926,7 @@ get_list_range(str, num1, num2)
     if (**str == ',')			/* parse "to" part of range */
     {
 	*str = skipwhite(*str + 1);
-	vim_str2nr(*str, NULL, &len, FALSE, FALSE, &num, NULL);
+	vim_str2nr(*str, NULL, &len, FALSE, FALSE, &num, NULL, 0);
 	if (len > 0)
 	{
 	    *num2 = (int)num;

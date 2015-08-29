@@ -365,6 +365,9 @@ static struct vimvar
     {VV_NAME("windowid",	 VAR_NUMBER), VV_RO},
     {VV_NAME("progpath",	 VAR_STRING), VV_RO},
     {VV_NAME("completed_item",	 VAR_DICT), VV_RO},
+    {VV_NAME("option_new",	 VAR_STRING), VV_RO},
+    {VV_NAME("option_old",	 VAR_STRING), VV_RO},
+    {VV_NAME("option_type",	 VAR_STRING), VV_RO},
 };
 
 /* shorthand */
@@ -1615,7 +1618,7 @@ call_vim_function(func, argc, argv, safe, str_arg_only, rettv)
 	    len = 0;
 	else
 	    /* Recognize a number argument, the others must be strings. */
-	    vim_str2nr(argv[i], NULL, &len, TRUE, TRUE, &n, NULL);
+	    vim_str2nr(argv[i], NULL, &len, TRUE, TRUE, &n, NULL, 0);
 	if (len != 0 && len == (int)STRLEN(argv[i]))
 	{
 	    argvars[i].v_type = VAR_NUMBER;
@@ -5128,7 +5131,7 @@ eval7(arg, rettv, evaluate, want_string)
 		else
 #endif
 		{
-		    vim_str2nr(*arg, NULL, &len, TRUE, TRUE, &n, NULL);
+		    vim_str2nr(*arg, NULL, &len, TRUE, TRUE, &n, NULL, 0);
 		    *arg += len;
 		    if (evaluate)
 		    {
@@ -8221,8 +8224,8 @@ static struct fst
     {"maparg",		1, 4, f_maparg},
     {"mapcheck",	1, 3, f_mapcheck},
     {"match",		2, 4, f_match},
-    {"matchadd",	2, 4, f_matchadd},
-    {"matchaddpos",	2, 4, f_matchaddpos},
+    {"matchadd",	2, 5, f_matchadd},
+    {"matchaddpos",	2, 5, f_matchaddpos},
     {"matcharg",	1, 1, f_matcharg},
     {"matchdelete",	1, 1, f_matchdelete},
     {"matchend",	2, 4, f_matchend},
@@ -12028,6 +12031,15 @@ f_getmatches(argvars, rettv)
 	    dict_add_nr_str(dict, "group", 0L, syn_id2name(cur->hlg_id));
 	    dict_add_nr_str(dict, "priority", (long)cur->priority, NULL);
 	    dict_add_nr_str(dict, "id", (long)cur->id, NULL);
+# ifdef FEAT_CONCEAL
+	    if (cur->conceal_char)
+	    {
+		char_u buf[MB_MAXBYTES + 1];
+
+		buf[(*mb_char2bytes)((int)cur->conceal_char, buf)] = NUL;
+		dict_add_nr_str(dict, "conceal", 0L, (char_u *)&buf);
+	    }
+# endif
 	    list_append_dict(rettv->vval.v_list, dict);
 	    cur = cur->next;
 	}
@@ -14586,6 +14598,7 @@ f_matchadd(argvars, rettv)
     int		prio = 10;	/* default priority */
     int		id = -1;
     int		error = FALSE;
+    char_u	*conceal_char = NULL;
 
     rettv->vval.v_number = -1;
 
@@ -14595,7 +14608,21 @@ f_matchadd(argvars, rettv)
     {
 	prio = get_tv_number_chk(&argvars[2], &error);
 	if (argvars[3].v_type != VAR_UNKNOWN)
+	{
 	    id = get_tv_number_chk(&argvars[3], &error);
+	    if (argvars[4].v_type != VAR_UNKNOWN)
+	    {
+		if (argvars[4].v_type != VAR_DICT)
+		{
+		    EMSG(_(e_dictreq));
+		    return;
+		}
+		if (dict_find(argvars[4].vval.v_dict,
+					     (char_u *)"conceal", -1) != NULL)
+		    conceal_char = get_dict_string(argvars[4].vval.v_dict,
+						  (char_u *)"conceal", FALSE);
+	    }
+	}
     }
     if (error == TRUE)
 	return;
@@ -14605,7 +14632,8 @@ f_matchadd(argvars, rettv)
 	return;
     }
 
-    rettv->vval.v_number = match_add(curwin, grp, pat, prio, id, NULL);
+    rettv->vval.v_number = match_add(curwin, grp, pat, prio, id, NULL,
+								conceal_char);
 #endif
 }
 
@@ -14624,6 +14652,7 @@ f_matchaddpos(argvars, rettv)
     int		id = -1;
     int		error = FALSE;
     list_T	*l;
+    char_u	*conceal_char = NULL;
 
     rettv->vval.v_number = -1;
 
@@ -14644,7 +14673,21 @@ f_matchaddpos(argvars, rettv)
     {
 	prio = get_tv_number_chk(&argvars[2], &error);
 	if (argvars[3].v_type != VAR_UNKNOWN)
+	{
 	    id = get_tv_number_chk(&argvars[3], &error);
+	    if (argvars[4].v_type != VAR_UNKNOWN)
+	    {
+		if (argvars[4].v_type != VAR_DICT)
+		{
+		    EMSG(_(e_dictreq));
+		    return;
+		}
+		if (dict_find(argvars[4].vval.v_dict,
+					     (char_u *)"conceal", -1) != NULL)
+		    conceal_char = get_dict_string(argvars[4].vval.v_dict,
+						  (char_u *)"conceal", FALSE);
+	    }
+	}
     }
     if (error == TRUE)
 	return;
@@ -14656,7 +14699,8 @@ f_matchaddpos(argvars, rettv)
 	return;
     }
 
-    rettv->vval.v_number = match_add(curwin, group, NULL, prio, id, l);
+    rettv->vval.v_number = match_add(curwin, group, NULL, prio, id, l,
+								conceal_char);
 #endif
 }
 
@@ -17162,9 +17206,12 @@ f_setmatches(argvars, rettv)
 	    int		i = 0;
 	    char_u	buf[5];
 	    dictitem_T  *di;
+	    char_u	*group;
+	    int		priority;
+	    int		id;
+	    char_u	*conceal;
 
 	    d = li->li_tv.vval.v_dict;
-
 	    if (dict_find(d, (char_u *)"pattern", -1) == NULL)
 	    {
 		if (s == NULL)
@@ -17190,18 +17237,22 @@ f_setmatches(argvars, rettv)
 			break;
 		}
 	    }
+
+	    group = get_dict_string(d, (char_u *)"group", FALSE);
+	    priority = (int)get_dict_number(d, (char_u *)"priority");
+	    id = (int)get_dict_number(d, (char_u *)"id");
+	    conceal = dict_find(d, (char_u *)"conceal", -1) != NULL
+			      ? get_dict_string(d, (char_u *)"conceal", FALSE)
+			      : NULL;
 	    if (i == 0)
 	    {
-		match_add(curwin, get_dict_string(d, (char_u *)"group", FALSE),
+		match_add(curwin, group,
 		    get_dict_string(d, (char_u *)"pattern", FALSE),
-		    (int)get_dict_number(d, (char_u *)"priority"),
-		    (int)get_dict_number(d, (char_u *)"id"), NULL);
+		    priority, id, NULL, conceal);
 	    }
 	    else
 	    {
-		match_add(curwin, get_dict_string(d, (char_u *)"group", FALSE),
-		    NULL, (int)get_dict_number(d, (char_u *)"priority"),
-		    (int)get_dict_number(d, (char_u *)"id"), s);
+		match_add(curwin, group, NULL, priority, id, s, conceal);
 		list_unref(s);
 		s = NULL;
 	    }
@@ -18233,7 +18284,7 @@ f_str2nr(argvars, rettv)
     p = skipwhite(get_tv_string(&argvars[0]));
     if (*p == '+')
 	p = skipwhite(p + 1);
-    vim_str2nr(p, NULL, NULL, base == 8 ? 2 : 0, base == 16 ? 2 : 0, &n, NULL);
+    vim_str2nr(p, NULL, NULL, base == 8 ? 2 : 0, base == 16 ? 2 : 0, &n, NULL, 0);
     rettv->vval.v_number = n;
 }
 
@@ -21039,7 +21090,7 @@ get_tv_number_chk(varp, denote)
 	case VAR_STRING:
 	    if (varp->vval.v_string != NULL)
 		vim_str2nr(varp->vval.v_string, NULL, NULL,
-							TRUE, TRUE, &n, NULL);
+						    TRUE, TRUE, &n, NULL, 0);
 	    return n;
 	case VAR_LIST:
 	    EMSG(_("E745: Using a List as a Number"));
@@ -24719,6 +24770,16 @@ ex_oldfiles(eap)
 #endif
     }
 }
+
+/* reset v:option_new, v:option_old and v:option_type */
+    void
+reset_v_option_vars()
+{
+    set_vim_var_string(VV_OPTION_NEW,  NULL, -1);
+    set_vim_var_string(VV_OPTION_OLD,  NULL, -1);
+    set_vim_var_string(VV_OPTION_TYPE, NULL, -1);
+}
+
 
 #endif /* FEAT_EVAL */
 

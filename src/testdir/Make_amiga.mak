@@ -38,6 +38,7 @@ SCRIPTS = test1.out test3.out test4.out test5.out test6.out \
 		test104.out test105.out test106.out test107.out \
 		test_argument_0count.out \
 		test_argument_count.out \
+		test_autocmd_option.out \
 		test_autoformat_join.out \
 		test_breakindent.out \
 		test_changelist.out \
@@ -45,6 +46,7 @@ SCRIPTS = test1.out test3.out test4.out test5.out test6.out \
 		test_command_count.out \
 		test_erasebackword.out \
 		test_eval.out \
+		test_fixeol.out \
 		test_increment.out \
 		test_insertcount.out \
 		test_listchars.out \
@@ -52,6 +54,7 @@ SCRIPTS = test1.out test3.out test4.out test5.out test6.out \
 		test_listlbr_utf8.out \
 		test_mapping.out \
 		test_marks.out \
+		test_match_conceal.out \
 		test_nested_function.out \
 		test_options.out \
 		test_perl.out \
@@ -187,6 +190,7 @@ test106.out: test106.in
 test107.out: test107.in
 test_argument_0count.out: test_argument_0count.in
 test_argument_count.out: test_argument_count.in
+test_autocmd_option.out: test_autocmd_option.in
 test_autoformat_join.out: test_autoformat_join.in
 test_breakindent.out: test_breakindent.in
 test_changelist.out: test_changelist.in
@@ -195,12 +199,14 @@ test_command_count.out: test_command_count.in
 test_erasebackword.out: test_erasebackword.in
 test_eval.out: test_eval.in
 test_increment.out: test_increment.in
+test_fixeol.out: test_fixeol.in
 test_insertcount.out: test_insertcount.in
 test_listchars.out: test_listchars.in
 test_listlbr.out: test_listlbr.in
 test_listlbr_utf8.out: test_listlbr_utf8.in
 test_mapping.out: test_mapping.in
 test_marks.out: test_marks.in
+test_match_conceal.out: test_match_conceal.in
 test_nested_function.out: test_nested_function.in
 test_options.out: test_options.in
 test_perl.out: test_perl.in
