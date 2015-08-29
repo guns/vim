@@ -1159,7 +1159,7 @@ get_coll_element(pp)
     int		l = 1;
     char_u	*p = *pp;
 
-    if (p[1] == '.')
+    if (p[0] != NUL && p[1] == '.')
     {
 #ifdef FEAT_MBYTE
 	if (has_mbyte)
@@ -1230,8 +1230,9 @@ skip_anyof(p)
 	{
 	    if (get_char_class(&p) == CLASS_NONE
 		    && get_equi_class(&p) == 0
-		    && get_coll_element(&p) == 0)
-		++p; /* It was not a class name */
+		    && get_coll_element(&p) == 0
+		    && *p != NUL)
+		++p; /* it is not a class name and not NUL */
 	}
 	else
 	    ++p;
@@ -3158,7 +3159,7 @@ peekchr()
 		    /*
 		     * META contains everything that may be magic sometimes,
 		     * except ^ and $ ("\^" and "\$" are only magic after
-		     * "\v").  We now fetch the next character and toggle its
+		     * "\V").  We now fetch the next character and toggle its
 		     * magicness.  Therefore, \ is so meta-magic that it is
 		     * not in META.
 		     */
