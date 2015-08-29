@@ -199,14 +199,22 @@ newwindow:
     case Ctrl_Q:
     case 'q':
 		reset_VIsual_and_resel();	/* stop Visual mode */
-		do_cmdline_cmd((char_u *)"quit");
+		STRCPY(cbuf, "quit");
+		if (Prenum)
+		    vim_snprintf((char *)cbuf + 4, sizeof(cbuf) - 5,
+							    "%ld", Prenum);
+		do_cmdline_cmd(cbuf);
 		break;
 
 /* close current window */
     case Ctrl_C:
     case 'c':
 		reset_VIsual_and_resel();	/* stop Visual mode */
-		do_cmdline_cmd((char_u *)"close");
+		STRCPY(cbuf, "close");
+		if (Prenum)
+		    vim_snprintf((char *)cbuf + 5, sizeof(cbuf) - 5,
+							       "%ld", Prenum);
+		do_cmdline_cmd(cbuf);
 		break;
 
 #if defined(FEAT_WINDOWS) && defined(FEAT_QUICKFIX)
@@ -235,7 +243,11 @@ newwindow:
     case 'o':
 		CHECK_CMDWIN
 		reset_VIsual_and_resel();	/* stop Visual mode */
-		do_cmdline_cmd((char_u *)"only");
+		STRCPY(cbuf, "only");
+		if (Prenum > 0)
+		    vim_snprintf((char *)cbuf + 4, sizeof(cbuf) - 4,
+								"%ld", Prenum);
+		do_cmdline_cmd(cbuf);
 		break;
 
 /* cursor to next window with wrap around */
@@ -796,7 +808,7 @@ win_split_ins(size, flags, new_wp, dir)
 		if (frp->fr_win != oldwin && frp->fr_win != NULL
 			&& (frp->fr_win->w_width > new_size
 			    || frp->fr_win->w_width > oldwin->w_width
-						   - new_size - STATUS_HEIGHT))
+							      - new_size - 1))
 		{
 		    do_equal = TRUE;
 		    break;

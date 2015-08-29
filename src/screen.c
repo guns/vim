@@ -4456,6 +4456,10 @@ win_line(wp, lnum, startrow, endrow, nochange)
 		    /* TODO: is passing p for start of the line OK? */
 		    n_extra = win_lbr_chartabsize(wp, line, p, (colnr_T)vcol,
 								    NULL) - 1;
+		    if (c == TAB && n_extra + col > W_WIDTH(wp))
+			n_extra = (int)wp->w_buffer->b_p_ts
+				       - vcol % (int)wp->w_buffer->b_p_ts - 1;
+
 		    c_extra = ' ';
 		    if (vim_iswhite(c))
 		    {
@@ -7584,6 +7588,12 @@ next_search_hl(win, shl, lnum, mincol, cur)
 	shl->lnum = lnum;
 	if (shl->rm.regprog != NULL)
 	{
+	    /* Remember whether shl->rm is using a copy of the regprog in
+	     * cur->match. */
+	    int regprog_is_copy = (shl != &search_hl && cur != NULL
+				&& shl == &cur->hl
+				&& cur->match.regprog == cur->hl.rm.regprog);
+
 	    nmatched = vim_regexec_multi(&shl->rm, win, shl->buf, lnum,
 		    matchcol,
 #ifdef FEAT_RELTIME
@@ -7592,6 +7602,10 @@ next_search_hl(win, shl, lnum, mincol, cur)
 		    NULL
 #endif
 		    );
+	    /* Copy the regprog, in case it got freed and recompiled. */
+	    if (regprog_is_copy)
+		cur->match.regprog = cur->hl.rm.regprog;
+
 	    if (called_emsg || got_int)
 	    {
 		/* Error while handling regexp: stop using this regexp. */

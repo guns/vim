@@ -35,9 +35,11 @@ SCRIPTS =	test3.out test4.out test5.out test6.out test7.out \
 		test94.out test95.out test96.out test98.out test99.out \
 		test100.out test101.out test102.out test103.out test104.out \
 		test105.out test106.out  test107.out\
+		test_argument_count.out \
 		test_autoformat_join.out \
 		test_breakindent.out \
 		test_changelist.out \
+		test_close_count.out \
 		test_eval.out \
 		test_insertcount.out \
 		test_listlbr.out \
@@ -87,6 +89,7 @@ clean:
 	-if exist Xfind rd /s /q Xfind
 	-if exist viminfo del viminfo
 	-del test.log
+	-if exist benchmark.out del benchmark.out
 
 .in.out:
 	-if exist $*.failed del $*.failed
@@ -103,3 +106,11 @@ clean:
 
 nolog:
 	-del test.log
+
+benchmark:
+	bench_re_freeze.out
+
+bench_re_freeze.out: bench_re_freeze.vim
+	-if exist benchmark.out del benchmark.out
+	$(VIMPROG) -u dos.vim -U NONE --noplugin $*.in
+	@IF EXIST benchmark.out ( type benchmark.out )
