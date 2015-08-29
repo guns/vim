@@ -2328,7 +2328,7 @@ ListItem(ListObject *self, PyObject* idx)
     {
 	Py_ssize_t start, stop, step, slicelen;
 
-	if (PySlice_GetIndicesEx((PySliceObject *)idx, ListLength(self),
+	if (PySlice_GetIndicesEx((PySliceObject_T *)idx, ListLength(self),
 				 &start, &stop, &step, &slicelen) < 0)
 	    return NULL;
 	return ListSlice(self, start, step, slicelen);
@@ -2494,7 +2494,7 @@ ListAssSlice(ListObject *self, Py_ssize_t first,
 	if (numreplaced < slicelen)
 	{
 	    lis[slicelen + numreplaced] = lis[numreplaced]->li_prev;
-	    list_remove(l, lis[numreplaced], lis[numreplaced]);
+	    vimlist_remove(l, lis[numreplaced], lis[numreplaced]);
 	    numreplaced++;
 	}
 	else
@@ -2570,7 +2570,7 @@ ListAssIndex(ListObject *self, Py_ssize_t index, PyObject *obj)
     if (obj == NULL)
     {
 	li = list_find(l, (long) index);
-	list_remove(l, li, li);
+	vimlist_remove(l, li, li);
 	clear_tv(&li->li_tv);
 	vim_free(li);
 	return 0;
@@ -2618,7 +2618,7 @@ ListAssItem(ListObject *self, PyObject *idx, PyObject *obj)
     {
 	Py_ssize_t start, stop, step, slicelen;
 
-	if (PySlice_GetIndicesEx((PySliceObject *)idx, ListLength(self),
+	if (PySlice_GetIndicesEx((PySliceObject_T *)idx, ListLength(self),
 				 &start, &stop, &step, &slicelen) < 0)
 	    return -1;
 	return ListAssSlice(self, start, step, slicelen,

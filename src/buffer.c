@@ -371,7 +371,11 @@ close_buffer(win, buf, action, abort_if_last)
 	unload_buf = TRUE;
 #endif
 
-    if (win != NULL)
+    if (win != NULL
+#ifdef FEAT_WINDOWS
+	&& win_valid(win)	/* in case autocommands closed the window */
+#endif
+	    )
     {
 	/* Set b_last_cursor when closing the last window for the buffer.
 	 * Remember the last cursor position and window options of the buffer.
@@ -676,8 +680,16 @@ free_buffer(buf)
 #endif
 #ifdef FEAT_AUTOCMD
     aubuflocal_remove(buf);
+    if (autocmd_busy)
+    {
+	/* Do not free the buffer structure while autocommands are executing,
+	 * it's still needed. Free it when autocmd_busy is reset. */
+	buf->b_next = au_pending_free_buf;
+	au_pending_free_buf = buf;
+    }
+    else
 #endif
-    vim_free(buf);
+	vim_free(buf);
 }
 
 /*
@@ -1681,7 +1693,11 @@ buflist_new(ffname, sfname, lnum, flags)
 	    buf->b_p_bl = TRUE;
 #ifdef FEAT_AUTOCMD
 	    if (!(flags & BLN_DUMMY))
+	    {
 		apply_autocmds(EVENT_BUFADD, NULL, NULL, FALSE, buf);
+		if (!buf_valid(buf))
+		    return NULL;
+	    }
 #endif
 	}
 	return buf;
@@ -1857,8 +1873,14 @@ buflist_new(ffname, sfname, lnum, flags)
     if (!(flags & BLN_DUMMY))
     {
 	apply_autocmds(EVENT_BUFNEW, NULL, NULL, FALSE, buf);
+	if (!buf_valid(buf))
+	    return NULL;
 	if (flags & BLN_LISTED)
+	{
 	    apply_autocmds(EVENT_BUFADD, NULL, NULL, FALSE, buf);
+	    if (!buf_valid(buf))
+		return NULL;
+	}
 # ifdef FEAT_EVAL
 	if (aborting())		/* autocmds may abort script processing */
 	    return NULL;
@@ -5508,6 +5530,10 @@ buf_addsign(buf, id, lnum, typenr)
     return;
 }
 
+/*
+ * For an existing, placed sign "markId" change the type to "typenr".
+ * Returns the line number of the sign, or zero if the sign is not found.
+ */
     linenr_T
 buf_change_sign_type(buf, markId, typenr)
     buf_T	*buf;		/* buffer to store sign in */
@@ -5676,6 +5702,14 @@ buf_delete_signs(buf)
 {
     signlist_T	*next;
 
+    /* When deleting the last sign need to redraw the windows to remove the
+     * sign column. */
+    if (buf->b_signlist != NULL)
+    {
+	redraw_buf_later(buf, NOT_VALID);
+	changed_cline_bef_curs();
+    }
+
     while (buf->b_signlist != NULL)
     {
 	next = buf->b_signlist->next;
@@ -5694,11 +5728,7 @@ buf_delete_all_signs()
 
     for (buf = firstbuf; buf != NULL; buf = buf->b_next)
 	if (buf->b_signlist != NULL)
-	{
-	    /* Need to redraw the windows to remove the sign column. */
-	    redraw_buf_later(buf, NOT_VALID);
 	    buf_delete_signs(buf);
-	}
 }
 
 /*

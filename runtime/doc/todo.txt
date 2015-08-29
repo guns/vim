@@ -1,4 +1,4 @@
-*todo.txt*      For Vim version 7.4.  Last change: 2014 Mar 22
+*todo.txt*      For Vim version 7.4.  Last change: 2014 Jun 25
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -35,89 +35,76 @@ not be repeated below, unless there is extra information.
 -------------------- Known bugs and current work -----------------------
 
 Regexp problems:
-- NFA regexp doesn't count tab matches correctly. (Urtica Dioica / gaultheria
-  Shallon, 2013 Nov 18)
-- After patch 7.4.100 there is still a difference between NFA and old engine.
-  25 a's with pattern \v^(aa+)\1+$  (Urtica Dioica, 2013 Nov 21) Also: 9 a's
-  with pattern  \v^(a{-2,})\1+$ (Nov 23)
-- NFA engine combining character mismatch. (glts, 2013 Aug 27)
-  Remark from Dominique, Aug 27
+- Bug with pattern: '\vblock (\d+)\.\n.*\d+%(\1)@<!\.$'
+  (Lech Lorens, 2014 Feb 3)
 - Issue 164: freeze on regexp search.
-- NFA problem with non-greedy match and branches. (Ingo Karkat, 2013 Nov 29)
 - Ignorecase not handled properly for multi-byte characters. (Axel Bender,
   2013 Dec 11)
 - Using \@> and \?. (Brett Stahlman, 2013 Dec 21) Remark from Marcin Szamotulski
   Remark from Brett 2014 Jan 6 and 7.
-- Bug with back references. (Lech Lorens, 2014 Feb 3)
 - Bug when using \>. (Ramel, 2014 Feb 2) (Aaron Bohannon, 2014 Feb 13)
+- NFA regexp doesn't handle \%<v correctly. (Ingo Karkat, 2014 May 12)
+- Does not work with NFA regexp engine:
+  \%u, \%x, \%o, \%d followed by a composing character
 
 Problem that a previous silent ":throw" causes a following try/catch not to
 work. (ZyX, 2013 Sep 28)
 
+Completion for :buf does not use 'wildignorecase'. (Akshay H, 2014 May 31)
+
 ":cd C:\Windows\System32\drivers\etc*" does not work, even though the
 directory exists. (Sergio Gallelli, 2013 Dec 29)
 
-It is possible to define a function with a colon in the name.
-"g:" is not recognized as it should.  (zyx, 2014 Mar 16)
-Do some plugins use names with a colon?  Disallow it, but ignore the error
-when an option is set?
-
-":lunmap" cannot be abbrevated to ":lu". (ZyX)
-
 Problem using ":try" inside ":execute". (ZyX, 2013 Sep 15)
-
-Update for Clojure ftplugin. (Sung Pae).  Await discussion about formatting in
-ftplugins.
 
 Python: ":py raw_input('prompt')" doesn't work. (Manu Hack)
 
-Patch to add :noswapfile modifier. (Christian Brabandt, 2014 Mar 13)
+Value returned by virtcol() changes depending on how lines wrap.  This is
+inconsistant with the documentation.
 
-Patch to make ":sp {current-buffer-name}" not reload the buffer.
-(Christian Brabandt, 2013 Mar 13)
-
-Patch for quickfix window resizing.  Issue 199.  (Christian Brabandt)
-
-Using autoconf 2.69 gives a lot of warnings.
-
-Problem with 'spellsuggest' file, only works for some words.
-(Cesar Romani, 2013 Aug 20)  Depends on file name? (Aug 24)
-Additional remark by glts: the suggested words are marked bad?
+MS-Windows: Crash opening very long file name starting with "\\".
+(Christian Brock, 2012 Jun 29)
 
 Syntax highlighting slow (hangs) in SASS file. (Niek Bosch, 2013 Aug 21)
 
-Patch to use rubyarchhdrdir for Ruby 2.x. (James McCoy, 2014 Feb 24)
-
-Dynamic Ruby linking issues.  Patch by Danek Duvall (2014 Feb 26)
-and by Yukihiro Nakadaira (2014 Feb 27)
-
-Patch: Detect grep options for Solaris. (Danek Duvall, 2014 Feb 26)
+Patch to translate 0xce in K_NUL 3. (Yasuhiro Matsumoto, 2014 June 6)
+Update by Nobuhiro Takasaki, Jun 19.
 
 Adding "~" to 'cdpath' doesn't work for completion?  (Davido, 2013 Aug 19)
 
+"hi link" does not respect groups with GUI settings only. (Mark Lodato, 2014
+Jun 8)
+
 Syntax file for gnuplot.  Existing one is very old. (Andrew Rasmussen, 2014
 Feb 24)
-
-Crash with ":%s/\n//g" on long file. (Aidan Marlin, 2014 Jan 15)
-Christian Brabandt: patch to run this into a join. (2014 Jan 18)
-Suggestion to not save replaced line for undo: Yukihiro Nakadaira, 2014 Jan
-25.
-
-Add digraph for Rouble: =P.  What's the Unicode?
-
-Bug: "!ls %" expands parenthesis in %, but not spaces.  So this doesn't work
-either: ':!ls "%"'.
-Patch by Gary Johnson, 2014 Mar 6.
 
 Issue 174: Detect Mason files.
 
 No error for missing endwhile. (ZyX, 2014 Mar 20)
 
-Patch to add v:progpath. (Viktor Kojouharov, 2014 Mar 15)
-
 Phpcomplete.vim update. (Complex, 2014 Jan 15)
 
 PHP syntax is extremely slow. (Anhad Jai Singh, 2014 Jan 19)
+
+Spell files use a latin single quote. Unicode also has another single quote:
+0x2019.  (Ron Aaron, 2014 Apr 4)
+New OpenOffice spell files support this with ICONV.  But they are not
+compatible with Vim spell files.  The old files can no longer be downloaded.
+
+Win32: use different args for SearchPath()? (Yasuhiro Matsumoto, 2009 Jan 30)
+Also fixes wrong result from executable().
+Update from Ken Takata, 2014 Jan 10. Newer 2014 Apr 3.
+
+Win32: use 64 bit stat() if possible. (Ken Takata, 2014 May 12)
+More tests May 14. Update May 29.
+
+The garbage collector may use too much stack.  Make set_ref_in_item()
+iterative instead of recursive.   Test program by Marc Weber (2013 Dec 10)
+Patch by Ben Fritz, 2014 Jun 22.
+
+Idea: For a window in the middle (has window above and below it), use
+right-mouse-drag on the status line to move a window up/down without changing
+it's height?  It's like dragging the status bar above it at the same time.
 
 Can we make ":unlet $VAR" use unsetenv() to delete the env var?
 What for systems that don't have unsetenv()?
@@ -127,38 +114,87 @@ This does not give an error: (Andre Sihera, 2014 Mar 21)
 This neither: (ZyX)
     vim -u NONE 1 2 3 -c 'bufdo while 1 | echo 1'
 
-spec ftplugin: patch from Igor Gnatenko, 2014 Jan 26.
-Include if maintainers don't respond.
+'viewdir' default on MS-Windows is not a good choice, it's a system directory.
+Change 'viewdir' to "$HOME/vimfiles/view" and use 'viewdiralt' to also read
+from?
 
-Patch to make has() check for Vim version and patch at the same time.
-(Marc Weber, 2013 Jun 7)
+Problem with upwards search on Windows (works OK on Linux). (Brett Stahlman,
+2014 Jun 8)
 
-Regression on pach 7.4.034. (Ingo Karkat, 2013 Nov 20)
+When 'clipboard' is "unnamed", :g/pat/d is very slow.  Only set the clipboard
+after the last delete? (Praful, 2014 May 28)
+Patch by Christian Brabandt, 2014 Jun 18.
 
-Patch to include smack support (Linux security library). (Jose Bollo, 2014 Jan
-14) Update Jan 15.
+Include a plugin manager with Vim? Neobundle seems to be the best currently.
+Long message about this from ZyX, 2014 Mar 23.  And following replies.
+Also see http://vim-wiki.mawercer.de/wiki/topic/vim%20plugin%20managment.html
+User view:
+- Support multiple sources, basically any http:// URL.  Be able to look into
+  the files before deciding to install.
+- Be able to try out a plugin and remove it again with (almost) no traces.
+- Each plugin needs a "manifest" file that has the version, dependencies
+  (including Vim version and features), conflicts, list of files, etc.
+  Updater uses that to decide what/how to update.
+  Dependencies can use a URL for specific versions, or short name for scripts
+  on vim.org.
+- Once a plugin is installed it remembers where it came from, updater checks
+  there.  Can manually update when really needed.
+- Must be possible to install for one user.  Also system wide?
+- Can edit plugin config with Vim. Can temporarily disable a plugin.
+- Run the update manually, find latest version and install.
+- Be able to download without special tools, must work for 95% of users.
+Implementation:
+- Avoid the 'runtimepath' getting long.  Need some other way to keep each
+  plugin separate.
+- When installing or updating, first figure out what needs to be done. This
+  may involve recursively fetching manifest files for dependencies.  Then show
+  the user what's going to change and ask for OK.
+- Scripts on Vim.org must be able to consist of several files.  Is zip format
+  sufficient?  Upload the manifest?  Or refer to a site that has the manifest?
+- Best is to fetch individual files or use a Vimball. Reduces dependency on
+  tools that might be missing and allows inspection of the files before
+  installing.
+Out of scope:
+- Overview of plugins, ratings, comments, etc.  That's another world.
+- Development work on plugins (although diff with distributed version would be
+  useful).
 
-Tag list, as used for :tjump, does not unescape regexp. (Gary Johnson, 2014 Jan
-6) With patch in another message.
+Setting the spell file in a session only reads the local additions, not the
+normal spell file. (Enno Nagel, 2014 Mar 29)
+
+When typing the first character of a command, e.g. "f", then using a menu, the
+menu item doesn't work.  Clear typeahead when using a menu?
+
+Editing an ascii file as ucs-2 or ucs-4 causes display errors.
+(ZyX, 2014 Mar 30)
+
+":Next 1 some-arg" does not complain about trailing argument.  Also for
+various other commands.  (ZyX, 2014 Mar 30)
+
+Patch to add sortuniq(). (Cade Forester, 2014 Mar 19)
+Or add uniq() instead?  Patch by lcd47, but it has problems.
+
+Patch to support sorting on floating point number.  (Alex Jakushev, 2010 Oct
+30)
+
+Patch to support expression argument to sort() instead of a function name.
+Yasuhiro Matsumoto, 2013 May 31.
+Or should we add a more general mechanism, like lambda functions?
 
 VMS: Select() doesn't work properly, typing ESC may hang Vim.  Use sys$qiow
 instead. (Samuel Ferencik, 2013 Sep 28)
 
-Series of patches for NL vs NUL handling. (ZyX, 2013 Nov 3, Nov 9)
-
 Patch for XDG base directory support. (Jean François Bignolles, 2014 Mar 4)
+Remark on the docs.  Should not be a compile time feature.  But then what?
 
-Patch to add flag to shortmess to avoid giving completion messages.
-(Shougo Matsu, 2014 Jan 6, update Jan 11)
+Completion of ":e" is ":earlier", whould be ":edit".  Complete to the matching
+command instead of doing this alphabetically. (Mikel Jorgensen)
 
 Patch to add v:completed_item. (Shougo Matsu, 2013 Nov 29).
 
 Patch to make test 100 work on MS-Windows. (Taro Muraoka, 2013 Dec 12)
 
 Patch to define macros for hardcoded values. (Elias Diem, 2013 Dec 14)
-
-Patch to add sortuniq(). (Cade Forester, 2014 Mar 19)
-Or add uniq() instead?
 
 Perl: support for Activestate perl 5.18: Issue 170.
 
@@ -241,10 +277,6 @@ GTK: problem with 'L' in 'guioptions' changing the window width.
 Patch to add option that tells whether small deletes go into the numbered
 registers. (Aryeh Leib Taurog, 2013 Nov 18)
 
-Win32: use different args for SearchPath()? (Yasuhiro Matsumoto, 2009 Jan 30)
-Also fixes wrong result from executable().
-Update from Ken Takata, 2014 Jan 10.
-
 Javascript file where indent gets stuck on: GalaxyMaster, 2012 May 3.
 
 The BufUnload event is triggered when re-using the empty buffer.
@@ -266,18 +298,11 @@ Works OK for echo, just not for  ":call" and ":call call()". (Ted, 2011 Mar
 Patch by Christian Brabandt, 2013 Mar 23.
 Not 100% sure this is the right solution.
 
-Patch to support expression argument to sort() instead of a function name.
-Yasuhiro Matsumoto, 2013 May 31.
-Or should we add a more general mechanism, like lambda functions?
-
 Problem caused by patch 7.3.638: window->open does not update window
 correctly. Issue 91.
 
 Patch to add {lhs} to :mapclear: clear all maps starting with {lhs}.
 (Christian Brabandt, 2013 Dec 9)
-
-The garbage collector may use too much stack.  Make set_ref_in_item()
-iterative instead of recursive.   Test program by Marc Weber (2013 Dec 10)
 
 Exception caused by argument of return is not caught by try/catch.
 (David Barnett, 2013 Nov 19)
@@ -333,9 +358,6 @@ Patch by Christian Brabandt, 2013 Apr 20, unfinished.
 
 Bug: findfile("any", "file:///tmp;") does not work.
 
-v:register is not directly reset to " after a delete command that specifies a
-register.  It is reset after the next command. (Steve Vermeulen, 2013 Mar 16)
-
 'ff' is wrong for one-line file without EOL. (Issue 77)
 
 Patch to set antialiasing style on Windows. (Ondrej Balaz, 2013 Mar 14)
@@ -345,12 +367,10 @@ In the ATTENTION message about an existing swap file, mention the name of the
 process that is running.  It might actually be some other program, e.g. after
 a reboot.
 
-MS-Windows: Crash opening very long file name starting with "\\".
-(Christian Brock, 2012 Jun 29)
-
 Patch to have text objects defined by arbitrary single characters. (Daniel
 Thau, 2013 Nov 20, 2014 Jan 29, 2014 Jan 31)
 Ben Fritz: problem with 'selection' set to "exclusive".
+Updated to current Vim, not quite right yet. (Ben Fritz, 2014 Mar 27)
 
 Patch to select the next or previous text object if there isn't one under the
 cursor. (Daniel Thau, 2013 Nov 20)
@@ -417,9 +437,6 @@ Should be possible to enable/disable matchparen per window or buffer.
 Add a check for b:no_match_paren in Highlight_matching_Pair() (Marcin
 Szamotulski, 2012 Nov 8)
 
-Crash in autocmd that unloads buffers in a BufUnload event. (Andrew Pimlott,
-2012 Aug 11)  Disallow :new when BufUnload is being handled?
-
 Issue 72: 'autochdir' causes problems for :vimgrep.
 
 Session file creation: 'autochdir' causes trouble.  Keep it off until after
@@ -451,10 +468,6 @@ Patch to add tagfunc().  Cleaned up by Christian Brabandt, 2013 Jun 22.
 
 Help for 'b:undo_indent'. (Thilo Six, 2012 May 28)
 Also question if examples are correct.
-
-It should be possible to make globpath() return a list instead of a string,
-like with glob(). (Greg Novack, 2012 Nov 2)
-Patch by Adnan Zafar, 2013 Jul 15.
 
 The input map for CTRL-O in mswin.vim causes problems after CTRL-X CTRL-O.
 Suggestion for another map. (Philip Mat, 2012 Jun 18)
@@ -492,14 +505,6 @@ Apr 18)
 
 Patch for has('unnamedplus') docs. (Tony Mechelynck, 2011 Sep 27)
 And one for gui_x11.txt.
-
--   Patch for 'breakindent' option: repeat indent for wrapped line. (Vaclav
-    Smilauer, 2004 Sep 13, fix Oct 31, update 2007 May 30)
-    Version for latest MacVim: Tobia Conforto, 2009 Nov 23
-    More recent version: https://retracile.net/wiki/VimBreakIndent
-    Posted to vim-dev by Taylor Hedberg, 2011 Nov 25
-    Update by Taylor Hedberg, 2013 May 30.
-    Updated for Vim 7.4 by Ken Takata, 2013 Oct 5.
 
 ":cd" doesn't work when current directory path contains "**".
 finddir() has the same problem.  (Yukihiro Nakadaira, 2012 Jan 10)
@@ -609,7 +614,7 @@ Patch to make "z=" work when 'spell' is off.  Does this have nasty side
 effects?  (Christian Brabandt, 2012 Aug 5, Update 2013 Aug 12)
 Would also need to do this for spellbadword() and spellsuggest().
 
-Patch for variable tabstops.
+Patch for variable tabstops.  On github (Christian Brabandt, 2014 May 15)
 
 On 64 bit MS-Windows "long" is only 32 bits, but we sometimes need to store a
 64 bits value.  Change all number options to use nropt_T and define it to the
@@ -650,9 +655,6 @@ Also for another example (ZyX, 2011 Jan 24)
 Build problem with small features on Mac OS X 10.6. (Rainer, 2011 Jan 24)
 
 "0g@$" puts '] on last byte of multi-byte. (ZyX, 2011 Jan 22)
-
-Patch to support sorting on floating point number.  (Alex Jakushev, 2010 Oct
-30)
 
 Patch to addd TextDeletePost and TextYankPost events. (Philippe Vaucher, 2011
 May 24)  Update May 26.
@@ -739,9 +741,6 @@ crash? (Raiwil, 2010 Nov 17)
 Patch to add FoldedLineNr highlighting: different highlighting for the line
 number of a closed fold. (eXerigumo Clanjor, 2013 Jul 15)
 
-Does not work with NFA regexp engine:
-- \%u, \%x, \%o, \%d followed by a composing character
-
 Regexp engine performance:
 - Profiling:
 	./vim -u NONE -s ~/vim/test/ruby.vim
@@ -786,10 +785,6 @@ setpos() does not restore cursor position after :normal. (Tyru, 2010 Aug 11)
     file names unique, also support this for 'backupdir'. (Mikolaj Machowski)
     Patch by Christian Brabandt, 2010 Oct 21.
 
-getpos()/setpos() don't include curswant.  getpos() could return a fifth
-element.  setpos() could accept an optional fifth element.
-Patch by Christian Brabandt, 2010 Sep 6.  Again 2013 Aug 22.
-
 With "tw=55 fo+=a" typing space before ) doesn't work well. (Scott Mcdermott,
 2010 Oct 24)
 
@@ -830,8 +825,6 @@ Patch: Let rare word highlighting overrule good word highlighting.
 
 When 'lines' is 25 and 'scrolloff' is 12, "j" scrolls zero or two lines
 instead of one. (Constantin Pan, 2010 Sep 10)
-
-Crash in setqflist(). (Benoit Mortgat, 2010 Nov 18)
 
 Gui menu edit/paste in block mode insert only inserts in one line (Bjorn
 Winckler, 2011 May 11)
@@ -1062,6 +1055,11 @@ Session file generates error upon loading, cause by --remote-silent-tab.
 Using ~ works OK on 'a' with composing char, but not on 0x0418  with composing
 char 0x0301. (Tony Mechelynck, 2009 Mar 4)
 
+Searching for composing char works, but not when inside []. (ZyX, Benjamin R.
+Haskell, 2010 Aug 24)
+
+This does not work yet: "a\(%C\)" (get composing characters into a submatch).
+
 A function on a dictionary is not profiled. (ZyX, 2010 Dec 25)
 
 Inconsistent: starting with $LANG set to es_ES.utf-8 gives Spanish
@@ -1146,6 +1144,7 @@ is executed.
 
 ":pedit %" with a BufReadPre autocommand causes the cursor to move to the
 first line. (Ingo Karkat, 2008 Jul 1)  Ian Kelling is working on this.
+Similar problem with ":e". (Marc Montu, 2014 Apr 22)
 
 Wildmenu not deleted: "gvim -u NONE", ":set nocp wildmenu cmdheight=3
 laststatus=2", CTRL-D CTRL-H CTRL-H CTRL-H. (A.Politz, 2008 April 1)
@@ -1288,9 +1287,6 @@ Is there a way to list all the files first?
 When 'smartcase' is set and using CTRL-L to add to the search pattern it may
 result in no matches.  Convert chars to lower case? (Erik Wognsen, 2009 Apr
 16)
-
-Searching for composing char works, but not when inside []. (ZyX, Benjamin R.
-Haskell, 2010 Aug 24)
 
 Fail to edit file after failed register access.  Error flag remains set?
 (Lech Lorens, 2010 Aug 30)
@@ -1493,6 +1489,7 @@ Engelke, 2007 Dec 20 - 2008 Jan 17)
 
 Win64: Seek error in swap file for a very big file (3 Gbyte).  Check storing
 pointer in long and seek offset in 64 bit var.
+Patches from Ken Takata might help (2014 Apr 17)
 
 Win32: patch for fullscreen mode. (Liushaolin, 2008 April 17)
 
@@ -3119,12 +3116,8 @@ Multi-byte characters:
 8   toupper() function doesn't handle byte count changes.
 7   Searching and composing characters:
     When searching, should order of composing characters be ignored?
-    Add special item to match with a composing character, zero-width, so that
-    one can replace a base character and keep the composing characters.
     Add a special item to match with a composing character, so that composing
     characters can be manipulated.
-    Add a modifier to ignore composing characters, only compare base
-    characters.  Useful for Hebrew (Ron Aaron)
 8   Should implement 'delcombine' for command line editing.
 8   Detect overlong UTF-8 sequences and handle them like illegal bytes.
 8   ":s/x/\u\1/" doesn't work, making uppercase isn't done for multi-byte

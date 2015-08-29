@@ -113,7 +113,7 @@ static char_u	*skip_comment __ARGS((char_u *line, int process, int include_space
 #endif
 static void	block_prep __ARGS((oparg_T *oap, struct block_def *, linenr_T, int));
 #if defined(FEAT_CLIPBOARD) || defined(FEAT_EVAL)
-static void	str_to_reg __ARGS((struct yankreg *y_ptr, int type, char_u *str, long len, long blocklen));
+static void	str_to_reg __ARGS((struct yankreg *y_ptr, int yank_type, char_u *str, long len, long blocklen, int str_list));
 #endif
 static int	ends_in_white __ARGS((linenr_T lnum));
 #ifdef FEAT_COMMENTS
@@ -420,7 +420,9 @@ shift_block(oap, amount)
 	}
 	for ( ; vim_iswhite(*bd.textstart); )
 	{
-	    incr = lbr_chartabsize_adv(&bd.textstart, (colnr_T)(bd.start_vcol));
+	    /* TODO: is passing bd.textstart for start of the line OK? */
+	    incr = lbr_chartabsize_adv(bd.textstart, &bd.textstart,
+						    (colnr_T)(bd.start_vcol));
 	    total += incr;
 	    bd.start_vcol += incr;
 	}
@@ -480,7 +482,7 @@ shift_block(oap, amount)
 
 	while (vim_iswhite(*non_white))
 	{
-	    incr = lbr_chartabsize_adv(&non_white, non_white_col);
+	    incr = lbr_chartabsize_adv(bd.textstart, &non_white, non_white_col);
 	    non_white_col += incr;
 	}
 
@@ -505,7 +507,11 @@ shift_block(oap, amount)
 	    verbatim_copy_width -= bd.start_char_vcols;
 	while (verbatim_copy_width < destination_col)
 	{
-	    incr = lbr_chartabsize(verbatim_copy_end, verbatim_copy_width);
+	    char_u *line = verbatim_copy_end;
+
+	    /* TODO: is passing verbatim_copy_end for start of the line OK? */
+	    incr = lbr_chartabsize(line, verbatim_copy_end,
+							 verbatim_copy_width);
 	    if (verbatim_copy_width + incr > destination_col)
 		break;
 	    verbatim_copy_width += incr;
@@ -1979,7 +1985,7 @@ op_delete(oap)
 		curwin->w_cursor = curpos;	/* restore curwin->w_cursor */
 	    }
 	    if (curwin->w_cursor.lnum < curbuf->b_ml.ml_line_count)
-		(void)do_join(2, FALSE, FALSE, FALSE);
+		(void)do_join(2, FALSE, FALSE, FALSE, FALSE);
 	}
     }
 
@@ -3150,6 +3156,8 @@ op_yank(oap, deleting, mess)
 	vim_free(y_current->y_array);
 	y_current = curr;
     }
+    if (curwin->w_p_rnu)
+	redraw_later(SOME_VALID);	/* cursor moved to start */
     if (mess)			/* Display message about yank? */
     {
 	if (yanktype == MCHAR
@@ -3615,7 +3623,7 @@ do_put(regname, dir, count, flags)
 	    for (ptr = oldp; vcol < col && *ptr; )
 	    {
 		/* Count a tab for what it's worth (if list mode not on) */
-		incr = lbr_chartabsize_adv(&ptr, (colnr_T)vcol);
+		incr = lbr_chartabsize_adv(oldp, &ptr, (colnr_T)vcol);
 		vcol += incr;
 	    }
 	    bd.textcol = (colnr_T)(ptr - oldp);
@@ -3649,7 +3657,7 @@ do_put(regname, dir, count, flags)
 	    /* calculate number of spaces required to fill right side of block*/
 	    spaces = y_width + 1;
 	    for (j = 0; j < yanklen; j++)
-		spaces -= lbr_chartabsize(&y_array[i][j], 0);
+		spaces -= lbr_chartabsize(NULL, &y_array[i][j], 0);
 	    if (spaces < 0)
 		spaces = 0;
 
@@ -4323,17 +4331,20 @@ skip_comment(line, process, include_space, is_comment)
 /*
  * Join 'count' lines (minimal 2) at cursor position.
  * When "save_undo" is TRUE save lines for undo first.
- * Set "use_formatoptions" to FALSE when e.g. processing
- * backspace and comment leaders should not be removed.
+ * Set "use_formatoptions" to FALSE when e.g. processing backspace and comment
+ * leaders should not be removed.
+ * When setmark is TRUE, sets the '[ and '] mark, else, the caller is expected
+ * to set those marks.
  *
  * return FAIL for failure, OK otherwise
  */
     int
-do_join(count, insert_space, save_undo, use_formatoptions)
+do_join(count, insert_space, save_undo, use_formatoptions, setmark)
     long    count;
     int	    insert_space;
     int	    save_undo;
     int	    use_formatoptions UNUSED;
+    int	    setmark;
 {
     char_u	*curr = NULL;
     char_u      *curr_start = NULL;
@@ -4384,7 +4395,7 @@ do_join(count, insert_space, save_undo, use_formatoptions)
     for (t = 0; t < count; ++t)
     {
 	curr = curr_start = ml_get((linenr_T)(curwin->w_cursor.lnum + t));
-	if (t == 0)
+	if (t == 0 && setmark)
 	{
 	    /* Set the '[ mark. */
 	    curwin->w_buffer->b_op_start.lnum = curwin->w_cursor.lnum;
@@ -4506,9 +4517,12 @@ do_join(count, insert_space, save_undo, use_formatoptions)
     }
     ml_replace(curwin->w_cursor.lnum, newp, FALSE);
 
-    /* Set the '] mark. */
-    curwin->w_buffer->b_op_end.lnum = curwin->w_cursor.lnum;
-    curwin->w_buffer->b_op_end.col  = (colnr_T)STRLEN(newp);
+    if (setmark)
+    {
+	/* Set the '] mark. */
+	curwin->w_buffer->b_op_end.lnum = curwin->w_cursor.lnum;
+	curwin->w_buffer->b_op_end.col  = (colnr_T)STRLEN(newp);
+    }
 
     /* Only report the change in the first line here, del_lines() will report
      * the deleted line. */
@@ -5009,7 +5023,7 @@ format_lines(line_count, avoid_fex)
 		    }
 		}
 		curwin->w_cursor.lnum--;
-		if (do_join(2, TRUE, FALSE, FALSE) == FAIL)
+		if (do_join(2, TRUE, FALSE, FALSE, FALSE) == FAIL)
 		{
 		    beep_flush();
 		    break;
@@ -5195,7 +5209,7 @@ block_prep(oap, bdp, lnum, is_del)
     while (bdp->start_vcol < oap->start_vcol && *pstart)
     {
 	/* Count a tab for what it's worth (if list mode not on) */
-	incr = lbr_chartabsize(pstart, (colnr_T)bdp->start_vcol);
+	incr = lbr_chartabsize(line, pstart, (colnr_T)bdp->start_vcol);
 	bdp->start_vcol += incr;
 #ifdef FEAT_VISUALEXTRA
 	if (vim_iswhite(*pstart))
@@ -5264,7 +5278,10 @@ block_prep(oap, bdp, lnum, is_del)
 	    {
 		/* Count a tab for what it's worth (if list mode not on) */
 		prev_pend = pend;
-		incr = lbr_chartabsize_adv(&pend, (colnr_T)bdp->end_vcol);
+		/* TODO: is passing prev_pend for start of the line OK?
+		 * perhaps it should be "line". */
+		incr = lbr_chartabsize_adv(prev_pend, &pend,
+						      (colnr_T)bdp->end_vcol);
 		bdp->end_vcol += incr;
 	    }
 	    if (bdp->end_vcol <= oap->end_vcol
@@ -6005,7 +6022,7 @@ clip_yank_selection(type, str, len, cbd)
 
     clip_free_selection(cbd);
 
-    str_to_reg(y_ptr, type, str, len, 0L);
+    str_to_reg(y_ptr, type, str, len, 0L, FALSE);
 }
 
 /*
@@ -6113,7 +6130,7 @@ dnd_yank_drag_data(str, len)
     curr = y_current;
     y_current = &y_regs[TILDE_REGISTER];
     free_yank_all();
-    str_to_reg(y_current, MCHAR, str, len, 0L);
+    str_to_reg(y_current, MCHAR, str, len, 0L, FALSE);
     y_current = curr;
 }
 #endif
@@ -6166,16 +6183,49 @@ get_reg_type(regname, reglen)
     return MAUTO;
 }
 
+static char_u *getreg_wrap_one_line __ARGS((char_u *s, int flags));
+
+/*
+ * When "flags" has GREG_LIST return a list with text "s".
+ * Otherwise just return "s".
+ */
+    static char_u *
+getreg_wrap_one_line(s, flags)
+    char_u	*s;
+    int		flags;
+{
+    if (flags & GREG_LIST)
+    {
+	list_T *list = list_alloc();
+
+	if (list != NULL)
+	{
+	    if (list_append_string(list, NULL, -1) == FAIL)
+	    {
+		list_free(list, TRUE);
+		return NULL;
+	    }
+	    list->lv_first->li_tv.vval.v_string = s;
+	}
+	return (char_u *)list;
+    }
+    return s;
+}
+
 /*
  * Return the contents of a register as a single allocated string.
  * Used for "@r" in expressions and for getreg().
  * Returns NULL for error.
+ * Flags:
+ *	GREG_NO_EXPR	Do not allow expression register
+ *	GREG_EXPR_SRC	For the expression register: return expression itself,
+ *			not the result of its evaluation.
+ *	GREG_LIST	Return a list of lines in place of a single string.
  */
     char_u *
-get_reg_contents(regname, allowexpr, expr_src)
+get_reg_contents(regname, flags)
     int		regname;
-    int		allowexpr;	/* allow "=" register */
-    int		expr_src;	/* get expression for "=" register */
+    int		flags;
 {
     long	i;
     char_u	*retval;
@@ -6185,13 +6235,11 @@ get_reg_contents(regname, allowexpr, expr_src)
     /* Don't allow using an expression register inside an expression */
     if (regname == '=')
     {
-	if (allowexpr)
-	{
-	    if (expr_src)
-		return get_expr_line_src();
-	    return get_expr_line();
-	}
-	return NULL;
+	if (flags & GREG_NO_EXPR)
+	    return NULL;
+	if (flags & GREG_EXPR_SRC)
+	    return getreg_wrap_one_line(get_expr_line_src(), flags);
+	return getreg_wrap_one_line(get_expr_line(), flags);
     }
 
     if (regname == '@')	    /* "@@" is used for unnamed register */
@@ -6209,14 +6257,32 @@ get_reg_contents(regname, allowexpr, expr_src)
     {
 	if (retval == NULL)
 	    return NULL;
-	if (!allocated)
-	    retval = vim_strsave(retval);
-	return retval;
+	if (allocated)
+	    return getreg_wrap_one_line(retval, flags);
+	return getreg_wrap_one_line(vim_strsave(retval), flags);
     }
 
     get_yank_register(regname, FALSE);
     if (y_current->y_array == NULL)
 	return NULL;
+
+    if (flags & GREG_LIST)
+    {
+	list_T	*list = list_alloc();
+	int	error = FALSE;
+
+	if (list == NULL)
+	    return NULL;
+	for (i = 0; i < y_current->y_size; ++i)
+	    if (list_append_string(list, y_current->y_array[i], -1) == FAIL)
+		error = TRUE;
+	if (error)
+	{
+	    list_free(list, TRUE);
+	    return NULL;
+	}
+	return (char_u *)list;
+    }
 
     /*
      * Compute length of resulting string.
@@ -6259,6 +6325,47 @@ get_reg_contents(regname, allowexpr, expr_src)
     return retval;
 }
 
+    static int
+init_write_reg(name, old_y_previous, old_y_current, must_append, yank_type)
+    int		    name;
+    struct yankreg  **old_y_previous;
+    struct yankreg  **old_y_current;
+    int		    must_append;
+    int		    *yank_type UNUSED;
+{
+    if (!valid_yank_reg(name, TRUE))	    /* check for valid reg name */
+    {
+	emsg_invreg(name);
+	return FAIL;
+    }
+
+    /* Don't want to change the current (unnamed) register */
+    *old_y_previous = y_previous;
+    *old_y_current = y_current;
+
+    get_yank_register(name, TRUE);
+    if (!y_append && !must_append)
+	free_yank_all();
+    return OK;
+}
+
+    static void
+finish_write_reg(name, old_y_previous, old_y_current)
+    int		    name;
+    struct yankreg  *old_y_previous;
+    struct yankreg  *old_y_current;
+{
+# ifdef FEAT_CLIPBOARD
+    /* Send text of clipboard register to the clipboard. */
+    may_set_selection();
+# endif
+
+    /* ':let @" = "val"' should change the meaning of the "" register */
+    if (name != '"')
+	y_previous = old_y_previous;
+    y_current = old_y_current;
+}
+
 /*
  * Store string "str" in register "name".
  * "maxlen" is the maximum number of bytes to use, -1 for all bytes.
@@ -6276,6 +6383,51 @@ write_reg_contents(name, str, maxlen, must_append)
     int		must_append;
 {
     write_reg_contents_ex(name, str, maxlen, must_append, MAUTO, 0L);
+}
+
+    void
+write_reg_contents_lst(name, strings, maxlen, must_append, yank_type, block_len)
+    int		name;
+    char_u	**strings;
+    int		maxlen UNUSED;
+    int		must_append;
+    int		yank_type;
+    long	block_len;
+{
+    struct yankreg  *old_y_previous, *old_y_current;
+
+    if (name == '/'
+#ifdef FEAT_EVAL
+	    || name == '='
+#endif
+	    )
+    {
+	char_u	*s;
+
+	if (strings[0] == NULL)
+	    s = (char_u *)"";
+	else if (strings[1] != NULL)
+	{
+	    EMSG(_("E883: search pattern and expression register may not "
+			"contain two or more lines"));
+	    return;
+	}
+	else
+	    s = strings[0];
+	write_reg_contents_ex(name, s, -1, must_append, yank_type, block_len);
+	return;
+    }
+
+    if (name == '_')	    /* black hole: nothing to do */
+	return;
+
+    if (init_write_reg(name, &old_y_previous, &old_y_current, must_append,
+		&yank_type) == FAIL)
+	return;
+
+    str_to_reg(y_current, yank_type, (char_u *) strings, -1, block_len, TRUE);
+
+    finish_write_reg(name, old_y_previous, old_y_current);
 }
 
     void
@@ -6315,40 +6467,22 @@ write_reg_contents_ex(name, str, maxlen, must_append, yank_type, block_len)
 	    s = concat_str(get_expr_line_src(), p);
 	    vim_free(p);
 	    p = s;
-
 	}
 	set_expr_line(p);
 	return;
     }
 #endif
 
-    if (!valid_yank_reg(name, TRUE))	    /* check for valid reg name */
-    {
-	emsg_invreg(name);
-	return;
-    }
-
     if (name == '_')	    /* black hole: nothing to do */
 	return;
 
-    /* Don't want to change the current (unnamed) register */
-    old_y_previous = y_previous;
-    old_y_current = y_current;
+    if (init_write_reg(name, &old_y_previous, &old_y_current, must_append,
+		&yank_type) == FAIL)
+	return;
 
-    get_yank_register(name, TRUE);
-    if (!y_append && !must_append)
-	free_yank_all();
-    str_to_reg(y_current, yank_type, str, len, block_len);
+    str_to_reg(y_current, yank_type, str, len, block_len, FALSE);
 
-# ifdef FEAT_CLIPBOARD
-    /* Send text of clipboard register to the clipboard. */
-    may_set_selection();
-# endif
-
-    /* ':let @" = "val"' should change the meaning of the "" register */
-    if (name != '"')
-	y_previous = old_y_previous;
-    y_current = old_y_current;
+    finish_write_reg(name, old_y_previous, old_y_current);
 }
 #endif	/* FEAT_EVAL */
 
@@ -6358,12 +6492,13 @@ write_reg_contents_ex(name, str, maxlen, must_append, yank_type, block_len)
  * is appended.
  */
     static void
-str_to_reg(y_ptr, yank_type, str, len, blocklen)
+str_to_reg(y_ptr, yank_type, str, len, blocklen, str_list)
     struct yankreg	*y_ptr;		/* pointer to yank register */
     int			yank_type;	/* MCHAR, MLINE, MBLOCK, MAUTO */
     char_u		*str;		/* string to put in register */
     long		len;		/* length of string */
     long		blocklen;	/* width of Visual block */
+    int			str_list;	/* TRUE if str is char_u ** */
 {
     int		type;			/* MCHAR, MLINE or MBLOCK */
     int		lnum;
@@ -6374,6 +6509,7 @@ str_to_reg(y_ptr, yank_type, str, len, blocklen)
     int		extraline = 0;		/* extra line at the end */
     int		append = FALSE;		/* append to last line in register */
     char_u	*s;
+    char_u	**ss;
     char_u	**pp;
     long	maxlen;
 
@@ -6381,7 +6517,8 @@ str_to_reg(y_ptr, yank_type, str, len, blocklen)
 	y_ptr->y_size = 0;
 
     if (yank_type == MAUTO)
-	type = ((len > 0 && (str[len - 1] == NL || str[len - 1] == CAR))
+	type = ((str_list || (len > 0 && (str[len - 1] == NL
+					    || str[len - 1] == CAR)))
 							     ? MLINE : MCHAR);
     else
 	type = yank_type;
@@ -6390,18 +6527,26 @@ str_to_reg(y_ptr, yank_type, str, len, blocklen)
      * Count the number of lines within the string
      */
     newlines = 0;
-    for (i = 0; i < len; i++)
-	if (str[i] == '\n')
+    if (str_list)
+    {
+	for (ss = (char_u **) str; *ss != NULL; ++ss)
 	    ++newlines;
-    if (type == MCHAR || len == 0 || str[len - 1] != '\n')
-    {
-	extraline = 1;
-	++newlines;	/* count extra newline at the end */
     }
-    if (y_ptr->y_size > 0 && y_ptr->y_type == MCHAR)
+    else
     {
-	append = TRUE;
-	--newlines;	/* uncount newline when appending first line */
+	for (i = 0; i < len; i++)
+	    if (str[i] == '\n')
+		++newlines;
+	if (type == MCHAR || len == 0 || str[len - 1] != '\n')
+	{
+	    extraline = 1;
+	    ++newlines;	/* count extra newline at the end */
+	}
+	if (y_ptr->y_size > 0 && y_ptr->y_type == MCHAR)
+	{
+	    append = TRUE;
+	    --newlines;	/* uncount newline when appending first line */
+	}
     }
 
     /*
@@ -6421,40 +6566,53 @@ str_to_reg(y_ptr, yank_type, str, len, blocklen)
     /*
      * Find the end of each line and save it into the array.
      */
-    for (start = 0; start < len + extraline; start += i + 1)
+    if (str_list)
     {
-	for (i = start; i < len; ++i)	/* find the end of the line */
-	    if (str[i] == '\n')
+	for (ss = (char_u **) str; *ss != NULL; ++ss, ++lnum)
+	{
+	    i = (long)STRLEN(*ss);
+	    pp[lnum] = vim_strnsave(*ss, i);
+	    if (i > maxlen)
+		maxlen = i;
+	}
+    }
+    else
+    {
+	for (start = 0; start < len + extraline; start += i + 1)
+	{
+	    for (i = start; i < len; ++i)	/* find the end of the line */
+		if (str[i] == '\n')
+		    break;
+	    i -= start;			/* i is now length of line */
+	    if (i > maxlen)
+		maxlen = i;
+	    if (append)
+	    {
+		--lnum;
+		extra = (int)STRLEN(y_ptr->y_array[lnum]);
+	    }
+	    else
+		extra = 0;
+	    s = alloc((unsigned)(i + extra + 1));
+	    if (s == NULL)
 		break;
-	i -= start;			/* i is now length of line */
-	if (i > maxlen)
-	    maxlen = i;
-	if (append)
-	{
-	    --lnum;
-	    extra = (int)STRLEN(y_ptr->y_array[lnum]);
+	    if (extra)
+		mch_memmove(s, y_ptr->y_array[lnum], (size_t)extra);
+	    if (append)
+		vim_free(y_ptr->y_array[lnum]);
+	    if (i)
+		mch_memmove(s + extra, str + start, (size_t)i);
+	    extra += i;
+	    s[extra] = NUL;
+	    y_ptr->y_array[lnum++] = s;
+	    while (--extra >= 0)
+	    {
+		if (*s == NUL)
+		    *s = '\n';	    /* replace NUL with newline */
+		++s;
+	    }
+	    append = FALSE;		    /* only first line is appended */
 	}
-	else
-	    extra = 0;
-	s = alloc((unsigned)(i + extra + 1));
-	if (s == NULL)
-	    break;
-	if (extra)
-	    mch_memmove(s, y_ptr->y_array[lnum], (size_t)extra);
-	if (append)
-	    vim_free(y_ptr->y_array[lnum]);
-	if (i)
-	    mch_memmove(s + extra, str + start, (size_t)i);
-	extra += i;
-	s[extra] = NUL;
-	y_ptr->y_array[lnum++] = s;
-	while (--extra >= 0)
-	{
-	    if (*s == NUL)
-		*s = '\n';	    /* replace NUL with newline */
-	    ++s;
-	}
-	append = FALSE;		    /* only first line is appended */
     }
     y_ptr->y_type = type;
     y_ptr->y_size = lnum;
@@ -6733,7 +6891,8 @@ cursor_pos_info()
 	    validate_virtcol();
 	    col_print(buf1, sizeof(buf1), (int)curwin->w_cursor.col + 1,
 		    (int)curwin->w_virtcol + 1);
-	    col_print(buf2, sizeof(buf2), (int)STRLEN(p), linetabsize(p));
+	    col_print(buf2, sizeof(buf2), (int)STRLEN(p),
+				linetabsize(p));
 
 	    if (char_count_cursor == byte_count_cursor
 		    && char_count == byte_count)

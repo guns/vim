@@ -32,7 +32,7 @@ static garray_T	ga_users;
     int
 get_indent()
 {
-    return get_indent_str(ml_get_curline(), (int)curbuf->b_p_ts);
+    return get_indent_str(ml_get_curline(), (int)curbuf->b_p_ts, FALSE);
 }
 
 /*
@@ -42,7 +42,7 @@ get_indent()
 get_indent_lnum(lnum)
     linenr_T	lnum;
 {
-    return get_indent_str(ml_get(lnum), (int)curbuf->b_p_ts);
+    return get_indent_str(ml_get(lnum), (int)curbuf->b_p_ts, FALSE);
 }
 
 #if defined(FEAT_FOLDING) || defined(PROTO)
@@ -55,7 +55,7 @@ get_indent_buf(buf, lnum)
     buf_T	*buf;
     linenr_T	lnum;
 {
-    return get_indent_str(ml_get_buf(buf, lnum, FALSE), (int)buf->b_p_ts);
+    return get_indent_str(ml_get_buf(buf, lnum, FALSE), (int)buf->b_p_ts, FALSE);
 }
 #endif
 
@@ -64,16 +64,23 @@ get_indent_buf(buf, lnum)
  * 'tabstop' at "ts"
  */
     int
-get_indent_str(ptr, ts)
+get_indent_str(ptr, ts, list)
     char_u	*ptr;
     int		ts;
+    int		list; /* if TRUE, count only screen size for tabs */
 {
     int		count = 0;
 
     for ( ; *ptr; ++ptr)
     {
-	if (*ptr == TAB)    /* count a tab for what it is worth */
-	    count += ts - (count % ts);
+	if (*ptr == TAB)
+	{
+	    if (!list || lcs_tab1)    /* count a tab for what it is worth */
+		count += ts - (count % ts);
+	    else
+	/* in list mode, when tab is not set, count screen char width for Tab: ^I */
+		count += ptr2cells(ptr);
+	}
 	else if (*ptr == ' ')
 	    ++count;		/* count a space for one */
 	else
@@ -476,6 +483,61 @@ get_number_indent(lnum)
     return (int)col;
 }
 
+#if defined(FEAT_LINEBREAK) || defined(PROTO)
+/*
+ * Return appropriate space number for breakindent, taking influencing
+ * parameters into account. Window must be specified, since it is not
+ * necessarily always the current one.
+ */
+    int
+get_breakindent_win(wp, line)
+    win_T	*wp;
+    char_u	*line; /* start of the line */
+{
+    static int	    prev_indent = 0;  /* cached indent value */
+    static long	    prev_ts     = 0L; /* cached tabstop value */
+    static char_u   *prev_line = NULL; /* cached pointer to line */
+    static int	    prev_tick = 0;   /* changedtick of cached value */
+    int		    bri = 0;
+    /* window width minus window margin space, i.e. what rests for text */
+    const int	    eff_wwidth = W_WIDTH(wp)
+			    - ((wp->w_p_nu || wp->w_p_rnu)
+				&& (vim_strchr(p_cpo, CPO_NUMCOL) == NULL)
+						? number_width(wp) + 1 : 0);
+
+    /* used cached indent, unless pointer or 'tabstop' changed */
+    if (prev_line != line || prev_ts != wp->w_buffer->b_p_ts
+				  || prev_tick != wp->w_buffer->b_changedtick)
+    {
+	prev_line = line;
+	prev_ts = wp->w_buffer->b_p_ts;
+	prev_tick = wp->w_buffer->b_changedtick;
+	prev_indent = get_indent_str(line,
+				     (int)wp->w_buffer->b_p_ts, wp->w_p_list);
+    }
+    bri = prev_indent + wp->w_p_brishift;
+
+    /* indent minus the length of the showbreak string */
+    if (wp->w_p_brisbr)
+	bri -= vim_strsize(p_sbr);
+
+    /* Add offset for number column, if 'n' is in 'cpoptions' */
+    bri += win_col_off2(wp);
+
+    /* never indent past left window margin */
+    if (bri < 0)
+	bri = 0;
+    /* always leave at least bri_min characters on the left,
+     * if text width is sufficient */
+    else if (bri > eff_wwidth - wp->w_p_brimin)
+	bri = (eff_wwidth - wp->w_p_brimin < 0)
+			    ? 0 : eff_wwidth - wp->w_p_brimin;
+
+    return bri;
+}
+#endif
+
+
 #if defined(FEAT_CINDENT) || defined(FEAT_SMARTINDENT)
 
 static int cin_is_cinword __ARGS((char_u *line));
@@ -678,7 +740,7 @@ open_line(dir, flags, second_line_indent)
 	/*
 	 * count white space on current line
 	 */
-	newindent = get_indent_str(saved_line, (int)curbuf->b_p_ts);
+	newindent = get_indent_str(saved_line, (int)curbuf->b_p_ts, FALSE);
 	if (newindent == 0 && !(flags & OPENLINE_COM_LIST))
 	    newindent = second_line_indent; /* for ^^D command in insert mode */
 
@@ -1201,7 +1263,7 @@ open_line(dir, flags, second_line_indent)
 					|| do_si
 #endif
 							   )
-			newindent = get_indent_str(leader, (int)curbuf->b_p_ts);
+			newindent = get_indent_str(leader, (int)curbuf->b_p_ts, FALSE);
 
 		    /* Add the indent offset */
 		    if (newindent + off < 0)
@@ -1405,7 +1467,7 @@ open_line(dir, flags, second_line_indent)
 #ifdef FEAT_SMARTINDENT
 	if (did_si)
 	{
-	    int        sw = (int)get_sw_value(curbuf);
+	    int sw = (int)get_sw_value(curbuf);
 
 	    if (p_sr)
 		newindent -= newindent % sw;
@@ -1994,6 +2056,7 @@ plines_win_col(wp, lnum, column)
     char_u	*s;
     int		lines = 0;
     int		width;
+    char_u	*line;
 
 #ifdef FEAT_DIFF
     /* Check for filler lines above this buffer line.  When folded the result
@@ -2009,12 +2072,12 @@ plines_win_col(wp, lnum, column)
 	return lines + 1;
 #endif
 
-    s = ml_get_buf(wp->w_buffer, lnum, FALSE);
+    line = s = ml_get_buf(wp->w_buffer, lnum, FALSE);
 
     col = 0;
     while (*s != NUL && --column >= 0)
     {
-	col += win_lbr_chartabsize(wp, s, (colnr_T)col, NULL);
+	col += win_lbr_chartabsize(wp, line, s, (colnr_T)col, NULL);
 	mb_ptr_adv(s);
     }
 
@@ -2026,7 +2089,7 @@ plines_win_col(wp, lnum, column)
      * 'ts') -- webb.
      */
     if (*s == TAB && (State & NORMAL) && (!wp->w_p_list || lcs_tab1))
-	col += win_lbr_chartabsize(wp, s, (colnr_T)col, NULL) - 1;
+	col += win_lbr_chartabsize(wp, line, s, (colnr_T)col, NULL) - 1;
 
     /*
      * Add column offset for 'number', 'relativenumber', 'foldcolumn', etc.
@@ -3125,6 +3188,9 @@ changed_common(lnum, col, lnume, xtra)
 	    if (hasAnyFolding(wp))
 		set_topline(wp, wp->w_topline);
 #endif
+	    /* relative numbering may require updating more */
+	    if (wp->w_p_rnu)
+		redraw_win_later(wp, SOME_VALID);
 	}
     }
 
@@ -6548,7 +6614,7 @@ find_start_brace()	    /* XXX */
 }
 
 /*
- * Find the matching '(', failing if it is in a comment.
+ * Find the matching '(', ignoring it if it is in a comment.
  * Return NULL if no match found.
  */
     static pos_T *
@@ -6575,6 +6641,32 @@ find_match_paren(ind_maxparen)	    /* XXX */
 	}
     }
     curwin->w_cursor = cursor_save;
+    return trypos;
+}
+
+/*
+ * Find the matching '(', ignoring it if it is in a comment or before an
+ * unmatched {.
+ * Return NULL if no match found.
+ */
+    static pos_T *
+find_match_paren_after_brace(ind_maxparen)	    /* XXX */
+    int		ind_maxparen;
+{
+    pos_T	*trypos = find_match_paren(ind_maxparen);
+
+    if (trypos != NULL)
+    {
+	pos_T	*tryposBrace = find_start_brace();
+
+	/* If both an unmatched '(' and '{' is found.  Ignore the '('
+	 * position if the '{' is further down. */
+	if (tryposBrace != NULL
+		&& (trypos->lnum != tryposBrace->lnum
+		    ? trypos->lnum < tryposBrace->lnum
+		    : trypos->col < tryposBrace->col))
+	    trypos = NULL;
+    }
     return trypos;
 }
 
@@ -7353,7 +7445,8 @@ get_c_indent()
 		{
 		    curwin->w_cursor.lnum = our_paren_pos.lnum;
 		    curwin->w_cursor.col = col;
-		    if (find_match_paren(curbuf->b_ind_maxparen) != NULL)
+		    if (find_match_paren_after_brace(curbuf->b_ind_maxparen)
+								      != NULL)
 			amount += curbuf->b_ind_unclosed2;
 		    else
 		    {
@@ -7431,9 +7524,11 @@ get_c_indent()
 	     *			ldfd) {
 	     *		    }
 	     */
-	    if (curbuf->b_ind_js || (curbuf->b_ind_keep_case_label
-			   && cin_iscase(skipwhite(ml_get_curline()), FALSE)))
+	    if ((curbuf->b_ind_js || curbuf->b_ind_keep_case_label)
+			   && cin_iscase(skipwhite(ml_get_curline()), FALSE))
 		amount = get_indent();
+	    else if (curbuf->b_ind_js)
+		amount = get_indent_lnum(lnum);
 	    else
 		amount = skip_label(lnum, &l);
 
@@ -9003,10 +9098,12 @@ get_lisp_indent()
 		amount = 2;
 	    else
 	    {
+		char_u *line = that;
+
 		amount = 0;
 		while (*that && col)
 		{
-		    amount += lbr_chartabsize_adv(&that, (colnr_T)amount);
+		    amount += lbr_chartabsize_adv(line, &that, (colnr_T)amount);
 		    col--;
 		}
 
@@ -9029,7 +9126,7 @@ get_lisp_indent()
 
 		    while (vim_iswhite(*that))
 		    {
-			amount += lbr_chartabsize(that, (colnr_T)amount);
+			amount += lbr_chartabsize(line, that, (colnr_T)amount);
 			++that;
 		    }
 
@@ -9067,15 +9164,16 @@ get_lisp_indent()
 							       && !quotecount)
 				    --parencount;
 				if (*that == '\\' && *(that+1) != NUL)
-				    amount += lbr_chartabsize_adv(&that,
-							     (colnr_T)amount);
-				amount += lbr_chartabsize_adv(&that,
-							     (colnr_T)amount);
+				    amount += lbr_chartabsize_adv(
+						line, &that, (colnr_T)amount);
+				amount += lbr_chartabsize_adv(
+						line, &that, (colnr_T)amount);
 			    }
 			}
 			while (vim_iswhite(*that))
 			{
-			    amount += lbr_chartabsize(that, (colnr_T)amount);
+			    amount += lbr_chartabsize(
+						 line, that, (colnr_T)amount);
 			    that++;
 			}
 			if (!*that || *that == ';')
@@ -10340,9 +10438,6 @@ expand_in_path(gap, pattern, flags)
 {
     char_u	*curdir;
     garray_T	path_ga;
-    char_u	*files = NULL;
-    char_u	*s;	/* start */
-    char_u	*e;	/* end */
     char_u	*paths = NULL;
 
     if ((curdir = alloc((unsigned)MAXPATHL)) == NULL)
@@ -10355,37 +10450,13 @@ expand_in_path(gap, pattern, flags)
     if (path_ga.ga_len == 0)
 	return 0;
 
-    paths = ga_concat_strings(&path_ga);
+    paths = ga_concat_strings(&path_ga, ",");
     ga_clear_strings(&path_ga);
     if (paths == NULL)
 	return 0;
 
-    files = globpath(paths, pattern, (flags & EW_ICASE) ? WILD_ICASE : 0);
+    globpath(paths, pattern, gap, (flags & EW_ICASE) ? WILD_ICASE : 0);
     vim_free(paths);
-    if (files == NULL)
-	return 0;
-
-    /* Copy each path in files into gap */
-    s = e = files;
-    while (*s != NUL)
-    {
-	while (*e != '\n' && *e != NUL)
-	    e++;
-	if (*e == NUL)
-	{
-	    addfile(gap, s, flags);
-	    break;
-	}
-	else
-	{
-	    /* *e is '\n' */
-	    *e = NUL;
-	    addfile(gap, s, flags);
-	    e++;
-	    s = e;
-	}
-    }
-    vim_free(files);
 
     return gap->ga_len;
 }
@@ -10669,7 +10740,7 @@ expand_backtick(gap, pat, flags)
     else
 #endif
 	buffer = get_cmd_output(cmd, NULL,
-				      (flags & EW_SILENT) ? SHELL_SILENT : 0);
+				(flags & EW_SILENT) ? SHELL_SILENT : 0, NULL);
     vim_free(cmd);
     if (buffer == NULL)
 	return 0;
@@ -10732,7 +10803,7 @@ addfile(gap, f, flags)
 	return;
 
     /* If the file isn't executable, may not add it.  Do accept directories. */
-    if (!isdir && (flags & EW_EXEC) && !mch_can_exe(f))
+    if (!isdir && (flags & EW_EXEC) && !mch_can_exe(f, NULL))
 	return;
 
     /* Make room for another item in the file list. */
@@ -10769,13 +10840,16 @@ addfile(gap, f, flags)
 
 /*
  * Get the stdout of an external command.
+ * If "ret_len" is NULL replace NUL characters with NL.  When "ret_len" is not
+ * NULL store the length there.
  * Returns an allocated string, or NULL for error.
  */
     char_u *
-get_cmd_output(cmd, infile, flags)
+get_cmd_output(cmd, infile, flags, ret_len)
     char_u	*cmd;
     char_u	*infile;	/* optional input file name */
     int		flags;		/* can be SHELL_SILENT */
+    int		*ret_len;
 {
     char_u	*tempname;
     char_u	*command;
@@ -10845,7 +10919,7 @@ get_cmd_output(cmd, infile, flags)
 	vim_free(buffer);
 	buffer = NULL;
     }
-    else
+    else if (ret_len == NULL)
     {
 	/* Change NUL into SOH, otherwise the string is truncated. */
 	for (i = 0; i < len; ++i)
@@ -10854,6 +10928,8 @@ get_cmd_output(cmd, infile, flags)
 
 	buffer[len] = NUL;	/* make sure the buffer is terminated */
     }
+    else
+	*ret_len = len;
 
 done:
     vim_free(tempname);
@@ -10894,4 +10970,42 @@ FreeWild(count, files)
 goto_im()
 {
     return (p_im && stuff_empty() && typebuf_typed());
+}
+
+/*
+ * Returns the isolated name of the shell in allocated memory:
+ * - Skip beyond any path.  E.g., "/usr/bin/csh -f" -> "csh -f".
+ * - Remove any argument.  E.g., "csh -f" -> "csh".
+ * But don't allow a space in the path, so that this works:
+ *   "/usr/bin/csh --rcfile ~/.cshrc"
+ * But don't do that for Windows, it's common to have a space in the path.
+ */
+    char_u *
+get_isolated_shell_name()
+{
+    char_u *p;
+
+#ifdef WIN3264
+    p = gettail(p_sh);
+    p = vim_strnsave(p, (int)(skiptowhite(p) - p));
+#else
+    p = skiptowhite(p_sh);
+    if (*p == NUL)
+    {
+	/* No white space, use the tail. */
+	p = vim_strsave(gettail(p_sh));
+    }
+    else
+    {
+	char_u  *p1, *p2;
+
+	/* Find the last path separator before the space. */
+	p1 = p_sh;
+	for (p2 = p_sh; p2 < p; mb_ptr_adv(p2))
+	    if (vim_ispathsep(*p2))
+		p1 = p2 + 1;
+	p = vim_strnsave(p1, (int)(p - p1));
+    }
+#endif
+    return p;
 }

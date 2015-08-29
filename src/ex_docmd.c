@@ -316,7 +316,6 @@ static void	ex_winpos __ARGS((exarg_T *eap));
 static void	ex_operators __ARGS((exarg_T *eap));
 static void	ex_put __ARGS((exarg_T *eap));
 static void	ex_copymove __ARGS((exarg_T *eap));
-static void	ex_may_print __ARGS((exarg_T *eap));
 static void	ex_submagic __ARGS((exarg_T *eap));
 static void	ex_join __ARGS((exarg_T *eap));
 static void	ex_at __ARGS((exarg_T *eap));
@@ -4582,25 +4581,15 @@ expand_filename(eap, cmdlinep, errormsgp)
 
 	/* For a shell command a '!' must be escaped. */
 	if ((eap->usefilter || eap->cmdidx == CMD_bang)
-			    && vim_strpbrk(repl, (char_u *)"!&;()<>") != NULL)
+			    && vim_strpbrk(repl, (char_u *)"!") != NULL)
 	{
 	    char_u	*l;
 
-	    l = vim_strsave_escaped(repl, (char_u *)"!&;()<>");
+	    l = vim_strsave_escaped(repl, (char_u *)"!");
 	    if (l != NULL)
 	    {
 		vim_free(repl);
 		repl = l;
-		/* For a sh-like shell escape "!" another time. */
-		if (strstr((char *)p_sh, "sh") != NULL)
-		{
-		    l = vim_strsave_escaped(repl, (char_u *)"!");
-		    if (l != NULL)
-		    {
-			vim_free(repl);
-			repl = l;
-		    }
-		}
 	    }
 	}
 
@@ -4853,7 +4842,7 @@ getargcmd(argp)
     if (*arg == '+')	    /* +[command] */
     {
 	++arg;
-	if (vim_isspace(*arg))
+	if (vim_isspace(*arg) || *arg == NUL)
 	    command = dollar_command;
 	else
 	{
@@ -7223,6 +7212,7 @@ alist_new()
     else
     {
 	curwin->w_alist->al_refcount = 1;
+	curwin->w_alist->id = ++max_alist_id;
 	alist_init(curwin->w_alist);
     }
 }
@@ -8684,7 +8674,7 @@ ex_copymove(eap)
 /*
  * Print the current line if flags were given to the Ex command.
  */
-    static void
+    void
 ex_may_print(eap)
     exarg_T	*eap;
 {
@@ -8729,7 +8719,7 @@ ex_join(eap)
 	}
 	++eap->line2;
     }
-    (void)do_join(eap->line2 - eap->line1 + 1, !eap->forceit, TRUE, TRUE);
+    (void)do_join(eap->line2 - eap->line1 + 1, !eap->forceit, TRUE, TRUE, TRUE);
     beginline(BL_WHITE | BL_FIX);
     ex_may_print(eap);
 }
@@ -10302,6 +10292,7 @@ makeopens(fd, dirnow)
     char_u	*sname;
     win_T	*edited_win = NULL;
     int		tabnr;
+    int		restore_stal = FALSE;
     win_T	*tab_firstwin;
     frame_T	*tab_topframe;
     int		cur_arg_idx = 0;
@@ -10409,6 +10400,19 @@ makeopens(fd, dirnow)
 	}
     }
 #endif
+
+    /*
+     * When there are two or more tabpages and 'showtabline' is 1 the tabline
+     * will be displayed when creating the next tab.  That resizes the windows
+     * in the first tab, which may cause problems.  Set 'showtabline' to 2
+     * temporarily to avoid that.
+     */
+    if (p_stal == 1 && first_tabpage->tp_next != NULL)
+    {
+	if (put_line(fd, "set stal=2") == FAIL)
+	    return FAIL;
+	restore_stal = TRUE;
+    }
 
     /*
      * May repeat putting Windows for each tab, when "tabpages" is in
@@ -10560,6 +10564,8 @@ makeopens(fd, dirnow)
 		|| put_eol(fd) == FAIL)
 	    return FAIL;
     }
+    if (restore_stal && put_line(fd, "set stal=1") == FAIL)
+	return FAIL;
 
     /*
      * Wipe out an empty unnamed buffer we started in.
@@ -11484,7 +11490,7 @@ ex_match(eap)
 
 	    c = *end;
 	    *end = NUL;
-	    match_add(curwin, g, p + 1, 10, id);
+	    match_add(curwin, g, p + 1, 10, id, NULL);
 	    vim_free(g);
 	    *end = c;
 	}

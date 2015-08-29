@@ -4250,6 +4250,11 @@ win_enter_ext(wp, undo_sync, curwin_invalid, trigger_enter_autocmds, trigger_lea
     /* sync undo before leaving the current buffer */
     if (undo_sync && curbuf != wp->w_buffer)
 	u_sync(FALSE);
+
+    /* Might need to scroll the old window before switching, e.g., when the
+     * cursor was moved. */
+    update_topline();
+
     /* may have to copy the buffer options when 'cpo' contains 'S' */
     if (wp->w_buffer != curbuf)
 	buf_copy_options(wp->w_buffer, BCO_ENTER | BCO_NOHELP);
@@ -4597,7 +4602,15 @@ win_free(wp, tp)
     if (wp != aucmd_win)
 #endif
 	win_remove(wp, tp);
-    vim_free(wp);
+#ifdef FEAT_AUTOCMD
+    if (autocmd_busy)
+    {
+	wp->w_next = au_pending_free_win;
+	au_pending_free_win = wp;
+    }
+    else
+#endif
+	vim_free(wp);
 
 #ifdef FEAT_AUTOCMD
     unblock_autocmds();
@@ -4721,8 +4734,12 @@ win_alloc_lines(wp)
 win_free_lsize(wp)
     win_T	*wp;
 {
-    vim_free(wp->w_lines);
-    wp->w_lines = NULL;
+    /* TODO: why would wp be NULL here? */
+    if (wp != NULL)
+    {
+	vim_free(wp->w_lines);
+	wp->w_lines = NULL;
+    }
 }
 
 /*
@@ -5623,7 +5640,7 @@ set_fraction(wp)
     win_T	*wp;
 {
     wp->w_fraction = ((long)wp->w_wrow * FRACTION_MULT
-				    + FRACTION_MULT / 2) / (long)wp->w_height;
+				    + wp->w_height / 2) / (long)wp->w_height;
 }
 
 /*
@@ -5638,6 +5655,7 @@ win_new_height(wp, height)
 {
     linenr_T	lnum;
     int		sline, line_size;
+    int		prev_height = wp->w_height;
 
     /* Don't want a negative height.  Happens when splitting a tiny window.
      * Will equalize heights soon to fix it. */
@@ -5646,8 +5664,18 @@ win_new_height(wp, height)
     if (wp->w_height == height)
 	return;	    /* nothing to do */
 
-    if (wp->w_wrow != wp->w_prev_fraction_row && wp->w_height > 0)
-	set_fraction(wp);
+    if (wp->w_height > 0)
+    {
+	if (wp == curwin)
+	    /* w_wrow needs to be valid. When setting 'laststatus' this may
+	     * call win_new_height() recursively. */
+	    validate_cursor();
+	if (wp->w_height != prev_height)
+	    return;  /* Recursive call already changed the size, bail out here
+			to avoid the following to mess things up. */
+	if (wp->w_wrow != wp->w_prev_fraction_row)
+	    set_fraction(wp);
+    }
 
     wp->w_height = height;
     wp->w_skipcol = 0;
@@ -5667,7 +5695,8 @@ win_new_height(wp, height)
 	lnum = wp->w_cursor.lnum;
 	if (lnum < 1)		/* can happen when starting up */
 	    lnum = 1;
-	wp->w_wrow = ((long)wp->w_fraction * (long)height - 1L) / FRACTION_MULT;
+	wp->w_wrow = ((long)wp->w_fraction * (long)height - 1L
+					 + FRACTION_MULT / 2) / FRACTION_MULT;
 	line_size = plines_win_col(wp, lnum, (long)(wp->w_cursor.col)) - 1;
 	sline = wp->w_wrow - line_size;
 
@@ -5703,8 +5732,9 @@ win_new_height(wp, height)
 		    --wp->w_wrow;
 		}
 	    }
+            set_topline(wp, lnum);
 	}
-	else
+	else if (sline > 0)
 	{
 	    while (sline > 0 && lnum > 1)
 	    {
@@ -5747,8 +5777,9 @@ win_new_height(wp, height)
 		lnum = 1;
 		wp->w_wrow -= sline;
 	    }
+
+            set_topline(wp, lnum);
 	}
-	set_topline(wp, lnum);
     }
 
     if (wp == curwin)
@@ -5757,7 +5788,8 @@ win_new_height(wp, height)
 	    update_topline();
 	curs_columns(FALSE);	/* validate w_wrow */
     }
-    wp->w_prev_fraction_row = wp->w_wrow;
+    if (prev_height > 0)
+	wp->w_prev_fraction_row = wp->w_wrow;
 
     win_comp_scroll(wp);
     redraw_win_later(wp, SOME_VALID);
@@ -6719,20 +6751,22 @@ win_hasvertsplit()
  * Return ID of added match, -1 on failure.
  */
     int
-match_add(wp, grp, pat, prio, id)
+match_add(wp, grp, pat, prio, id, pos_list)
     win_T	*wp;
     char_u	*grp;
     char_u	*pat;
     int		prio;
     int		id;
+    list_T	*pos_list;
 {
-    matchitem_T *cur;
-    matchitem_T *prev;
-    matchitem_T *m;
+    matchitem_T	*cur;
+    matchitem_T	*prev;
+    matchitem_T	*m;
     int		hlg_id;
-    regprog_T	*regprog;
+    regprog_T	*regprog = NULL;
+    int		rtype = SOME_VALID;
 
-    if (*grp == NUL || *pat == NUL)
+    if (*grp == NUL || (pat != NULL && *pat == NUL))
 	return -1;
     if (id < -1 || id == 0)
     {
@@ -6757,7 +6791,7 @@ match_add(wp, grp, pat, prio, id)
 	EMSG2(_(e_nogroup), grp);
 	return -1;
     }
-    if ((regprog = vim_regcomp(pat, RE_MAGIC)) == NULL)
+    if (pat != NULL && (regprog = vim_regcomp(pat, RE_MAGIC)) == NULL)
     {
 	EMSG2(_(e_invarg2), pat);
 	return -1;
@@ -6775,14 +6809,111 @@ match_add(wp, grp, pat, prio, id)
     }
 
     /* Build new match. */
-    m = (matchitem_T *)alloc(sizeof(matchitem_T));
+    m = (matchitem_T *)alloc_clear(sizeof(matchitem_T));
     m->id = id;
     m->priority = prio;
-    m->pattern = vim_strsave(pat);
+    m->pattern = pat == NULL ? NULL : vim_strsave(pat);
     m->hlg_id = hlg_id;
     m->match.regprog = regprog;
     m->match.rmm_ic = FALSE;
     m->match.rmm_maxcol = 0;
+
+    /* Set up position matches */
+    if (pos_list != NULL)
+    {
+	linenr_T	toplnum = 0;
+	linenr_T	botlnum = 0;
+	listitem_T	*li;
+	int		i;
+
+	for (i = 0, li = pos_list->lv_first; li != NULL && i < MAXPOSMATCH;
+							i++, li = li->li_next)
+	{
+	    linenr_T	lnum = 0;
+	    colnr_T	col = 0;
+	    int		len = 1;
+	    list_T	*subl;
+	    listitem_T	*subli;
+	    int		error = FALSE;
+
+	    if (li->li_tv.v_type == VAR_LIST)
+	    {
+		subl = li->li_tv.vval.v_list;
+		if (subl == NULL)
+		    goto fail;
+		subli = subl->lv_first;
+		if (subli == NULL)
+		    goto fail;
+		lnum = get_tv_number_chk(&subli->li_tv, &error);
+		if (error == TRUE)
+		    goto fail;
+		if (lnum == 0)
+		{
+		    --i;
+		    continue;
+		}
+		m->pos.pos[i].lnum = lnum;
+		subli = subli->li_next;
+		if (subli != NULL)
+		{
+		    col = get_tv_number_chk(&subli->li_tv, &error);
+		    if (error == TRUE)
+			goto fail;
+		    subli = subli->li_next;
+		    if (subli != NULL)
+		    {
+			len = get_tv_number_chk(&subli->li_tv, &error);
+			if (error == TRUE)
+			    goto fail;
+		    }
+		}
+		m->pos.pos[i].col = col;
+		m->pos.pos[i].len = len;
+	    }
+	    else if (li->li_tv.v_type == VAR_NUMBER)
+	    {
+		if (li->li_tv.vval.v_number == 0)
+		{
+		    --i;
+		    continue;
+		}
+		m->pos.pos[i].lnum = li->li_tv.vval.v_number;
+		m->pos.pos[i].col = 0;
+		m->pos.pos[i].len = 0;
+	    }
+	    else
+	    {
+		EMSG(_("List or number required"));
+		goto fail;
+	    }
+	    if (toplnum == 0 || lnum < toplnum)
+		toplnum = lnum;
+	    if (botlnum == 0 || lnum >= botlnum)
+		botlnum = lnum + 1;
+	}
+
+	/* Calculate top and bottom lines for redrawing area */
+	if (toplnum != 0)
+	{
+	    if (wp->w_buffer->b_mod_set)
+	    {
+		if (wp->w_buffer->b_mod_top > toplnum)
+		    wp->w_buffer->b_mod_top = toplnum;
+		if (wp->w_buffer->b_mod_bot < botlnum)
+		    wp->w_buffer->b_mod_bot = botlnum;
+	    }
+	    else
+	    {
+		wp->w_buffer->b_mod_set = TRUE;
+		wp->w_buffer->b_mod_top = toplnum;
+		wp->w_buffer->b_mod_bot = botlnum;
+		wp->w_buffer->b_mod_xlines = 0;
+	    }
+	    m->pos.toplnum = toplnum;
+	    m->pos.botlnum = botlnum;
+	    rtype = VALID;
+	}
+    }
 
     /* Insert new match.  The match list is in ascending order with regard to
      * the match priorities. */
@@ -6799,8 +6930,12 @@ match_add(wp, grp, pat, prio, id)
 	prev->next = m;
     m->next = cur;
 
-    redraw_later(SOME_VALID);
+    redraw_later(rtype);
     return id;
+
+fail:
+    vim_free(m);
+    return -1;
 }
 
 /*
@@ -6813,8 +6948,9 @@ match_delete(wp, id, perr)
     int		id;
     int		perr;
 {
-    matchitem_T *cur = wp->w_match_head;
-    matchitem_T *prev = cur;
+    matchitem_T	*cur = wp->w_match_head;
+    matchitem_T	*prev = cur;
+    int		rtype = SOME_VALID;
 
     if (id < 1)
     {
@@ -6840,8 +6976,26 @@ match_delete(wp, id, perr)
 	prev->next = cur->next;
     vim_regfree(cur->match.regprog);
     vim_free(cur->pattern);
+    if (cur->pos.toplnum != 0)
+    {
+	if (wp->w_buffer->b_mod_set)
+	{
+	    if (wp->w_buffer->b_mod_top > cur->pos.toplnum)
+		wp->w_buffer->b_mod_top = cur->pos.toplnum;
+	    if (wp->w_buffer->b_mod_bot < cur->pos.botlnum)
+		wp->w_buffer->b_mod_bot = cur->pos.botlnum;
+	}
+	else
+	{
+	    wp->w_buffer->b_mod_set = TRUE;
+	    wp->w_buffer->b_mod_top = cur->pos.toplnum;
+	    wp->w_buffer->b_mod_bot = cur->pos.botlnum;
+	    wp->w_buffer->b_mod_xlines = 0;
+	}
+	rtype = VALID;
+    }
     vim_free(cur);
-    redraw_later(SOME_VALID);
+    redraw_later(rtype);
     return 0;
 }
 
