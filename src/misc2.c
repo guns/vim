@@ -4367,21 +4367,20 @@ vim_findfile_init(path, filename, stopdirs, level, free_visited, find_what,
 		temp = alloc((int)(STRLEN(search_ctx->ffsc_wc_path)
 				 + STRLEN(search_ctx->ffsc_fix_path + len)
 				 + 1));
-	    }
+		if (temp == NULL || wc_path == NULL)
+		{
+		    vim_free(buf);
+		    vim_free(temp);
+		    vim_free(wc_path);
+		    goto error_return;
+		}
 
-	    if (temp == NULL || wc_path == NULL)
-	    {
-		vim_free(buf);
-		vim_free(temp);
+		STRCPY(temp, search_ctx->ffsc_fix_path + len);
+		STRCAT(temp, search_ctx->ffsc_wc_path);
+		vim_free(search_ctx->ffsc_wc_path);
 		vim_free(wc_path);
-		goto error_return;
+		search_ctx->ffsc_wc_path = temp;
 	    }
-
-	    STRCPY(temp, search_ctx->ffsc_fix_path + len);
-	    STRCAT(temp, search_ctx->ffsc_wc_path);
-	    vim_free(search_ctx->ffsc_wc_path);
-	    vim_free(wc_path);
-	    search_ctx->ffsc_wc_path = temp;
 	}
 #endif
 	vim_free(buf);
@@ -5082,7 +5081,7 @@ ff_wc_equal(s1, s2)
         i += MB_PTR2LEN(s1 + i);
         j += MB_PTR2LEN(s2 + j);
     }
-    return c1 == c2;
+    return s1[i] == s2[j];
 }
 #endif
 
