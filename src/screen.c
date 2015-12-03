@@ -163,6 +163,7 @@ static void redraw_block __ARGS((int row, int end, win_T *wp));
 static int win_do_lines __ARGS((win_T *wp, int row, int line_count, int mayclear, int del));
 static void win_rest_invalid __ARGS((win_T *wp));
 static void msg_pos_mode __ARGS((void));
+static void recording_mode __ARGS((int attr));
 #if defined(FEAT_WINDOWS)
 static void draw_tabline __ARGS((void));
 #endif
@@ -5421,7 +5422,12 @@ win_line(wp, lnum, startrow, endrow, nochange)
 		else
 		    /* DBCS: Put second byte in the second screen char. */
 		    ScreenLines[off] = mb_c & 0xff;
-		++vcol;
+		if (draw_state > WL_NR
+#ifdef FEAT_DIFF
+			&& filler_todo <= 0
+#endif
+			)
+		    ++vcol;
 		/* When "tocol" is halfway a character, set it to the end of
 		 * the character, otherwise highlighting won't stop. */
 		if (tocol == vcol)
@@ -10047,7 +10053,13 @@ showmode()
 	    if (gui.in_use)
 	    {
 		if (hangul_input_state_get())
-		    MSG_PUTS_ATTR(" \307\321\261\333", attr);   /* HANGUL */
+		{
+		    /* HANGUL */
+		    if (enc_utf8)
+			MSG_PUTS_ATTR(" \355\225\234\352\270\200", attr);
+		    else
+			MSG_PUTS_ATTR(" \307\321\261\333", attr);
+		}
 	    }
 #endif
 #ifdef FEAT_INS_EXPAND
@@ -10157,7 +10169,7 @@ showmode()
 #endif
 		)
 	{
-	    MSG_PUTS_ATTR(_("recording"), attr);
+	    recording_mode(attr);
 	    need_clear = TRUE;
 	}
 
@@ -10221,8 +10233,21 @@ unshowmode(force)
     {
 	msg_pos_mode();
 	if (Recording)
-	    MSG_PUTS_ATTR(_("recording"), hl_attr(HLF_CM));
+	    recording_mode(hl_attr(HLF_CM));
 	msg_clr_eos();
+    }
+}
+
+    static void
+recording_mode(attr)
+    int attr;
+{
+    MSG_PUTS_ATTR(_("recording"), attr);
+    if (!shortmess(SHM_RECORDING))
+    {
+	char_u s[4];
+	sprintf((char *)s, " @%c", Recording);
+	MSG_PUTS_ATTR(s, attr);
     }
 }
 

@@ -1800,7 +1800,7 @@ write_viminfo(file, forceit)
     struct stat	st_old;		/* mch_stat() of existing viminfo file */
 #endif
 #ifdef WIN3264
-    long	perm = -1;
+    int		hidden = FALSE;
 #endif
 
     if (no_viminfo())
@@ -1863,7 +1863,7 @@ write_viminfo(file, forceit)
 #endif
 #ifdef WIN3264
 	/* Get the file attributes of the existing viminfo file. */
-	perm = mch_getperm(fname);
+	hidden = mch_ishidden(fname);
 #endif
 
 	/*
@@ -2038,7 +2038,7 @@ write_viminfo(file, forceit)
 
 #ifdef WIN3264
 	/* If the viminfo file was hidden then also hide the new file. */
-	if (perm > 0 && (perm & FILE_ATTRIBUTE_HIDDEN))
+	if (hidden)
 	    mch_hide(fname);
 #endif
     }
@@ -6579,6 +6579,7 @@ ex_helptags(eap)
     if (dirname == NULL || !mch_isdir(dirname))
     {
 	EMSG2(_("E150: Not a directory: %s"), eap->arg);
+	vim_free(dirname);
 	return;
     }
 

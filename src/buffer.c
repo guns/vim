@@ -1992,6 +1992,7 @@ free_buf_options(buf, free_p_ff)
     clear_string_option(&buf->b_p_fp);
     clear_string_option(&buf->b_p_path);
     clear_string_option(&buf->b_p_tags);
+    clear_string_option(&buf->b_p_tc);
 #ifdef FEAT_INS_EXPAND
     clear_string_option(&buf->b_p_dict);
     clear_string_option(&buf->b_p_tsr);
