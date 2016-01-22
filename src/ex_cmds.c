@@ -14,6 +14,10 @@
 #include "vim.h"
 #include "version.h"
 
+#ifdef FEAT_FLOAT
+# include <float.h>
+#endif
+
 #ifdef FEAT_EX_EXTRA
 static int linelen __ARGS((int *has_tab));
 #endif
@@ -275,18 +279,30 @@ linelen(has_tab)
 static char_u	*sortbuf1;
 static char_u	*sortbuf2;
 
-static int	sort_ic;		/* ignore case */
-static int	sort_nr;		/* sort on number */
-static int	sort_rx;		/* sort on regex instead of skipping it */
+static int	sort_ic;	/* ignore case */
+static int	sort_nr;	/* sort on number */
+static int	sort_rx;	/* sort on regex instead of skipping it */
+#ifdef FEAT_FLOAT
+static int	sort_flt;	/* sort on floating number */
+#endif
 
-static int	sort_abort;		/* flag to indicate if sorting has been interrupted */
+static int	sort_abort;	/* flag to indicate if sorting has been interrupted */
 
 /* Struct to store info to be sorted. */
 typedef struct
 {
     linenr_T	lnum;			/* line number */
-    long	start_col_nr;		/* starting column number or number */
-    long	end_col_nr;		/* ending column number */
+    union {
+	struct
+	{
+	    long	start_col_nr;		/* starting column number */
+	    long	end_col_nr;		/* ending column number */
+	} line;
+	long	value;		/* value if sorting by integer */
+#ifdef FEAT_FLOAT
+	float_T value_flt;	/* value if sorting by float */
+#endif
+    } st_u;
 } sorti_T;
 
 static int
@@ -319,19 +335,24 @@ sort_compare(s1, s2)
     /* When sorting numbers "start_col_nr" is the number, not the column
      * number. */
     if (sort_nr)
-	result = l1.start_col_nr == l2.start_col_nr ? 0
-				 : l1.start_col_nr > l2.start_col_nr ? 1 : -1;
+	result = l1.st_u.value == l2.st_u.value ? 0
+				 : l1.st_u.value > l2.st_u.value ? 1 : -1;
+#ifdef FEAT_FLOAT
+    else if (sort_flt)
+	result = l1.st_u.value_flt == l2.st_u.value_flt ? 0
+			     : l1.st_u.value_flt > l2.st_u.value_flt ? 1 : -1;
+#endif
     else
     {
 	/* We need to copy one line into "sortbuf1", because there is no
 	 * guarantee that the first pointer becomes invalid when obtaining the
 	 * second one. */
-	STRNCPY(sortbuf1, ml_get(l1.lnum) + l1.start_col_nr,
-					 l1.end_col_nr - l1.start_col_nr + 1);
-	sortbuf1[l1.end_col_nr - l1.start_col_nr] = 0;
-	STRNCPY(sortbuf2, ml_get(l2.lnum) + l2.start_col_nr,
-					 l2.end_col_nr - l2.start_col_nr + 1);
-	sortbuf2[l2.end_col_nr - l2.start_col_nr] = 0;
+	STRNCPY(sortbuf1, ml_get(l1.lnum) + l1.st_u.line.start_col_nr,
+		     l1.st_u.line.end_col_nr - l1.st_u.line.start_col_nr + 1);
+	sortbuf1[l1.st_u.line.end_col_nr - l1.st_u.line.start_col_nr] = 0;
+	STRNCPY(sortbuf2, ml_get(l2.lnum) + l2.st_u.line.start_col_nr,
+		     l2.st_u.line.end_col_nr - l2.st_u.line.start_col_nr + 1);
+	sortbuf2[l2.st_u.line.end_col_nr - l2.st_u.line.start_col_nr] = 0;
 
 	result = sort_ic ? STRICMP(sortbuf1, sortbuf2)
 						 : STRCMP(sortbuf1, sortbuf2);
@@ -365,8 +386,8 @@ ex_sort(eap)
     long	deleted;
     colnr_T	start_col;
     colnr_T	end_col;
-    int		sort_oct;		/* sort on octal number */
-    int		sort_hex;		/* sort on hex number */
+    int		sort_what = 0;
+    int		format_found = 0;
 
     /* Sorting one line is really quick! */
     if (count <= 1)
@@ -381,7 +402,10 @@ ex_sort(eap)
     if (nrs == NULL)
 	goto sortend;
 
-    sort_abort = sort_ic = sort_rx = sort_nr = sort_oct = sort_hex = 0;
+    sort_abort = sort_ic = sort_rx = sort_nr = 0;
+#ifdef FEAT_FLOAT
+    sort_flt = 0;
+#endif
 
     for (p = eap->arg; *p != NUL; ++p)
     {
@@ -392,11 +416,32 @@ ex_sort(eap)
 	else if (*p == 'r')
 	    sort_rx = TRUE;
 	else if (*p == 'n')
-	    sort_nr = 2;
+	{
+	    sort_nr = 1;
+	    ++format_found;
+	}
+#ifdef FEAT_FLOAT
+	else if (*p == 'f')
+	{
+	    sort_flt = 1;
+	    ++format_found;
+	}
+#endif
+	else if (*p == 'b')
+	{
+	    sort_what = STR2NR_BIN + STR2NR_FORCE;
+	    ++format_found;
+	}
 	else if (*p == 'o')
-	    sort_oct = 2;
+	{
+	    sort_what = STR2NR_OCT + STR2NR_FORCE;
+	    ++format_found;
+	}
 	else if (*p == 'x')
-	    sort_hex = 2;
+	{
+	    sort_what = STR2NR_HEX + STR2NR_FORCE;
+	    ++format_found;
+	}
 	else if (*p == 'u')
 	    unique = TRUE;
 	else if (*p == '"')	/* comment start */
@@ -439,15 +484,16 @@ ex_sort(eap)
 	}
     }
 
-    /* Can only have one of 'n', 'o' and 'x'. */
-    if (sort_nr + sort_oct + sort_hex > 2)
+    /* Can only have one of 'n', 'b', 'o' and 'x'. */
+    if (format_found > 1)
     {
 	EMSG(_(e_invarg));
 	goto sortend;
     }
 
-    /* From here on "sort_nr" is used as a flag for any number sorting. */
-    sort_nr += sort_oct + sort_hex;
+    /* From here on "sort_nr" is used as a flag for any integer number
+     * sorting. */
+    sort_nr += sort_what;
 
     /*
      * Make an array with all line numbers.  This avoids having to copy all
@@ -480,7 +526,7 @@ ex_sort(eap)
 	    if (regmatch.regprog != NULL)
 		end_col = 0;
 
-	if (sort_nr)
+	if (sort_nr || sort_flt)
 	{
 	    /* Make sure vim_str2nr doesn't read any digits past the end
 	     * of the match, by temporarily terminating the string there */
@@ -489,25 +535,45 @@ ex_sort(eap)
 	    *s2 = NUL;
 	    /* Sorting on number: Store the number itself. */
 	    p = s + start_col;
-	    if (sort_hex)
-		s = skiptohex(p);
+	    if (sort_nr)
+	    {
+		if (sort_what & STR2NR_HEX)
+		    s = skiptohex(p);
+		else if (sort_what & STR2NR_BIN)
+		    s = skiptobin(p);
+		else
+		    s = skiptodigit(p);
+		if (s > p && s[-1] == '-')
+		    --s;  /* include preceding negative sign */
+		if (*s == NUL)
+		    /* empty line should sort before any number */
+		    nrs[lnum - eap->line1].st_u.value = -MAXLNUM;
+		else
+		    vim_str2nr(s, NULL, NULL, sort_what,
+			       &nrs[lnum - eap->line1].st_u.value, NULL, 0);
+	    }
+#ifdef FEAT_FLOAT
 	    else
-		s = skiptodigit(p);
-	    if (s > p && s[-1] == '-')
-		--s;  /* include preceding negative sign */
-	    if (*s == NUL)
-		/* empty line should sort before any number */
-		nrs[lnum - eap->line1].start_col_nr = -MAXLNUM;
-	    else
-		vim_str2nr(s, NULL, NULL, sort_oct, sort_hex,
-				  &nrs[lnum - eap->line1].start_col_nr, NULL, 0);
+	    {
+		s = skipwhite(p);
+		if (*s == '+')
+		    s = skipwhite(s + 1);
+
+		if (*s == NUL)
+		    /* empty line should sort before any number */
+		    nrs[lnum - eap->line1].st_u.value_flt = -DBL_MAX;
+		else
+		    nrs[lnum - eap->line1].st_u.value_flt =
+						      strtod((char *)s, NULL);
+	    }
+#endif
 	    *s2 = c;
 	}
 	else
 	{
 	    /* Store the column to sort at. */
-	    nrs[lnum - eap->line1].start_col_nr = start_col;
-	    nrs[lnum - eap->line1].end_col_nr = end_col;
+	    nrs[lnum - eap->line1].st_u.line.start_col_nr = start_col;
+	    nrs[lnum - eap->line1].st_u.line.end_col_nr = end_col;
 	}
 
 	nrs[lnum - eap->line1].lnum = lnum;
@@ -540,10 +606,11 @@ ex_sort(eap)
 	if (!unique || i == 0
 		|| (sort_ic ? STRICMP(s, sortbuf1) : STRCMP(s, sortbuf1)) != 0)
 	{
-	    if (ml_append(lnum++, s, (colnr_T)0, FALSE) == FAIL)
+	    /* Copy the line into a buffer, it may become invalid in
+	     * ml_append(). And it's needed for "unique". */
+	    STRCPY(sortbuf1, s);
+	    if (ml_append(lnum++, sortbuf1, (colnr_T)0, FALSE) == FAIL)
 		break;
-	    if (unique)
-		STRCPY(sortbuf1, s);
 	}
 	fast_breakcheck();
 	if (got_int)
@@ -1574,7 +1641,7 @@ make_filter_cmd(cmd, itmp, otmp)
     char_u	*buf;
     long_u	len;
 
-#if (defined(UNIX) && !defined(ARCHIE)) || defined(OS2)
+#if defined(UNIX)
     int		is_fish_shell;
     char_u	*shell_name = get_isolated_shell_name();
 
@@ -1594,7 +1661,7 @@ make_filter_cmd(cmd, itmp, otmp)
     if (buf == NULL)
 	return NULL;
 
-#if (defined(UNIX) && !defined(ARCHIE)) || defined(OS2)
+#if defined(UNIX)
     /*
      * Put braces around the command (for concatenated commands) when
      * redirecting input and/or output.
@@ -1695,9 +1762,10 @@ append_redir(buf, buflen, opt, fname)
 		(char *)opt, (char *)fname);
 }
 
-#ifdef FEAT_VIMINFO
+#if defined(FEAT_VIMINFO) || defined(PROTO)
 
 static int no_viminfo __ARGS((void));
+static void write_viminfo_barlines(vir_T *virp, FILE *fp_out);
 static int  viminfo_errcnt;
 
     static int
@@ -2111,6 +2179,7 @@ do_viminfo(fp_in, fp_out, flags)
 #ifdef FEAT_MBYTE
     vir.vir_conv.vc_type = CONV_NONE;
 #endif
+    ga_init2(&vir.vir_barlines, (int)sizeof(char_u *), 100);
 
     if (fp_in != NULL)
     {
@@ -2147,6 +2216,7 @@ do_viminfo(fp_in, fp_out, flags)
 #endif
 	write_viminfo_filemarks(fp_out);
 	write_viminfo_bufferlist(fp_out);
+	write_viminfo_barlines(&vir, fp_out);
 	count = write_viminfo_marks(fp_out);
     }
     if (fp_in != NULL
@@ -2158,6 +2228,7 @@ do_viminfo(fp_in, fp_out, flags)
     if (vir.vir_conv.vc_type != CONV_NONE)
 	convert_setup(&vir.vir_conv, NULL, NULL);
 #endif
+    ga_clear_strings(&vir.vir_barlines);
 }
 
 /*
@@ -2184,7 +2255,6 @@ read_viminfo_up_to_marks(virp, forceit, writing)
 	{
 		/* Characters reserved for future expansion, ignored now */
 	    case '+': /* "+40 /path/dir file", for running vim without args */
-	    case '|': /* to be defined */
 	    case '^': /* to be defined */
 	    case '<': /* long line - ignored */
 		/* A comment or empty line. */
@@ -2192,6 +2262,11 @@ read_viminfo_up_to_marks(virp, forceit, writing)
 	    case '\r':
 	    case '\n':
 	    case '#':
+		eof = viminfo_readline(virp);
+		break;
+	    case '|': /* copy line (for future use) */
+		if (writing)
+		    ga_add_string(&virp->vir_barlines, virp->vir_line);
 		eof = viminfo_readline(virp);
 		break;
 	    case '*': /* "*encoding=value" */
@@ -2414,6 +2489,21 @@ viminfo_writestring(fd, p)
 	putc(c, fd);
     }
     putc('\n', fd);
+}
+
+    static void
+write_viminfo_barlines(vir_T *virp, FILE *fp_out)
+{
+    int		i;
+    garray_T	*gap = &virp->vir_barlines;
+
+    if (gap->ga_len > 0)
+    {
+	fputs(_("\n# Bar lines, copied verbatim:\n"), fp_out);
+
+	for (i = 0; i < gap->ga_len; ++i)
+	    fputs(((char **)(gap->ga_data))[i], fp_out);
+    }
 }
 #endif /* FEAT_VIMINFO */
 
@@ -6942,9 +7032,9 @@ struct sign
     int		sn_typenr;	/* type number of sign */
     char_u	*sn_name;	/* name of sign */
     char_u	*sn_icon;	/* name of pixmap */
-#ifdef FEAT_SIGN_ICONS
+# ifdef FEAT_SIGN_ICONS
     void	*sn_image;	/* icon image */
-#endif
+# endif
     char_u	*sn_text;	/* text used instead of pixmap */
     int		sn_line_hl;	/* highlight ID for line */
     int		sn_text_hl;	/* highlight ID for text */
@@ -6959,19 +7049,19 @@ static void sign_undefine __ARGS((sign_T *sp, sign_T *sp_prev));
 
 static char *cmds[] = {
 			"define",
-#define SIGNCMD_DEFINE	0
+# define SIGNCMD_DEFINE	0
 			"undefine",
-#define SIGNCMD_UNDEFINE 1
+# define SIGNCMD_UNDEFINE 1
 			"list",
-#define SIGNCMD_LIST	2
+# define SIGNCMD_LIST	2
 			"place",
-#define SIGNCMD_PLACE	3
+# define SIGNCMD_PLACE	3
 			"unplace",
-#define SIGNCMD_UNPLACE	4
+# define SIGNCMD_UNPLACE 4
 			"jump",
-#define SIGNCMD_JUMP	5
+# define SIGNCMD_JUMP	5
 			NULL
-#define SIGNCMD_LAST	6
+# define SIGNCMD_LAST	6
 };
 
 /*
@@ -7114,7 +7204,7 @@ ex_sign(eap)
 			vim_free(sp->sn_icon);
 			sp->sn_icon = vim_strnsave(arg, (int)(p - arg));
 			backslash_halve(sp->sn_icon);
-#ifdef FEAT_SIGN_ICONS
+# ifdef FEAT_SIGN_ICONS
 			if (gui.in_use)
 			{
 			    out_flush();
@@ -7122,7 +7212,7 @@ ex_sign(eap)
 				gui_mch_destroy_sign(sp->sn_image);
 			    sp->sn_image = gui_mch_register_sign(sp->sn_icon);
 			}
-#endif
+# endif
 		    }
 		    else if (STRNCMP(arg, "text=", 5) == 0)
 		    {
@@ -7131,7 +7221,7 @@ ex_sign(eap)
 			int	len;
 
 			arg += 5;
-#ifdef FEAT_MBYTE
+# ifdef FEAT_MBYTE
 			/* Count cells and check for non-printable chars */
 			if (has_mbyte)
 			{
@@ -7144,7 +7234,7 @@ ex_sign(eap)
 			    }
 			}
 			else
-#endif
+# endif
 			{
 			    for (s = arg; s < p; ++s)
 				if (!vim_isprintc(*s))
@@ -7347,9 +7437,9 @@ ex_sign(eap)
 		    do_cmdline_cmd(cmd);
 		    vim_free(cmd);
 		}
-#ifdef FEAT_FOLDING
+# ifdef FEAT_FOLDING
 		foldOpenCursor();
-#endif
+# endif
 	    }
 	    else
 		EMSGN(_("E157: Invalid sign ID: %ld"), id);
@@ -7399,7 +7489,7 @@ ex_sign(eap)
     }
 }
 
-#if defined(FEAT_SIGN_ICONS) || defined(PROTO)
+# if defined(FEAT_SIGN_ICONS) || defined(PROTO)
 /*
  * Allocate the icons.  Called when the GUI has started.  Allows defining
  * signs before it starts.
@@ -7413,7 +7503,7 @@ sign_gui_started()
 	if (sp->sn_icon != NULL)
 	    sp->sn_image = gui_mch_register_sign(sp->sn_icon);
 }
-#endif
+# endif
 
 /*
  * List one sign.
@@ -7429,12 +7519,12 @@ sign_list_defined(sp)
     {
 	MSG_PUTS(" icon=");
 	msg_outtrans(sp->sn_icon);
-#ifdef FEAT_SIGN_ICONS
+# ifdef FEAT_SIGN_ICONS
 	if (sp->sn_image == NULL)
 	    MSG_PUTS(_(" (NOT FOUND)"));
-#else
+# else
 	MSG_PUTS(_(" (not supported)"));
-#endif
+# endif
     }
     if (sp->sn_text != NULL)
     {
@@ -7471,13 +7561,13 @@ sign_undefine(sp, sp_prev)
 {
     vim_free(sp->sn_name);
     vim_free(sp->sn_icon);
-#ifdef FEAT_SIGN_ICONS
+# ifdef FEAT_SIGN_ICONS
     if (sp->sn_image != NULL)
     {
 	out_flush();
 	gui_mch_destroy_sign(sp->sn_image);
     }
-#endif
+# endif
     vim_free(sp->sn_text);
     if (sp_prev == NULL)
 	first_sign = sp->sn_next;
@@ -7531,7 +7621,7 @@ sign_get_text(typenr)
     return NULL;
 }
 
-#if defined(FEAT_SIGN_ICONS) || defined(PROTO)
+# if defined(FEAT_SIGN_ICONS) || defined(PROTO)
     void *
 sign_get_image(typenr)
     int		typenr;		/* the attribute which may have a sign */
@@ -7543,7 +7633,7 @@ sign_get_image(typenr)
 	    return sp->sn_image;
     return NULL;
 }
-#endif
+# endif
 
 /*
  * Get the name of a sign by its typenr.
@@ -7560,7 +7650,7 @@ sign_typenr2name(typenr)
     return (char_u *)_("[Deleted]");
 }
 
-#if defined(EXITFREE) || defined(PROTO)
+# if defined(EXITFREE) || defined(PROTO)
 /*
  * Undefine/free all signs.
  */
@@ -7570,9 +7660,9 @@ free_signs()
     while (first_sign != NULL)
 	sign_undefine(first_sign, NULL);
 }
-#endif
+# endif
 
-#if defined(FEAT_CMDL_COMPL) || defined(PROTO)
+# if defined(FEAT_CMDL_COMPL) || defined(PROTO)
 static enum
 {
     EXP_SUBCMD,		/* expand :sign sub-commands */
@@ -7750,8 +7840,33 @@ set_context_in_sign_cmd(xp, arg)
 	}
     }
 }
+# endif
 #endif
-#endif
+
+/*
+ * Make the user happy.
+ */
+    void
+ex_smile(eap)
+    exarg_T	*eap UNUSED;
+{
+    static char *code = "\34 \4o\14$\4ox\30 \2o\30$\1ox\25 \2o\36$\1o\11 \1o\1$\3 \2$\1 \1o\1$x\5 \1o\1 \1$\1 \2o\10 \1o\44$\1o\7 \2$\1 \2$\1 \2$\1o\1$x\2 \2o\1 \1$\1 \1$\1 \1\"\1$\6 \1o\11$\4 \15$\4 \11$\1o\7 \3$\1o\2$\1o\1$x\2 \1\"\6$\1o\1$\5 \1o\11$\6 \13$\6 \12$\1o\4 \10$x\4 \7$\4 \13$\6 \13$\6 \27$x\4 \27$\4 \15$\4 \16$\2 \3\"\3$x\5 \1\"\3$\4\"\61$\5 \1\"\3$x\6 \3$\3 \1o\62$\5 \1\"\3$\1ox\5 \1o\2$\1\"\3 \63$\7 \3$\1ox\5 \3$\4 \55$\1\"\1 \1\"\6$\5o\4$\1ox\4 \1o\3$\4o\5$\2 \45$\3 \1o\21$x\4 \10$\1\"\4$\3 \42$\5 \4$\10\"x\3 \4\"\7 \4$\4 \1\"\34$\1\"\6 \1o\3$x\16 \1\"\3$\1o\5 \3\"\22$\1\"\2$\1\"\11 \3$x\20 \3$\1o\12 \1\"\2$\2\"\6$\4\"\13 \1o\3$x\21 \4$\1o\40 \1o\3$\1\"x\22 \1\"\4$\1o\6 \1o\6$\1o\1\"\4$\1o\10 \1o\4$x\24 \1\"\5$\2o\5 \2\"\4$\1o\5$\1o\3 \1o\4$\2\"x\27 \2\"\5$\4o\2 \1\"\3$\1o\11$\3\"x\32 \2\"\7$\2o\1 \12$x\42 \4\"\13$x\46 \14$x\47 \12$\1\"x\50 \1\"\3$\4\"x";
+    char *p;
+    int n;
+
+    msg_start();
+    msg_putchar('\n');
+    for (p = code; *p != NUL; ++p)
+	if (*p == 'x')
+	    msg_putchar('\n');
+	else
+	    for (n = *p++; n > 0; --n)
+		if (*p == 'o' || *p == '$')
+		    msg_putchar_attr(*p, hl_attr(HLF_L));
+		else
+		    msg_putchar(*p);
+    msg_clr_eos();
+}
 
 #if defined(FEAT_GUI) || defined(FEAT_CLIENTSERVER) || defined(PROTO)
 /*

@@ -1955,6 +1955,7 @@ free_buf_options(buf, free_p_ff)
     clear_string_option(&buf->b_p_nf);
 #ifdef FEAT_SYN_HL
     clear_string_option(&buf->b_p_syn);
+    clear_string_option(&buf->b_s.b_syn_isk);
 #endif
 #ifdef FEAT_SPELL
     clear_string_option(&buf->b_s.b_p_spc);
@@ -2794,6 +2795,8 @@ buflist_list(eap)
 		(buf->b_flags & BF_READERR) ? 'x'
 					    : (bufIsChanged(buf) ? '+' : ' '),
 		NameBuff);
+	if (len > IOSIZE - 20)
+	    len = IOSIZE - 20;
 
 	/* put "line 999" in column 40 or after the file name */
 	i = 40 - vim_strsize(IObuff);

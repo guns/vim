@@ -2543,7 +2543,8 @@ do_one_cmd(cmdlinep, sourcing,
     correct_range(&ea);
 
 #ifdef FEAT_FOLDING
-    if (((ea.argt & WHOLEFOLD) || ea.addr_count >= 2) && !global_busy)
+    if (((ea.argt & WHOLEFOLD) || ea.addr_count >= 2) && !global_busy
+	    && ea.addr_type == ADDR_LINES)
     {
 	/* Put the first line at the start of a closed fold, put the last line
 	 * at the end of a closed fold. */
@@ -3794,7 +3795,7 @@ set_one_cmd_context(xp, buff)
 
 	/* Check for environment variable */
 	if (*xp->xp_pattern == '$'
-#if defined(MSDOS) || defined(MSWIN) || defined(OS2)
+#if defined(MSDOS) || defined(MSWIN)
 		|| *xp->xp_pattern == '%'
 #endif
 		)
@@ -5073,7 +5074,7 @@ expand_filename(eap, cmdlinep, errormsgp)
 		 * For Unix and OS/2, when wildcards are expanded, this is
 		 * done by ExpandOne() below.
 		 */
-#if defined(UNIX) || defined(OS2)
+#if defined(UNIX)
 		if (!has_wildcards)
 #endif
 		    backslash_halve(eap->arg);
@@ -6915,6 +6916,7 @@ parse_addr_type_arg(value, vallen, argt, addr_type_arg)
     int		*addr_type_arg;
 {
     int	    i, a, b;
+
     for (i = 0; addr_type_complete[i].expand != -1; ++i)
     {
 	a = (int)STRLEN(addr_type_complete[i].name) == vallen;
@@ -6929,7 +6931,9 @@ parse_addr_type_arg(value, vallen, argt, addr_type_arg)
     if (addr_type_complete[i].expand == -1)
     {
 	char_u	*err = value;
-	for (i=0; err[i] == NUL || !vim_iswhite(err[i]); i++);
+
+	for (i = 0; err[i] != NUL && !vim_iswhite(err[i]); i++)
+	    ;
 	err[i] = NUL;
 	EMSG2(_("E180: Invalid address type value: %s"), err);
 	return FAIL;
@@ -7142,7 +7146,7 @@ ex_quit(eap)
 				       | (eap->forceit ? CCGD_FORCEIT : 0)
 				       | CCGD_EXCMD))
 	    || check_more(TRUE, eap->forceit) == FAIL
-	    || (only_one_window() && check_changed_any(eap->forceit)))
+	    || (only_one_window() && check_changed_any(eap->forceit, TRUE)))
     {
 	not_exiting();
     }
@@ -7213,7 +7217,7 @@ ex_quit_all(eap)
 #endif
 
     exiting = TRUE;
-    if (eap->forceit || !check_changed_any(FALSE))
+    if (eap->forceit || !check_changed_any(FALSE, FALSE))
 	getout(0);
     not_exiting();
 }
@@ -7608,7 +7612,7 @@ ex_exit(eap)
 		    || curbufIsChanged())
 		&& do_write(eap) == FAIL)
 	    || check_more(TRUE, eap->forceit) == FAIL
-	    || (only_one_window() && check_changed_any(eap->forceit)))
+	    || (only_one_window() && check_changed_any(eap->forceit, FALSE)))
     {
 	not_exiting();
     }
@@ -7835,7 +7839,7 @@ alist_new()
 # endif
 #endif
 
-#if (!defined(UNIX) && !defined(__EMX__)) || defined(ARCHIE) || defined(PROTO)
+#if (!defined(UNIX) && !defined(__EMX__)) || defined(PROTO)
 /*
  * Expand the file names in the global argument list.
  * If "fnum_list" is not NULL, use "fnum_list[fnum_len]" as a list of buffer
@@ -10222,17 +10226,26 @@ exec_normal_cmd(cmd, remap, silent)
     int		remap;
     int		silent;
 {
+    /* Stuff the argument into the typeahead buffer. */
+    ins_typebuf(cmd, remap, 0, TRUE, silent);
+    exec_normal(FALSE);
+}
+#endif
+
+#if defined(FEAT_EX_EXTRA) || defined(FEAT_MENU) || defined(FEAT_EVAL) \
+	|| defined(PROTO)
+/*
+ * Execute normal_cmd() until there is no typeahead left.
+ */
+    void
+exec_normal(int was_typed)
+{
     oparg_T	oa;
 
-    /*
-     * Stuff the argument into the typeahead buffer.
-     * Execute normal_cmd() until there is no typeahead left.
-     */
     clear_oparg(&oa);
     finish_op = FALSE;
-    ins_typebuf(cmd, remap, 0, TRUE, silent);
-    while ((!stuff_empty() || (!typebuf_typed() && typebuf.tb_len > 0))
-								  && !got_int)
+    while ((!stuff_empty() || ((was_typed || !typebuf_typed())
+		    && typebuf.tb_len > 0)) && !got_int)
     {
 	update_topline_cursor();
 	normal_cmd(&oa, TRUE);	/* execute a Normal mode cmd */

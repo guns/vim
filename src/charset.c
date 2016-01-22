@@ -30,21 +30,32 @@ static int    chartab_initialized = FALSE;
 #define RESET_CHARTAB(buf, c) (buf)->b_chartab[(unsigned)(c) >> 3] &= ~(1 << ((c) & 0x7))
 #define GET_CHARTAB(buf, c) ((buf)->b_chartab[(unsigned)(c) >> 3] & (1 << ((c) & 0x7)))
 
+/* table used below, see init_chartab() for an explanation */
+static char_u	g_chartab[256];
+
 /*
- * Fill chartab[].  Also fills curbuf->b_chartab[] with flags for keyword
+ * Flags for g_chartab[].
+ */
+#define CT_CELL_MASK	0x07	/* mask: nr of display cells (1, 2 or 4) */
+#define CT_PRINT_CHAR	0x10	/* flag: set for printable chars */
+#define CT_ID_CHAR	0x20	/* flag: set for ID chars */
+#define CT_FNAME_CHAR	0x40	/* flag: set for file name chars */
+
+/*
+ * Fill g_chartab[].  Also fills curbuf->b_chartab[] with flags for keyword
  * characters for current buffer.
  *
  * Depends on the option settings 'iskeyword', 'isident', 'isfname',
  * 'isprint' and 'encoding'.
  *
- * The index in chartab[] depends on 'encoding':
+ * The index in g_chartab[] depends on 'encoding':
  * - For non-multi-byte index with the byte (same as the character).
  * - For DBCS index with the first byte.
  * - For UTF-8 index with the character (when first byte is up to 0x80 it is
  *   the same as the character, if the first byte is 0x80 and above it depends
  *   on further bytes).
  *
- * The contents of chartab[]:
+ * The contents of g_chartab[]:
  * - The lower two bits, masked by CT_CELL_MASK, give the number of display
  *   cells the character occupies (1 or 2).  Not valid for UTF-8 above 0x80.
  * - CT_PRINT_CHAR bit is set when the character is printable (no need to
@@ -86,18 +97,18 @@ buf_init_chartab(buf, global)
 	 */
 	c = 0;
 	while (c < ' ')
-	    chartab[c++] = (dy_flags & DY_UHEX) ? 4 : 2;
+	    g_chartab[c++] = (dy_flags & DY_UHEX) ? 4 : 2;
 #ifdef EBCDIC
 	while (c < 255)
 #else
 	while (c <= '~')
 #endif
-	    chartab[c++] = 1 + CT_PRINT_CHAR;
+	    g_chartab[c++] = 1 + CT_PRINT_CHAR;
 #ifdef FEAT_FKMAP
 	if (p_altkeymap)
 	{
 	    while (c < YE)
-		chartab[c++] = 1 + CT_PRINT_CHAR;
+		g_chartab[c++] = 1 + CT_PRINT_CHAR;
 	}
 #endif
 	while (c < 256)
@@ -105,17 +116,17 @@ buf_init_chartab(buf, global)
 #ifdef FEAT_MBYTE
 	    /* UTF-8: bytes 0xa0 - 0xff are printable (latin1) */
 	    if (enc_utf8 && c >= 0xa0)
-		chartab[c++] = CT_PRINT_CHAR + 1;
+		g_chartab[c++] = CT_PRINT_CHAR + 1;
 	    /* euc-jp characters starting with 0x8e are single width */
 	    else if (enc_dbcs == DBCS_JPNU && c == 0x8e)
-		chartab[c++] = CT_PRINT_CHAR + 1;
+		g_chartab[c++] = CT_PRINT_CHAR + 1;
 	    /* other double-byte chars can be printable AND double-width */
 	    else if (enc_dbcs != 0 && MB_BYTE2LEN(c) == 2)
-		chartab[c++] = CT_PRINT_CHAR + 2;
+		g_chartab[c++] = CT_PRINT_CHAR + 2;
 	    else
 #endif
 		/* the rest is unprintable by default */
-		chartab[c++] = (dy_flags & DY_UHEX) ? 4 : 2;
+		g_chartab[c++] = (dy_flags & DY_UHEX) ? 4 : 2;
 	}
 
 #ifdef FEAT_MBYTE
@@ -124,7 +135,7 @@ buf_init_chartab(buf, global)
 	    if ((enc_dbcs != 0 && MB_BYTE2LEN(c) > 1)
 		    || (enc_dbcs == DBCS_JPNU && c == 0x8e)
 		    || (enc_utf8 && c >= 0xa0))
-		chartab[c] |= CT_FNAME_CHAR;
+		g_chartab[c] |= CT_FNAME_CHAR;
 #endif
     }
 
@@ -232,9 +243,9 @@ buf_init_chartab(buf, global)
 		    if (i == 0)			/* (re)set ID flag */
 		    {
 			if (tilde)
-			    chartab[c] &= ~CT_ID_CHAR;
+			    g_chartab[c] &= ~CT_ID_CHAR;
 			else
-			    chartab[c] |= CT_ID_CHAR;
+			    g_chartab[c] |= CT_ID_CHAR;
 		    }
 		    else if (i == 1)		/* (re)set printable */
 		    {
@@ -256,23 +267,23 @@ buf_init_chartab(buf, global)
 			{
 			    if (tilde)
 			    {
-				chartab[c] = (chartab[c] & ~CT_CELL_MASK)
+				g_chartab[c] = (g_chartab[c] & ~CT_CELL_MASK)
 					     + ((dy_flags & DY_UHEX) ? 4 : 2);
-				chartab[c] &= ~CT_PRINT_CHAR;
+				g_chartab[c] &= ~CT_PRINT_CHAR;
 			    }
 			    else
 			    {
-				chartab[c] = (chartab[c] & ~CT_CELL_MASK) + 1;
-				chartab[c] |= CT_PRINT_CHAR;
+				g_chartab[c] = (g_chartab[c] & ~CT_CELL_MASK) + 1;
+				g_chartab[c] |= CT_PRINT_CHAR;
 			    }
 			}
 		    }
 		    else if (i == 2)		/* (re)set fname flag */
 		    {
 			if (tilde)
-			    chartab[c] &= ~CT_FNAME_CHAR;
+			    g_chartab[c] &= ~CT_FNAME_CHAR;
 			else
-			    chartab[c] |= CT_FNAME_CHAR;
+			    g_chartab[c] |= CT_FNAME_CHAR;
 		    }
 		    else /* i == 3 */		/* (re)set keyword flag */
 		    {
@@ -531,9 +542,9 @@ str_foldcase(str, orglen, buf, buflen)
 #endif
 
 /*
- * Catch 22: chartab[] can't be initialized before the options are
+ * Catch 22: g_chartab[] can't be initialized before the options are
  * initialized, and initializing options may cause transchar() to be called!
- * When chartab_initialized == FALSE don't use chartab[].
+ * When chartab_initialized == FALSE don't use g_chartab[].
  * Does NOT work for multi-byte characters, c must be <= 255.
  * Also doesn't work for the first byte of a multi-byte, "c" must be a
  * character!
@@ -718,7 +729,7 @@ byte2cells(b)
     if (enc_utf8 && b >= 0x80)
 	return 0;
 #endif
-    return (chartab[b] & CT_CELL_MASK);
+    return (g_chartab[b] & CT_CELL_MASK);
 }
 
 /*
@@ -748,7 +759,7 @@ char2cells(c)
 	}
     }
 #endif
-    return (chartab[c & 0xff] & CT_CELL_MASK);
+    return (g_chartab[c & 0xff] & CT_CELL_MASK);
 }
 
 /*
@@ -765,7 +776,7 @@ ptr2cells(p)
 	return utf_ptr2cells(p);
     /* For DBCS we can tell the cell count from the first byte. */
 #endif
-    return (chartab[*p] & CT_CELL_MASK);
+    return (g_chartab[*p] & CT_CELL_MASK);
 }
 
 /*
@@ -900,7 +911,7 @@ win_linetabsize(wp, line, len)
 vim_isIDc(c)
     int c;
 {
-    return (c > 0 && c < 0x100 && (chartab[c] & CT_ID_CHAR));
+    return (c > 0 && c < 0x100 && (g_chartab[c] & CT_ID_CHAR));
 }
 
 /*
@@ -969,7 +980,7 @@ vim_iswordp_buf(p, buf)
 vim_isfilec(c)
     int	c;
 {
-    return (c >= 0x100 || (c > 0 && (chartab[c] & CT_FNAME_CHAR)));
+    return (c >= 0x100 || (c > 0 && (g_chartab[c] & CT_FNAME_CHAR)));
 }
 
 /*
@@ -1002,7 +1013,7 @@ vim_isprintc(c)
     if (enc_utf8 && c >= 0x100)
 	return utf_printable(c);
 #endif
-    return (c >= 0x100 || (c > 0 && (chartab[c] & CT_PRINT_CHAR)));
+    return (c >= 0x100 || (c > 0 && (g_chartab[c] & CT_PRINT_CHAR)));
 }
 
 /*
@@ -1019,7 +1030,7 @@ vim_isprintc_strict(c)
     if (enc_utf8 && c >= 0x100)
 	return utf_printable(c);
 #endif
-    return (c >= 0x100 || (c > 0 && (chartab[c] & CT_PRINT_CHAR)));
+    return (c >= 0x100 || (c > 0 && (g_chartab[c] & CT_PRINT_CHAR)));
 }
 
 /*
@@ -1371,7 +1382,7 @@ getvcol(wp, pos, start, cursor, end)
 		    if (enc_utf8 && c >= 0x80)
 			incr = utf_ptr2cells(ptr);
 		    else
-			incr = CHARSIZE(c);
+			incr = g_chartab[c] & CT_CELL_MASK;
 
 		    /* If a double-cell char doesn't fit at the end of a line
 		     * it wraps to the next line, it's like this char is three
@@ -1385,7 +1396,7 @@ getvcol(wp, pos, start, cursor, end)
 		}
 		else
 #endif
-		    incr = CHARSIZE(c);
+		    incr = g_chartab[c] & CT_CELL_MASK;
 	    }
 
 	    if (posptr != NULL && ptr >= posptr) /* character at pos->col */
@@ -1573,6 +1584,20 @@ skipdigits(q)
 
 #if defined(FEAT_SYN_HL) || defined(FEAT_SPELL) || defined(PROTO)
 /*
+ * skip over binary digits
+ */
+    char_u *
+skipbin(q)
+    char_u	*q;
+{
+    char_u	*p = q;
+
+    while (vim_isbdigit(*p))	/* skip to next non-digit */
+	++p;
+    return p;
+}
+
+/*
  * skip over digits and hex characters
  */
     char_u *
@@ -1588,6 +1613,20 @@ skiphex(q)
 #endif
 
 #if defined(FEAT_EX_EXTRA) || defined(PROTO)
+/*
+ * skip to bin digit (or NUL after the string)
+ */
+    char_u *
+skiptobin(q)
+    char_u	*q;
+{
+    char_u	*p = q;
+
+    while (*p != NUL && !vim_isbdigit(*p))	/* skip to next digit */
+	++p;
+    return p;
+}
+
 /*
  * skip to digit (or NUL after the string)
  */
@@ -1642,6 +1681,17 @@ vim_isxdigit(c)
     return (c >= '0' && c <= '9')
 	|| (c >= 'a' && c <= 'f')
 	|| (c >= 'A' && c <= 'F');
+}
+
+/*
+ * Corollary of vim_isdigit and vim_isxdigit() that can handle
+ * characters > 0x100.
+ */
+    int
+vim_isbdigit(c)
+    int		c;
+{
+    return (c == '0' || c == '1');
 }
 
 #if defined(FEAT_MBYTE) || defined(PROTO)
@@ -1825,35 +1875,37 @@ vim_isblankline(lbuf)
 
 /*
  * Convert a string into a long and/or unsigned long, taking care of
- * hexadecimal and octal numbers.  Accepts a '-' sign.
- * If "hexp" is not NULL, returns a flag to indicate the type of the number:
+ * hexadecimal, octal, and binary numbers.  Accepts a '-' sign.
+ * If "prep" is not NULL, returns a flag to indicate the type of the number:
  *  0	    decimal
  *  '0'	    octal
+ *  'B'	    bin
+ *  'b'	    bin
  *  'X'	    hex
  *  'x'	    hex
  * If "len" is not NULL, the length of the number in characters is returned.
  * If "nptr" is not NULL, the signed result is returned in it.
  * If "unptr" is not NULL, the unsigned result is returned in it.
- * If "dooct" is non-zero recognize octal numbers, when > 1 always assume
- * octal number.
- * If "dohex" is non-zero recognize hex numbers, when > 1 always assume
- * hex number.
+ * If "what" contains STR2NR_BIN recognize binary numbers
+ * If "what" contains STR2NR_OCT recognize octal numbers
+ * If "what" contains STR2NR_HEX recognize hex numbers
+ * If "what" contains STR2NR_FORCE always assume bin/oct/hex.
  * If maxlen > 0, check at a maximum maxlen chars
  */
     void
-vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
+vim_str2nr(start, prep, len, what, nptr, unptr, maxlen)
     char_u		*start;
-    int			*hexp;	    /* return: type of number 0 = decimal, 'x'
-				       or 'X' is hex, '0' = octal */
+    int			*prep;	    /* return: type of number 0 = decimal, 'x'
+				       or 'X' is hex, '0' = octal, 'b' or 'B'
+				       is bin */
     int			*len;	    /* return: detected length of number */
-    int			dooct;	    /* recognize octal number */
-    int			dohex;	    /* recognize hex number */
+    int			what;	    /* what numbers to recognize */
     long		*nptr;	    /* return: signed result */
     unsigned long	*unptr;	    /* return: unsigned result */
     int			maxlen;     /* max length of string to check */
 {
     char_u	    *ptr = start;
-    int		    hex = 0;		/* default is decimal */
+    int		    pre = 0;		/* default is decimal */
     int		    negative = FALSE;
     unsigned long   un = 0;
     int		    n;
@@ -1864,29 +1916,37 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 	++ptr;
     }
 
-    /* Recognize hex and octal. */
+    /* Recognize hex, octal, and bin. */
     if (ptr[0] == '0' && ptr[1] != '8' && ptr[1] != '9'
 					       && (maxlen == 0 || maxlen > 1))
     {
-	hex = ptr[1];
-	if (dohex && (hex == 'X' || hex == 'x') && vim_isxdigit(ptr[2])
-					       && (maxlen == 0 || maxlen > 2))
-	    ptr += 2;			/* hexadecimal */
+	pre = ptr[1];
+	if ((what & STR2NR_HEX)
+		&& (pre == 'X' || pre == 'x') && vim_isxdigit(ptr[2])
+		&& (maxlen == 0 || maxlen > 2))
+	    /* hexadecimal */
+	    ptr += 2;
+	else if ((what & STR2NR_BIN)
+		&& (pre == 'B' || pre == 'b') && vim_isbdigit(ptr[2])
+		&& (maxlen == 0 || maxlen > 2))
+	    /* binary */
+	    ptr += 2;
 	else
 	{
-	    hex = 0;			/* default is decimal */
-	    if (dooct)
+	    /* decimal or octal, default is decimal */
+	    pre = 0;
+	    if (what & STR2NR_OCT)
 	    {
 		/* Don't interpret "0", "08" or "0129" as octal. */
 		for (n = 1; VIM_ISDIGIT(ptr[n]); ++n)
 		{
 		    if (ptr[n] > '7')
 		    {
-			hex = 0;	/* can't be octal */
+			pre = 0;	/* can't be octal */
 			break;
 		    }
 		    if (ptr[n] >= '0')
-			hex = '0';	/* assume octal */
+			pre = '0';	/* assume octal */
 		    if (n == maxlen)
 			break;
 		}
@@ -1895,10 +1955,23 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
     }
 
     /*
-     * Do the string-to-numeric conversion "manually" to avoid sscanf quirks.
-     */
+    * Do the string-to-numeric conversion "manually" to avoid sscanf quirks.
+    */
     n = 1;
-    if (hex == '0' || dooct > 1)
+    if (pre == 'B' || pre == 'b' || what == STR2NR_BIN + STR2NR_FORCE)
+    {
+	/* bin */
+	if (pre != 0)
+	    n += 2;	    /* skip over "0b" */
+	while ('0' <= *ptr && *ptr <= '1')
+	{
+	    un = 2 * un + (unsigned long)(*ptr - '0');
+	    ++ptr;
+	    if (n++ == maxlen)
+		break;
+	}
+    }
+    else if (pre == '0' || what == STR2NR_OCT + STR2NR_FORCE)
     {
 	/* octal */
 	while ('0' <= *ptr && *ptr <= '7')
@@ -1909,10 +1982,10 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 		break;
 	}
     }
-    else if (hex != 0 || dohex > 1)
+    else if (pre != 0 || what == STR2NR_HEX + STR2NR_FORCE)
     {
 	/* hex */
-	if (hex != 0)
+	if (pre != 0)
 	    n += 2;	    /* skip over "0x" */
 	while (vim_isxdigit(*ptr))
 	{
@@ -1934,8 +2007,8 @@ vim_str2nr(start, hexp, len, dooct, dohex, nptr, unptr, maxlen)
 	}
     }
 
-    if (hexp != NULL)
-	*hexp = hex;
+    if (prep != NULL)
+	*prep = pre;
     if (len != NULL)
 	*len = (int)(ptr - start);
     if (nptr != NULL)

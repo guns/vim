@@ -74,7 +74,8 @@ typedef struct
     char_u	*serverStrEnc;		/* encoding of serverStr */
     char_u	*servername;		/* allocated name for our server */
 #endif
-#if (!defined(UNIX) && !defined(__EMX__)) || defined(ARCHIE)
+#if !defined(UNIX) && !defined(__EMX__)
+# define EXPAND_FILENAMES
     int		literal;		/* don't expand file names */
 #endif
 #ifdef MSWIN
@@ -401,7 +402,7 @@ main
 
     if (GARGCOUNT > 0)
     {
-#if (!defined(UNIX) && !defined(__EMX__)) || defined(ARCHIE)
+#ifdef EXPAND_FILENAMES
 	/*
 	 * Expand wildcards in file names.
 	 */
@@ -987,6 +988,7 @@ vim_main2(int argc UNUSED, char **argv UNUSED)
      * main loop. */
     {
 	int default_regname = 0;
+
 	adjust_clip_reg(&default_regname);
 	set_reg_var(default_regname);
     }
@@ -1062,9 +1064,9 @@ vim_main2(int argc UNUSED, char **argv UNUSED)
  * commands, return when entering Ex mode.  "noexmode" is TRUE then.
  */
     void
-main_loop(cmdwin, noexmode)
-    int		cmdwin;	    /* TRUE when working in the command-line window */
-    int		noexmode;   /* TRUE when return on entering Ex mode */
+main_loop(
+    int		cmdwin,	    /* TRUE when working in the command-line window */
+    int		noexmode)   /* TRUE when return on entering Ex mode */
 {
     oparg_T	oa;				/* operator arguments */
     volatile int previous_got_int = FALSE;	/* "got_int" was TRUE */
@@ -1358,8 +1360,7 @@ main_loop(cmdwin, noexmode)
  * Exit, but leave behind swap files for modified buffers.
  */
     void
-getout_preserve_modified(exitval)
-    int		exitval;
+getout_preserve_modified(int exitval)
 {
 # if defined(SIGHUP) && defined(SIG_IGN)
     /* Ignore SIGHUP, because a dropped connection causes a read error, which
@@ -1378,8 +1379,7 @@ getout_preserve_modified(exitval)
 
 /* Exit properly */
     void
-getout(exitval)
-    int		exitval;
+getout(int exitval)
 {
 #ifdef FEAT_AUTOCMD
     buf_T	*buf;
@@ -1580,10 +1580,10 @@ init_locale()
 
 #  ifdef DYNAMIC_GETTEXT
 	/* Initialize the gettext library */
-	dyn_libintl_init(NULL);
+	dyn_libintl_init();
 #  endif
-	/* expand_env() doesn't work yet, because chartab[] is not initialized
-	 * yet, call vim_getenv() directly */
+	/* expand_env() doesn't work yet, because g_chartab[] is not
+	 * initialized yet, call vim_getenv() directly */
 	p = vim_getenv((char_u *)"VIMRUNTIME", &mustfree);
 	if (p != NULL && *p != NUL)
 	{
@@ -1879,7 +1879,7 @@ command_line_scan(parmp)
 		}
 		else if (STRNICMP(argv[0] + argv_idx, "literal", 7) == 0)
 		{
-#if (!defined(UNIX) && !defined(__EMX__)) || defined(ARCHIE)
+#ifdef EXPAND_FILENAMES
 		    parmp->literal = TRUE;
 #endif
 		}
@@ -2456,7 +2456,7 @@ scripterror:
 #endif
 
 	    alist_add(&global_alist, p,
-#if (!defined(UNIX) && !defined(__EMX__)) || defined(ARCHIE)
+#ifdef EXPAND_FILENAMES
 		    parmp->literal ? 2 : 0	/* add buffer nr after exp. */
 #else
 		    2		/* add buffer number now and use curbuf */
@@ -3268,7 +3268,7 @@ usage()
 
     mch_msg(_("\n\nArguments:\n"));
     main_msg(_("--\t\t\tOnly file names after this"));
-#if (!defined(UNIX) && !defined(__EMX__)) || defined(ARCHIE)
+#ifdef EXPAND_FILENAMES
     main_msg(_("--literal\t\tDon't expand wildcards"));
 #endif
 #ifdef FEAT_OLE

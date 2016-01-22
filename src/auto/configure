@@ -636,6 +636,10 @@ GUI_LIB_LOC
 GUI_INC_LOC
 NARROW_PROTO
 MOTIF_LIBNAME
+GRESOURCE_OBJ
+GRESOURCE_SRC
+GRESOURCE_HDR
+GLIB_COMPILE_RESOURCES
 GNOME_INCLUDEDIR
 GNOME_LIBDIR
 GNOME_LIBS
@@ -1464,7 +1468,7 @@ Optional Features:
   --enable-perlinterp=OPTS     Include Perl interpreter.  default=no OPTS=no/yes/dynamic
   --enable-pythoninterp=OPTS   Include Python interpreter. default=no OPTS=no/yes/dynamic
   --enable-python3interp=OPTS   Include Python3 interpreter. default=no OPTS=no/yes/dynamic
-  --enable-tclinterp      Include Tcl interpreter.
+  --enable-tclinterp=OPTS      Include Tcl interpreter. default=no OPTS=no/yes/dynamic
   --enable-rubyinterp=OPTS     Include Ruby interpreter.  default=no OPTS=no/yes/dynamic
   --enable-cscope         Include cscope interface.
   --enable-workshop       Include Sun Visual Workshop support.
@@ -4759,8 +4763,8 @@ if test "${with_features+set}" = set; then :
   withval=$with_features; features="$withval"; { $as_echo "$as_me:${as_lineno-$LINENO}: result: $features" >&5
 $as_echo "$features" >&6; }
 else
-  features="normal"; { $as_echo "$as_me:${as_lineno-$LINENO}: result: Defaulting to normal" >&5
-$as_echo "Defaulting to normal" >&6; }
+  features="huge"; { $as_echo "$as_me:${as_lineno-$LINENO}: result: Defaulting to huge" >&5
+$as_echo "Defaulting to huge" >&6; }
 fi
 
 
@@ -5017,7 +5021,7 @@ $as_echo "$vi_cv_version_plain_lua" >&6; }
     if test "x$vi_cv_with_luajit" != "xno" && test "X$vi_cv_version_luajit" != "X"; then
       { $as_echo "$as_me:${as_lineno-$LINENO}: checking if lua.h can be found in $vi_cv_path_lua_pfx/include/luajit-$vi_cv_version_luajit" >&5
 $as_echo_n "checking if lua.h can be found in $vi_cv_path_lua_pfx/include/luajit-$vi_cv_version_luajit... " >&6; }
-      if test -f $vi_cv_path_lua_pfx/include/luajit-$vi_cv_version_luajit/lua.h; then
+      if test -f "$vi_cv_path_lua_pfx/include/luajit-$vi_cv_version_luajit/lua.h"; then
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
 	LUA_INC=/luajit-$vi_cv_version_luajit
@@ -5026,7 +5030,7 @@ $as_echo "yes" >&6; }
     if test "X$LUA_INC" = "X"; then
       { $as_echo "$as_me:${as_lineno-$LINENO}: checking if lua.h can be found in $vi_cv_path_lua_pfx/include" >&5
 $as_echo_n "checking if lua.h can be found in $vi_cv_path_lua_pfx/include... " >&6; }
-      if test -f $vi_cv_path_lua_pfx/include/lua.h; then
+      if test -f "$vi_cv_path_lua_pfx/include/lua.h"; then
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
       else
@@ -5034,7 +5038,7 @@ $as_echo "yes" >&6; }
 $as_echo "no" >&6; }
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking if lua.h can be found in $vi_cv_path_lua_pfx/include/lua$vi_cv_version_lua" >&5
 $as_echo_n "checking if lua.h can be found in $vi_cv_path_lua_pfx/include/lua$vi_cv_version_lua... " >&6; }
-	if test -f $vi_cv_path_lua_pfx/include/lua$vi_cv_version_lua/lua.h; then
+	if test -f "$vi_cv_path_lua_pfx/include/lua$vi_cv_version_lua/lua.h"; then
 	  { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
 	  LUA_INC=/lua$vi_cv_version_lua
@@ -5203,6 +5207,7 @@ fi
 
   if test "X$with_plthome" != "X"; then
        vi_cv_path_mzscheme_pfx="$with_plthome"
+       vi_cv_path_mzscheme="${vi_cv_path_mzscheme_pfx}/bin/mzscheme"
   else
     { $as_echo "$as_me:${as_lineno-$LINENO}: checking PLTHOME environment var" >&5
 $as_echo_n "checking PLTHOME environment var... " >&6; }
@@ -5210,6 +5215,7 @@ $as_echo_n "checking PLTHOME environment var... " >&6; }
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: \"$PLTHOME\"" >&5
 $as_echo "\"$PLTHOME\"" >&6; }
 	vi_cv_path_mzscheme_pfx="$PLTHOME"
+	vi_cv_path_mzscheme="${vi_cv_path_mzscheme_pfx}/bin/mzscheme"
     else
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: not set" >&5
 $as_echo "not set" >&6; }
@@ -5281,54 +5287,63 @@ $as_echo "$vi_cv_path_mzscheme_pfx" >&6; }
     fi
   fi
 
-  SCHEME_INC=
   if test "X$vi_cv_path_mzscheme_pfx" != "X"; then
-    { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include" >&5
-$as_echo_n "checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include... " >&6; }
-    if test -f $vi_cv_path_mzscheme_pfx/include/scheme.h; then
-      SCHEME_INC=${vi_cv_path_mzscheme_pfx}/include
-      { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
-$as_echo "yes" >&6; }
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for racket include directory" >&5
+$as_echo_n "checking for racket include directory... " >&6; }
+    SCHEME_INC=`${vi_cv_path_mzscheme} -e '(require setup/dirs)(let ((p (find-include-dir))) (when (path? p) (display p)))'`
+    if test "X$SCHEME_INC" != "X"; then
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: ${SCHEME_INC}" >&5
+$as_echo "${SCHEME_INC}" >&6; }
     else
-      { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
-$as_echo "no" >&6; }
-      { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/plt" >&5
-$as_echo_n "checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/plt... " >&6; }
-      if test -f $vi_cv_path_mzscheme_pfx/include/plt/scheme.h; then
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: not found" >&5
+$as_echo "not found" >&6; }
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include" >&5
+$as_echo_n "checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include... " >&6; }
+      if test -f "$vi_cv_path_mzscheme_pfx/include/scheme.h"; then
+	SCHEME_INC=${vi_cv_path_mzscheme_pfx}/include
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
-	SCHEME_INC=${vi_cv_path_mzscheme_pfx}/include/plt
       else
 	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
-	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/racket" >&5
-$as_echo_n "checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/racket... " >&6; }
-	if test -f $vi_cv_path_mzscheme_pfx/include/racket/scheme.h; then
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/plt" >&5
+$as_echo_n "checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/plt... " >&6; }
+	if test -f "$vi_cv_path_mzscheme_pfx/include/plt/scheme.h"; then
 	  { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
-	  SCHEME_INC=${vi_cv_path_mzscheme_pfx}/include/racket
+	  SCHEME_INC=${vi_cv_path_mzscheme_pfx}/include/plt
 	else
 	  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
-	  { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in /usr/include/plt/" >&5
-$as_echo_n "checking if scheme.h can be found in /usr/include/plt/... " >&6; }
-	  if test -f /usr/include/plt/scheme.h; then
+	  { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/racket" >&5
+$as_echo_n "checking if scheme.h can be found in $vi_cv_path_mzscheme_pfx/include/racket... " >&6; }
+	  if test -f "$vi_cv_path_mzscheme_pfx/include/racket/scheme.h"; then
 	    { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
-	    SCHEME_INC=/usr/include/plt
+	    SCHEME_INC=${vi_cv_path_mzscheme_pfx}/include/racket
 	  else
 	    { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
-	    { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in /usr/include/racket/" >&5
-$as_echo_n "checking if scheme.h can be found in /usr/include/racket/... " >&6; }
-	    if test -f /usr/include/racket/scheme.h; then
+	    { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in /usr/include/plt/" >&5
+$as_echo_n "checking if scheme.h can be found in /usr/include/plt/... " >&6; }
+	    if test -f /usr/include/plt/scheme.h; then
 	      { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
-	      SCHEME_INC=/usr/include/racket
+	      SCHEME_INC=/usr/include/plt
 	    else
 	      { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
 $as_echo "no" >&6; }
-	      vi_cv_path_mzscheme_pfx=
+	      { $as_echo "$as_me:${as_lineno-$LINENO}: checking if scheme.h can be found in /usr/include/racket/" >&5
+$as_echo_n "checking if scheme.h can be found in /usr/include/racket/... " >&6; }
+	      if test -f /usr/include/racket/scheme.h; then
+		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+		SCHEME_INC=/usr/include/racket
+	      else
+		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+		vi_cv_path_mzscheme_pfx=
+	      fi
 	    fi
 	  fi
 	fi
@@ -5337,52 +5352,101 @@ $as_echo "no" >&6; }
   fi
 
   if test "X$vi_cv_path_mzscheme_pfx" != "X"; then
-    if test "x$MACOSX" = "xyes"; then
-      MZSCHEME_LIBS="-framework Racket"
-      MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
-    elif test -f "${vi_cv_path_mzscheme_pfx}/lib/libmzscheme3m.a"; then
-      MZSCHEME_LIBS="${vi_cv_path_mzscheme_pfx}/lib/libmzscheme3m.a"
-      MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
-    elif test -f "${vi_cv_path_mzscheme_pfx}/lib/libracket3m.a"; then
-      MZSCHEME_LIBS="${vi_cv_path_mzscheme_pfx}/lib/libracket3m.a"
-      MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
-    elif test -f "${vi_cv_path_mzscheme_pfx}/lib/libracket.a"; then
-      MZSCHEME_LIBS="${vi_cv_path_mzscheme_pfx}/lib/libracket.a ${vi_cv_path_mzscheme_pfx}/lib/libmzgc.a"
-    elif test -f "${vi_cv_path_mzscheme_pfx}/lib/libmzscheme.a"; then
-      MZSCHEME_LIBS="${vi_cv_path_mzscheme_pfx}/lib/libmzscheme.a ${vi_cv_path_mzscheme_pfx}/lib/libmzgc.a"
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for racket lib directory" >&5
+$as_echo_n "checking for racket lib directory... " >&6; }
+    SCHEME_LIB=`${vi_cv_path_mzscheme} -e '(require setup/dirs)(let ((p (find-lib-dir))) (when (path? p) (display p)))'`
+    if test "X$SCHEME_LIB" != "X"; then
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: ${SCHEME_LIB}" >&5
+$as_echo "${SCHEME_LIB}" >&6; }
     else
-            if test -f "${vi_cv_path_mzscheme_pfx}/lib/libmzscheme3m.so"; then
-        MZSCHEME_LIBS="-L${vi_cv_path_mzscheme_pfx}/lib -lmzscheme3m"
-	MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
-      elif test -f "${vi_cv_path_mzscheme_pfx}/lib/libracket3m.so"; then
-        MZSCHEME_LIBS="-L${vi_cv_path_mzscheme_pfx}/lib -lracket3m"
-	MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
-      elif test -f "${vi_cv_path_mzscheme_pfx}/lib/libracket.so"; then
-        MZSCHEME_LIBS="-L${vi_cv_path_mzscheme_pfx}/lib -lracket -lmzgc"
-      else
-        MZSCHEME_LIBS="-L${vi_cv_path_mzscheme_pfx}/lib -lmzscheme -lmzgc"
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: not found" >&5
+$as_echo "not found" >&6; }
+    fi
+
+    for path in "${vi_cv_path_mzscheme_pfx}/lib" "${SCHEME_LIB}"; do
+      if test "X$path" != "X"; then
+	if test "x$MACOSX" = "xyes"; then
+	  MZSCHEME_LIBS="-framework Racket"
+	  MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
+	elif test -f "${path}/libmzscheme3m.a"; then
+	  MZSCHEME_LIBS="${path}/libmzscheme3m.a"
+	  MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
+	elif test -f "${path}/libracket3m.a"; then
+	  MZSCHEME_LIBS="${path}/libracket3m.a"
+	  MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
+	elif test -f "${path}/libracket.a"; then
+	  MZSCHEME_LIBS="${path}/libracket.a ${path}/libmzgc.a"
+	elif test -f "${path}/libmzscheme.a"; then
+	  MZSCHEME_LIBS="${path}/libmzscheme.a ${path}/libmzgc.a"
+	else
+	  	  if test -f "${path}/libmzscheme3m.so"; then
+	    MZSCHEME_LIBS="-L${path} -lmzscheme3m"
+	    MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
+	  elif test -f "${path}/libracket3m.so"; then
+	    MZSCHEME_LIBS="-L${path} -lracket3m"
+	    MZSCHEME_CFLAGS="-DMZ_PRECISE_GC"
+	  elif test -f "${path}/libracket.so"; then
+	    MZSCHEME_LIBS="-L${path} -lracket -lmzgc"
+	  else
+	    	    if test "$path" != "$SCHEME_LIB"; then
+	      continue
+	    fi
+	    MZSCHEME_LIBS="-L${path} -lmzscheme -lmzgc"
+	  fi
+	  if test "$GCC" = yes; then
+	    	    	    MZSCHEME_LIBS="${MZSCHEME_LIBS} -Wl,-rpath -Wl,${path}"
+	  elif test "`(uname) 2>/dev/null`" = SunOS &&
+				   uname -r | grep '^5' >/dev/null; then
+	    MZSCHEME_LIBS="${MZSCHEME_LIBS} -R ${path}"
+	  fi
+	fi
       fi
-      if test "$GCC" = yes; then
-			MZSCHEME_LIBS="${MZSCHEME_LIBS} -Wl,-rpath -Wl,${vi_cv_path_mzscheme_pfx}/lib"
-      elif test "`(uname) 2>/dev/null`" = SunOS &&
-			       uname -r | grep '^5' >/dev/null; then
-	MZSCHEME_LIBS="${MZSCHEME_LIBS} -R ${vi_cv_path_mzscheme_pfx}/lib"
+      if test "X$MZSCHEME_LIBS" != "X"; then
+	break
       fi
+    done
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking if racket requires -pthread" >&5
+$as_echo_n "checking if racket requires -pthread... " >&6; }
+    if test "X$SCHEME_LIB" != "X" && $FGREP -e -pthread "$SCHEME_LIB/buildinfo" >/dev/null ; then
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+      MZSCHEME_LIBS="${MZSCHEME_LIBS} -pthread"
+      MZSCHEME_CFLAGS="${MZSCHEME_CFLAGS} -pthread"
+    else
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+    fi
+
+    { $as_echo "$as_me:${as_lineno-$LINENO}: checking for racket config directory" >&5
+$as_echo_n "checking for racket config directory... " >&6; }
+    SCHEME_CONFIGDIR=`${vi_cv_path_mzscheme} -e '(require setup/dirs)(let ((p (find-config-dir))) (when (path? p) (display p)))'`
+    if test "X$SCHEME_CONFIGDIR" != "X"; then
+      MZSCHEME_CFLAGS="${MZSCHEME_CFLAGS} -DMZSCHEME_CONFIGDIR='\"${SCHEME_CONFIGDIR}\"'"
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: ${SCHEME_CONFIGDIR}" >&5
+$as_echo "${SCHEME_CONFIGDIR}" >&6; }
+    else
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: not found" >&5
+$as_echo "not found" >&6; }
     fi
 
     { $as_echo "$as_me:${as_lineno-$LINENO}: checking for racket collects directory" >&5
 $as_echo_n "checking for racket collects directory... " >&6; }
-    if test -d $vi_cv_path_mzscheme_pfx/lib/plt/collects; then
-      SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/lib/plt/
-    else
-      if test -d $vi_cv_path_mzscheme_pfx/lib/racket/collects; then
-	SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/lib/racket/
+    SCHEME_COLLECTS=`${vi_cv_path_mzscheme} -e '(require setup/dirs)(let ((p (find-collects-dir))) (when (path? p) (let-values (((base _1 _2) (split-path p))) (display base))))'`
+    if test "X$SCHEME_COLLECTS" = "X"; then
+      if test -d "$vi_cv_path_mzscheme_pfx/lib/plt/collects"; then
+	SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/lib/plt/
       else
-	if test -d $vi_cv_path_mzscheme_pfx/share/racket/collects; then
-	  SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/share/racket/
+	if test -d "$vi_cv_path_mzscheme_pfx/lib/racket/collects"; then
+	  SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/lib/racket/
 	else
-	  if test -d $vi_cv_path_mzscheme_pfx/collects; then
-	    SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/
+	  if test -d "$vi_cv_path_mzscheme_pfx/share/racket/collects"; then
+	    SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/share/racket/
+	  else
+	    if test -d "$vi_cv_path_mzscheme_pfx/collects"; then
+	      SCHEME_COLLECTS=$vi_cv_path_mzscheme_pfx/
+	    fi
 	  fi
 	fi
       fi
@@ -5416,7 +5480,6 @@ $as_echo_n "checking for mzscheme_base.c... " >&6; }
     fi
     if test "X$MZSCHEME_EXTRA" != "X" ; then
             MZSCHEME_CFLAGS="${MZSCHEME_CFLAGS} -DINCLUDE_MZSCHEME_BASE"
-      MZSCHEME_MZC="${vi_cv_path_mzscheme_pfx}/bin/mzc"
       { $as_echo "$as_me:${as_lineno-$LINENO}: result: needed" >&5
 $as_echo "needed" >&6; }
     else
@@ -6612,7 +6675,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $enable_tclinterp" >&5
 $as_echo "$enable_tclinterp" >&6; }
 
-if test "$enable_tclinterp" = "yes"; then
+if test "$enable_tclinterp" = "yes" -o "$enable_tclinterp" = "dynamic"; then
 
     { $as_echo "$as_me:${as_lineno-$LINENO}: checking --with-tclsh argument" >&5
 $as_echo_n "checking --with-tclsh argument... " >&6; }
@@ -6843,11 +6906,12 @@ fi
   if test "X$vi_cv_path_tcl" != "X"; then
     { $as_echo "$as_me:${as_lineno-$LINENO}: checking Tcl version" >&5
 $as_echo_n "checking Tcl version... " >&6; }
-    if echo 'exit [expr [info tclversion] < 8.0]' | $vi_cv_path_tcl - ; then
+    if echo 'exit [expr [info tclversion] < 8.0]' | "$vi_cv_path_tcl" - ; then
       tclver=`echo 'puts [info tclversion]' | $vi_cv_path_tcl -`
       { $as_echo "$as_me:${as_lineno-$LINENO}: result: $tclver - OK" >&5
 $as_echo "$tclver - OK" >&6; };
       tclloc=`echo 'set l [info library];set i [string last lib $l];incr i -2;puts [string range $l 0 $i]' | $vi_cv_path_tcl -`
+      tcldll=`echo 'puts libtcl[info tclversion][info sharedlibextension]' | $vi_cv_path_tcl -`
 
       { $as_echo "$as_me:${as_lineno-$LINENO}: checking for location of Tcl include" >&5
 $as_echo_n "checking for location of Tcl include... " >&6; }
@@ -6880,11 +6944,15 @@ $as_echo_n "checking for location of tclConfig.sh script... " >&6; }
 	  	  tclcnf="/System/Library/Frameworks/Tcl.framework"
 	fi
 	for try in $tclcnf; do
-	  if test -f $try/tclConfig.sh; then
+	  if test -f "$try/tclConfig.sh"; then
 	    { $as_echo "$as_me:${as_lineno-$LINENO}: result: $try/tclConfig.sh" >&5
 $as_echo "$try/tclConfig.sh" >&6; }
-	    . $try/tclConfig.sh
-	    	    TCL_LIBS=`eval echo "$TCL_LIB_SPEC $TCL_LIBS"`
+	    . "$try/tclConfig.sh"
+	    	    if test "$enable_tclinterp" = "dynamic"; then
+	      TCL_LIBS=`eval echo "$TCL_STUB_LIB_SPEC $TCL_LIBS"`
+	    else
+	      TCL_LIBS=`eval echo "$TCL_LIB_SPEC $TCL_LIBS"`
+	    fi
 	    	    	    TCL_DEFS=`echo $TCL_DEFS | sed -e 's/\\\\ /\\\\X/g' | tr ' ' '\012' | sed -e '/^[^-]/d' -e '/^-[^D]/d' -e '/-D[^_]/d' -e 's/-D_/ -D_/' | tr '\012' ' ' | sed -e 's/\\\\X/\\\\ /g'`
 	    break
 	  fi
@@ -6900,10 +6968,10 @@ $as_echo_n "checking for Tcl library by myself... " >&6; }
 	    for ver in "" $tclver ; do
 	      for try in $tcllib ; do
 		trylib=tcl$ver$ext
-		if test -f $try/lib$trylib ; then
+		if test -f "$try/lib$trylib" ; then
 		  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $try/lib$trylib" >&5
 $as_echo "$try/lib$trylib" >&6; }
-		  TCL_LIBS="-L$try -ltcl$ver -ldl -lm"
+		  TCL_LIBS="-L\"$try\" -ltcl$ver -ldl -lm"
 		  if test "`(uname) 2>/dev/null`" = SunOS &&
 					 uname -r | grep '^5' >/dev/null; then
 		    TCL_LIBS="$TCL_LIBS -R $try"
@@ -6931,6 +6999,13 @@ $as_echo "<not found>" >&6; }
     else
       { $as_echo "$as_me:${as_lineno-$LINENO}: result: too old; need Tcl version 8.0 or later" >&5
 $as_echo "too old; need Tcl version 8.0 or later" >&6; }
+    fi
+  fi
+  if test "$enable_tclinterp" = "dynamic"; then
+    if test "X$TCL_SRC" != "X" -a "X$tcldll" != "X"; then
+      $as_echo "#define DYNAMIC_TCL 1" >>confdefs.h
+
+      TCL_CFLAGS="-DDYNAMIC_TCL_DLL=\\\"$tcldll\\\" -DDYNAMIC_TCL_VER=\\\"$tclver\\\" $TCL_CFLAGS"
     fi
   fi
   if test "$fail_if_missing" = "yes" -a -z "$TCL_SRC"; then
@@ -8907,6 +8982,86 @@ $as_echo "not found" >&6; }
   fi
 fi
 
+if test "x$GUITYPE" = "xGTK"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking version of Gdk-Pixbuf" >&5
+$as_echo_n "checking version of Gdk-Pixbuf... " >&6; }
+  gdk_pixbuf_version=`$PKG_CONFIG --modversion gdk-pixbuf-2.0`
+  if test "x$gdk_pixbuf_version" != x ; then
+    gdk_pixbuf_version_minor=`echo $gdk_pixbuf_version | \
+      sed -e 's/[0-9][0-9]*\.\([0-9][0-9]*\)\.[0-9][0-9]*/\1/'`
+    if test "x$gdk_pixbuf_version_minor" != x -a \
+      $gdk_pixbuf_version_minor -ge 31 ; then
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: OK." >&5
+$as_echo "OK." >&6; }
+      # Extract the first word of "glib-compile-resources", so it can be a program name with args.
+set dummy glib-compile-resources; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_GLIB_COMPILE_RESOURCES+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $GLIB_COMPILE_RESOURCES in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_GLIB_COMPILE_RESOURCES="$GLIB_COMPILE_RESOURCES" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_GLIB_COMPILE_RESOURCES="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  test -z "$ac_cv_path_GLIB_COMPILE_RESOURCES" && ac_cv_path_GLIB_COMPILE_RESOURCES="no"
+  ;;
+esac
+fi
+GLIB_COMPILE_RESOURCES=$ac_cv_path_GLIB_COMPILE_RESOURCES
+if test -n "$GLIB_COMPILE_RESOURCES"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $GLIB_COMPILE_RESOURCES" >&5
+$as_echo "$GLIB_COMPILE_RESOURCES" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking glib-compile-resources" >&5
+$as_echo_n "checking glib-compile-resources... " >&6; }
+      if test "x$GLIB_COMPILE_RESOURCES" = xno ; then
+        { $as_echo "$as_me:${as_lineno-$LINENO}: result: cannot be found in PATH." >&5
+$as_echo "cannot be found in PATH." >&6; }
+      else
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: usable." >&5
+$as_echo "usable." >&6; }
+        $as_echo "#define USE_GRESOURCE 1" >>confdefs.h
+
+        GRESOURCE_HDR="auto/gui_gtk_gresources.h"
+        GRESOURCE_SRC="auto/gui_gtk_gresources.c"
+        GRESOURCE_OBJ="objects/gui_gtk_gresources.o"
+      fi
+    else
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: not usable." >&5
+$as_echo "not usable." >&6; }
+    fi
+  else
+    { $as_echo "$as_me:${as_lineno-$LINENO}: result: cannot obtain from pkg_config." >&5
+$as_echo "cannot obtain from pkg_config." >&6; }
+  fi
+fi
+
+
+
+
+
 
 if test -z "$SKIP_MOTIF"; then
   gui_XXX="/usr/XXX/Motif* /usr/Motif*/XXX /usr/XXX /usr/shlib /usr/X11*/XXX /usr/XXX/X11* /usr/dt/XXX /local/Motif*/XXX /local/XXX/Motif* /usr/local/Motif*/XXX /usr/local/XXX/Motif* /usr/local/XXX /usr/local/X11*/XXX /usr/local/LessTif/Motif*/XXX $MOTIFHOME/XXX"
@@ -9501,10 +9656,10 @@ fi
 
 
 
-{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for CYGWIN environment" >&5
-$as_echo_n "checking for CYGWIN environment... " >&6; }
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for CYGWIN or MSYS environment" >&5
+$as_echo_n "checking for CYGWIN or MSYS environment... " >&6; }
 case `uname` in
-    CYGWIN*)    CYGWIN=yes; { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+    CYGWIN*|MSYS*)    CYGWIN=yes; { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
 $as_echo "yes" >&6; }
                 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for CYGWIN clipboard support" >&5
 $as_echo_n "checking for CYGWIN clipboard support... " >&6; }

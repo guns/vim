@@ -27,7 +27,7 @@
 /* Is there any system that doesn't have access()? */
 #define USE_MCH_ACCESS
 
-#if defined(sun) && defined(S_ISCHR)
+#if (defined(sun) || defined(__FreeBSD__)) && defined(S_ISCHR)
 # define OPEN_CHR_FILES
 static int is_dev_fd_file(char_u *fname);
 #endif
@@ -445,7 +445,7 @@ readfile(fname, sfname, from, lines_to_skip, lines_to_read, eap, flags)
 	    return FAIL;
 	}
 #endif
-#if defined(MSDOS) || defined(MSWIN) || defined(OS2)
+#if defined(MSDOS) || defined(MSWIN)
 	/*
 	 * MS-Windows allows opening a device, but we will probably get stuck
 	 * trying to read it.
@@ -526,7 +526,7 @@ readfile(fname, sfname, from, lines_to_skip, lines_to_read, eap, flags)
     file_readonly = FALSE;
     if (read_stdin)
     {
-#if defined(MSDOS) || defined(MSWIN) || defined(OS2)
+#if defined(MSDOS) || defined(MSWIN)
 	/* Force binary I/O on stdin to avoid CR-LF -> LF conversion. */
 	setmode(0, O_BINARY);
 #endif
@@ -3510,7 +3510,7 @@ buf_write(buf, fname, sfname, start, end, eap, append, forceit,
     /*
      * Get information about original file (if there is one).
      */
-#if defined(UNIX) && !defined(ARCHIE)
+#if defined(UNIX)
     st_old.st_dev = 0;
     st_old.st_ino = 0;
     perm = -1;
@@ -3553,7 +3553,7 @@ buf_write(buf, fname, sfname, start, end, eap, append, forceit,
     }
     if (c == NODE_WRITABLE)
     {
-# if defined(MSDOS) || defined(MSWIN) || defined(OS2)
+# if defined(MSDOS) || defined(MSWIN)
 	/* MS-Windows allows opening a device, but we will probably get stuck
 	 * trying to write to it.  */
 	if (!p_odev)
@@ -4126,7 +4126,7 @@ buf_write(buf, fname, sfname, start, end, eap, append, forceit,
 	}
     }
 
-#if defined(UNIX) && !defined(ARCHIE)
+#if defined(UNIX)
     /* When using ":w!" and the file was read-only: make it writable */
     if (forceit && perm >= 0 && !(perm & 0200) && st_old.st_uid == getuid()
 				     && vim_strchr(p_cpo, CPO_FWRITE) == NULL)
@@ -6055,7 +6055,7 @@ shorten_fname(full_path, dir_name)
     if (fnamencmp(dir_name, full_path, len) == 0)
     {
 	p = full_path + len;
-#if defined(MSDOS) || defined(MSWIN) || defined(OS2)
+#if defined(MSDOS) || defined(MSWIN)
 	/*
 	 * MSDOS: when a file is in the root directory, dir_name will end in a
 	 * slash, since C: by itself does not define a specific dir. In this
@@ -6072,7 +6072,7 @@ shorten_fname(full_path, dir_name)
 #endif
 	}
     }
-#if defined(MSDOS) || defined(MSWIN) || defined(OS2)
+#if defined(MSDOS) || defined(MSWIN)
     /*
      * When using a file in the current drive, remove the drive name:
      * "A:\dir\file" -> "\dir\file".  This helps when moving a session file on
@@ -6330,7 +6330,7 @@ buf_modname(shortname, fname, ext, prepend_dot)
 	else if ((int)STRLEN(e) + extlen > 4)
 	    s = e + 4 - extlen;
     }
-#if defined(OS2) || defined(USE_LONG_FNAME) || defined(WIN3264)
+#if defined(USE_LONG_FNAME) || defined(WIN3264)
     /*
      * If there is no file name, and the extension starts with '.', put a
      * '_' before the dot, because just ".ext" may be invalid if it's on a
@@ -7280,6 +7280,54 @@ write_lnum_adjust(offset)
 	curbuf->b_no_eol_lnum += offset;
 }
 
+#if defined(TEMPDIRNAMES) || defined(FEAT_EVAL) || defined(PROTO)
+/*
+ * Delete "name" and everything in it, recursively.
+ * return 0 for succes, -1 if some file was not deleted.
+ */
+    int
+delete_recursive(char_u *name)
+{
+    int result = 0;
+    char_u	**files;
+    int		file_count;
+    int		i;
+    char_u	*exp;
+
+    /* A symbolic link to a directory itself is deleted, not the directory it
+     * points to. */
+    if (
+# if defined(UNIX) || defined(WIN32)
+	 mch_isrealdir(name)
+# else
+	 mch_isdir(name)
+# endif
+	    )
+    {
+	vim_snprintf((char *)NameBuff, MAXPATHL, "%s/*", name);
+	exp = vim_strsave(NameBuff);
+	if (exp == NULL)
+	    return -1;
+	if (gen_expand_wildcards(1, &exp, &file_count, &files,
+	      EW_DIR|EW_FILE|EW_SILENT|EW_ALLLINKS|EW_DODOT|EW_EMPTYOK) == OK)
+	{
+	    for (i = 0; i < file_count; ++i)
+		if (delete_recursive(files[i]) != 0)
+		    result = -1;
+	    FreeWild(file_count, files);
+	}
+	else
+	    result = -1;
+	vim_free(exp);
+	(void)mch_rmdir(name);
+    }
+    else
+	result = mch_remove(name) == 0 ? 0 : -1;
+
+    return result;
+}
+#endif
+
 #if defined(TEMPDIRNAMES) || defined(PROTO)
 static long	temp_count = 0;		/* Temp filename counter. */
 
@@ -7289,30 +7337,16 @@ static long	temp_count = 0;		/* Temp filename counter. */
     void
 vim_deltempdir()
 {
-    char_u	**files;
-    int		file_count;
-    int		i;
-
     if (vim_tempdir != NULL)
     {
-	sprintf((char *)NameBuff, "%s*", vim_tempdir);
-	if (gen_expand_wildcards(1, &NameBuff, &file_count, &files,
-					      EW_DIR|EW_FILE|EW_SILENT) == OK)
-	{
-	    for (i = 0; i < file_count; ++i)
-		mch_remove(files[i]);
-	    FreeWild(file_count, files);
-	}
-	gettail(NameBuff)[-1] = NUL;
-	(void)mch_rmdir(NameBuff);
-
+	/* remove the trailing path separator */
+	gettail(vim_tempdir)[-1] = NUL;
+	delete_recursive(vim_tempdir);
 	vim_free(vim_tempdir);
 	vim_tempdir = NULL;
     }
 }
-#endif
 
-#ifdef TEMPDIRNAMES
 /*
  * Directory "tempdir" was created.  Expand this name to a full path and put
  * it in "vim_tempdir".  This avoids that using ":cd" would confuse us.
@@ -7388,10 +7422,12 @@ vim_tempname(extra_char, keep)
 	    long	off;
 # endif
 
-	    /* expand $TMP, leave room for "/v1100000/999999999" */
+	    /* Expand $TMP, leave room for "/v1100000/999999999".
+	     * Skip the directory check if the expansion fails. */
 	    expand_env((char_u *)tempdirs[i], itmp, TEMPNAMELEN - 20);
-	    if (mch_isdir(itmp))		/* directory exists */
+	    if (itmp[0] != '$' && mch_isdir(itmp))
 	    {
+		/* directory exists */
 # ifdef __EMX__
 		/* If $TMP contains a forward slash (perhaps using bash or
 		 * tcsh), don't add a backslash, use a forward slash!

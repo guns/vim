@@ -121,11 +121,6 @@
 /* Returns empty string if it is NULL. */
 #define EMPTY_IF_NULL(x) ((x) ? (x) : (u_char *)"")
 
-/* macro version of chartab().
- * Only works with values 0-255!
- * Doesn't work for UTF-8 mode with chars >= 0x80. */
-#define CHARSIZE(c)	(chartab[c] & CT_CELL_MASK)
-
 #ifdef FEAT_LANGMAP
 /*
  * Adjust chars in a language according to 'langmap' option.
@@ -231,7 +226,7 @@
 #if defined(UNIX) || defined(VMS)  /* open in rw------- mode */
 # define mch_open_rw(n, f)	mch_open((n), (f), (mode_t)0600)
 #else
-# if defined(MSDOS) || defined(MSWIN) || defined(OS2)  /* open read/write */
+# if defined(MSDOS) || defined(MSWIN)  /* open read/write */
 #  define mch_open_rw(n, f)	mch_open((n), (f), S_IREAD | S_IWRITE)
 # else
 #  define mch_open_rw(n, f)	mch_open((n), (f), 0)

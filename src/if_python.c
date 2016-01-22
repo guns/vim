@@ -732,12 +732,7 @@ python_runtime_link_init(char *libname, int verbose)
     int
 python_enabled(int verbose)
 {
-#ifdef WIN3264
-    char *dll = DYNAMIC_PYTHON_DLL;
-#else
-    char *dll = *p_pydll ? (char *)p_pydll : DYNAMIC_PYTHON_DLL;
-#endif
-    return python_runtime_link_init(dll, verbose) == OK;
+    return python_runtime_link_init((char *)p_pydll, verbose) == OK;
 }
 
 /*
@@ -928,7 +923,10 @@ Python_Init(void)
 #endif
 
 #ifdef PYTHON_HOME
-	Py_SetPythonHome(PYTHON_HOME);
+# ifdef DYNAMIC_PYTHON
+	if (mch_getenv((char_u *)"PYTHONHOME") == NULL)
+# endif
+	    Py_SetPythonHome(PYTHON_HOME);
 #endif
 
 	init_structs();

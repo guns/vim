@@ -281,6 +281,12 @@ CC=
 #GUI_LIB_LOC = -L/usr/X11R6/lib
 # }}}
 
+# Defaults used when auto/config.mk does not exist.
+srcdir = .
+VIMNAME = vim
+EXNAME = ex
+VIEWNAME = view
+
 ######################## auto/config.mk ######################## {{{1
 # At this position auto/config.mk is included. When starting from the
 # toplevel Makefile it is almost empty. After running auto/configure it
@@ -439,7 +445,9 @@ CClink = $(CC)
 
 # TCL
 # Uncomment this when you want to include the Tcl interface.
+# First one is for static linking, second one for dynamic loading.
 #CONF_OPT_TCL = --enable-tclinterp
+#CONF_OPT_TCL = --enable-tclinterp=dynamic
 #CONF_OPT_TCL = --enable-tclinterp --with-tclsh=tclsh8.4
 
 # CSCOPE
@@ -615,6 +623,27 @@ LINT_OPTIONS = -beprxzF
 #PROFILE_CFLAGS = -pg -g -DWE_ARE_PROFILING
 #PROFILE_LIBS = -pg
 #PROFILE_LIBS = -pg -lc
+
+
+# TEST COVERAGE - Uncomment the two lines below the explanation to get code
+# coverage information. (provided by Yegappan Lakshmanan)
+# 1. make clean, run configure and build Vim as usual.
+# 2. Generate the baseline code coverage information:
+#        $ lcov -c -i -b . -d objects -o objects/coverage_base.info
+# 3. Run "make test" to run the unit tests.  The code coverage information will
+#    be generated in the src/objects directory.
+# 4. Generate the code coverage information from the tests:
+#        $ lcov -c -b . -d objects/ -o objects/coverage_test.info
+# 5. Combine the baseline and test code coverage data:
+#        $ lcov -a objects/coverage_base.info -a objects/coverage_test.info -o objects/coverage_total.info
+# 6. Process the test coverage data and generate a report in html:
+#        $ genhtml objects/coverage_total.info -o objects
+# 7. Open the objects/index.html file in a web browser to view the coverage
+#    information.
+#
+# PROFILE_CFLAGS=-g -O0 -fprofile-arcs -ftest-coverage
+# LDFLAGS=--coverage
+
 
 # Uncomment one of the next two lines to compile Vim with the
 # address sanitizer or with the undefined sanitizer.  Works with gcc and
@@ -1178,10 +1207,10 @@ NONE_INSTALL = install_normal
 
 ### GTK GUI
 GTK_SRC		= gui.c gui_gtk.c gui_gtk_x11.c pty.c gui_gtk_f.c \
-			gui_beval.c
+			gui_beval.c $(GRESOURCE_SRC)
 GTK_OBJ		= objects/gui.o objects/gui_gtk.o objects/gui_gtk_x11.o \
 			objects/pty.o objects/gui_gtk_f.o \
-			objects/gui_beval.o
+			objects/gui_beval.o $(GRESOURCE_OBJ)
 GTK_DEFS	= -DFEAT_GUI_GTK $(NARROW_PROTO)
 GTK_IPATH	= $(GUI_INC_LOC)
 GTK_LIBS_DIR	= $(GUI_LIB_LOC)
@@ -1332,10 +1361,10 @@ CPP_DEPEND = $(CC) -I$(srcdir) -M$(CPP_MM) \
 NO_ATTR=
 #
 # Use this for cproto 3 patchlevel 6 or below (use "cproto -V" to check):
-# PROTO_FLAGS = -f4 -m__ARGS -d -E"$(CPP)" $(NO_ATTR)
+# PROTO_FLAGS = -f4 -d -E"$(CPP)" $(NO_ATTR)
 #
 # Use this for cproto 3 patchlevel 7 or above (use "cproto -V" to check):
-PROTO_FLAGS = -m -M__ARGS -d -E"$(CPP)" $(NO_ATTR)
+PROTO_FLAGS = -d -E"$(CPP)" $(NO_ATTR)
 
 
 ################################################
@@ -1348,7 +1377,7 @@ SHELL = /bin/sh
 .SUFFIXES: .c .o .pro
 
 PRE_DEFS = -Iproto $(DEFS) $(GUI_DEFS) $(GUI_IPATH) $(CPPFLAGS) $(EXTRA_IPATHS)
-POST_DEFS = $(X_CFLAGS) $(MZSCHEME_CFLAGS) $(TCL_CFLAGS) $(EXTRA_DEFS)
+POST_DEFS = $(X_CFLAGS) $(MZSCHEME_CFLAGS) $(EXTRA_DEFS)
 
 ALL_CFLAGS = $(PRE_DEFS) $(CFLAGS) $(PROFILE_CFLAGS) $(SANITIZER_CFLAGS) $(LEAK_CFLAGS) $(POST_DEFS)
 
@@ -1356,7 +1385,7 @@ ALL_CFLAGS = $(PRE_DEFS) $(CFLAGS) $(PROFILE_CFLAGS) $(SANITIZER_CFLAGS) $(LEAK_
 # with "-E".
 OSDEF_CFLAGS = $(PRE_DEFS) $(POST_DEFS)
 
-LINT_CFLAGS = -DLINT -I. $(PRE_DEFS) $(POST_DEFS) $(RUBY_CFLAGS) $(LUA_CFLAGS) $(PERL_CFLAGS) $(PYTHON_CFLAGS) $(PYTHON3_CFLAGS) -Dinline= -D__extension__= -Dalloca=alloca
+LINT_CFLAGS = -DLINT -I. $(PRE_DEFS) $(POST_DEFS) $(RUBY_CFLAGS) $(LUA_CFLAGS) $(PERL_CFLAGS) $(PYTHON_CFLAGS) $(PYTHON3_CFLAGS) $(TCL_CFLAGS) -Dinline= -D__extension__= -Dalloca=alloca
 
 LINT_EXTRA = -DUSE_SNIFF -DHANGUL_INPUT -D"__attribute__(x)="
 
@@ -1506,7 +1535,8 @@ TAGS_SRC = *.c *.cpp if_perl.xs
 
 EXTRA_SRC = hangulin.c if_lua.c if_mzsch.c auto/if_perl.c if_perlsfio.c \
 	    if_python.c if_python3.c if_tcl.c if_ruby.c if_sniff.c \
-	    gui_beval.c workshop.c wsdebug.c integration.c netbeans.c
+	    gui_beval.c workshop.c wsdebug.c integration.c netbeans.c \
+	    $(GRESOURCE_SRC)
 
 # Unittest files
 MEMFILE_TEST_SRC = memfile_test.c
@@ -1848,6 +1878,9 @@ os_vms.pro: os_vms.c
 if_perl.pro: auto/if_perl.c
 	$(CPROTO) -DFEAT_GUI auto/if_perl.c | sed "/_VI/d" > proto/$@
 
+gui_gtk_gresources.pro: auto/gui_gtk_gresources.c
+	$(CPROTO) -DFEAT_GUI $< > proto/$@
+	echo "/* vim: set ft=c : */" >> proto/$@
 
 notags:
 	-rm -f tags
@@ -1898,14 +1931,11 @@ unittest unittests: $(UNITTEST_TARGETS)
 		./$$t || exit 1; echo $$t passed; \
 	done
 
-# Run individual test, assuming that Vim was already compiled.
+# Run individual OLD style test, assuming that Vim was already compiled.
 test1 \
-	test_argument_0count \
-	test_argument_count \
 	test_autocmd_option \
 	test_autoformat_join \
 	test_breakindent \
-	test_cdo \
 	test_changelist \
 	test_charsearch \
 	test_close_count \
@@ -1914,7 +1944,7 @@ test1 \
 	test_erasebackword \
 	test_eval \
 	test_fixeol \
-	test_increment \
+	test_getcwd \
 	test_insertcount \
 	test_listchars \
 	test_listlbr \
@@ -1924,15 +1954,14 @@ test1 \
 	test_match_conceal \
 	test_nested_function \
 	test_options \
-	test_perl \
 	test_qf_title \
 	test_ruby \
 	test_search_mbyte \
-	test_set \
 	test_signs \
 	test_tagcase \
 	test_textobjects \
 	test_utf8 \
+	test_wordcount \
 	test_writefile \
 	test2 test3 test4 test5 test6 test7 test8 test9 \
 	test10 test11 test12 test13 test14 test15 test16 test17 test18 test19 \
@@ -1944,8 +1973,43 @@ test1 \
 	test70 test71 test72 test73 test74 test75 test76 test77 test78 test79 \
 	test80 test81 test82 test83 test84 test85 test86 test87 test88 test89 \
 	test90 test91 test92 test93 test94 test95 test96 test97 test98 test99 \
-	test100 test101 test102 test103 test104 test105 test106 test107:
-	cd testdir; rm $@.out; $(MAKE) -f Makefile $@.out VIMPROG=../$(VIMTARGET) $(GUI_TESTARG) SCRIPTSOURCE=../$(SCRIPTSOURCE)
+	test100 test101 test102 test103 test104 test105 test106 test107 test108:
+	cd testdir; rm -f $@.out; $(MAKE) -f Makefile $@.out VIMPROG=../$(VIMTARGET) $(GUI_TESTARG) SCRIPTSOURCE=../$(SCRIPTSOURCE)
+
+# Run individual NEW style test, assuming that Vim was already compiled.
+test_arglist \
+	test_assert \
+	test_backspace_opt \
+	test_cdo \
+	test_cursor_func \
+	test_delete \
+	test_expand \
+	test_hardcopy \
+	test_increment \
+	test_lispwords \
+	test_menu \
+	test_perl \
+	test_quickfix \
+	test_searchpos \
+	test_set \
+	test_sort \
+	test_undolevels \
+	test_unlet \
+	test_viminfo \
+	test_viml \
+	test_alot:
+	cd testdir; rm -f $@.res test.log messages; $(MAKE) -f Makefile $@.res VIMPROG=../$(VIMTARGET) $(GUI_TESTARG) SCRIPTSOURCE=../$(SCRIPTSOURCE)
+	@if test -f testdir/test.log; then \
+		cat testdir/test.log; \
+	fi
+	cat testdir/messages
+
+newtests:
+	cd testdir; rm -f $@.res test.log messages; $(MAKE) -f Makefile newtestssilent VIMPROG=../$(VIMTARGET) $(GUI_TESTARG) SCRIPTSOURCE=../$(SCRIPTSOURCE)
+	@if test -f testdir/test.log; then \
+		cat testdir/test.log; \
+	fi
+	cat testdir/messages
 
 testclean:
 	cd testdir; $(MAKE) -f Makefile clean
@@ -2408,7 +2472,7 @@ uninstall_runtime:
 # We support common typing mistakes for Juergen! :-)
 clean celan: testclean
 	-rm -f *.o objects/* core $(VIMTARGET).core $(VIMTARGET) vim xxd/*.o
-	-rm -f $(TOOLS) auto/osdef.h auto/pathdef.c auto/if_perl.c
+	-rm -f $(TOOLS) auto/osdef.h auto/pathdef.c auto/if_perl.c auto/gui_gtk_gresources.c auto/gui_gtk_gresources.h
 	-rm -f conftest* *~ auto/link.sed
 	-rm -f $(UNITTEST_TARGETS)
 	-rm -f runtime pixmaps
@@ -2424,7 +2488,7 @@ SHADOWDIR = shadow
 
 shadow:	runtime pixmaps
 	mkdir $(SHADOWDIR)
-	cd $(SHADOWDIR); ln -s ../*.[ch] ../*.in ../*.sh ../*.xs ../*.xbm ../toolcheck ../proto ../vimtutor ../gvimtutor ../mkinstalldirs .
+	cd $(SHADOWDIR); ln -s ../*.[ch] ../*.in ../*.sh ../*.xs ../*.xbm ../gui_gtk_res.xml ../toolcheck ../proto ../vimtutor ../gvimtutor ../mkinstalldirs .
 	mkdir $(SHADOWDIR)/auto
 	cd $(SHADOWDIR)/auto; ln -s ../../auto/configure .
 	mkdir $(SHADOWDIR)/po
@@ -2443,7 +2507,7 @@ shadow:	runtime pixmaps
 	fi
 	mkdir $(SHADOWDIR)/testdir
 	cd $(SHADOWDIR)/testdir; ln -s ../../testdir/Makefile \
-				 ../../testdir/vimrc.unix \
+				 ../../testdir/Make_all.mak \
 				 ../../testdir/*.in \
 				 ../../testdir/*.vim \
 				 ../../testdir/python* \
@@ -2545,6 +2609,11 @@ auto/pathdef.c: Makefile auto/config.mk
 	-@echo '";' >> $@
 	-@sh $(srcdir)/pathdef.sh
 
+auto/gui_gtk_gresources.c: gui_gtk_res.xml
+	$(GLIB_COMPILE_RESOURCES) --target=$@ --sourcedir=../pixmaps --generate --c-name=gui_gtk --manual-register $<
+auto/gui_gtk_gresources.h: gui_gtk_res.xml
+	$(GLIB_COMPILE_RESOURCES) --target=$@ --sourcedir=../pixmaps --generate --c-name=gui_gtk --manual-register $<
+
 # All the object files are put in the "objects" directory.  Since not all make
 # commands understand putting object files in another directory, it must be
 # specified for each file separately.
@@ -2630,6 +2699,9 @@ objects/gui_gtk.o: gui_gtk.c
 objects/gui_gtk_f.o: gui_gtk_f.c
 	$(CCC) -o $@ gui_gtk_f.c
 
+objects/gui_gtk_gresources.o: auto/gui_gtk_gresources.c
+	$(CCC) $(PERL_CFLAGS) -o $@ auto/gui_gtk_gresources.c
+
 objects/gui_gtk_x11.o: gui_gtk_x11.c
 	$(CCC) -o $@ gui_gtk_x11.c
 
@@ -2665,7 +2737,7 @@ objects/if_lua.o: if_lua.c
 
 objects/if_mzsch.o: if_mzsch.c $(MZSCHEME_EXTRA)
 	$(CCC) -o $@ $(MZSCHEME_CFLAGS_EXTRA) if_mzsch.c
- 
+
 mzscheme_base.c:
 	$(MZSCHEME_MZC) --c-mods mzscheme_base.c ++lib scheme/base
 
@@ -2693,7 +2765,7 @@ objects/if_sniff.o: if_sniff.c
 	$(CCC) -o $@ if_sniff.c
 
 objects/if_tcl.o: if_tcl.c
-	$(CCC) -o $@ if_tcl.c
+	$(CCC) $(TCL_CFLAGS) -o $@ if_tcl.c
 
 objects/integration.o: integration.c
 	$(CCC) -o $@ integration.c
@@ -2738,7 +2810,7 @@ objects/ops.o: ops.c
 	$(CCC) -o $@ ops.c
 
 objects/option.o: option.c
-	$(CCC) -o $@ option.c
+	$(CCC) $(LUA_CFLAGS) $(PERL_CFLAGS) $(PYTHON_CFLAGS) $(PYTHON3_CFLAGS) $(RUBY_CFLAGS) $(TCL_CFLAGS) -o $@ option.c
 
 objects/os_beos.o: os_beos.c
 	$(CCC) -o $@ os_beos.c
@@ -3112,6 +3184,16 @@ objects/gui_gtk_f.o: gui_gtk_f.c vim.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h structs.h \
  regexp.h gui.h gui_beval.h proto/gui_beval.pro ex_cmds.h proto.h \
  globals.h farsi.h arabic.h gui_gtk_f.h
+objects/gui_gtk_gresources.o: auto/gui_gtk_gresources.c gui_gtk_res.xml \
+ ../pixmaps/stock_vim_build_tags.png ../pixmaps/stock_vim_find_help.png \
+ ../pixmaps/stock_vim_save_all.png ../pixmaps/stock_vim_session_load.png \
+ ../pixmaps/stock_vim_session_new.png ../pixmaps/stock_vim_session_save.png \
+ ../pixmaps/stock_vim_shell.png ../pixmaps/stock_vim_window_maximize.png \
+ ../pixmaps/stock_vim_window_maximize_width.png \
+ ../pixmaps/stock_vim_window_minimize.png \
+ ../pixmaps/stock_vim_window_minimize_width.png \
+ ../pixmaps/stock_vim_window_split.png \
+ ../pixmaps/stock_vim_window_split_vertical.png
 objects/gui_motif.o: gui_motif.c vim.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h structs.h \
  regexp.h gui.h gui_beval.h proto/gui_beval.pro ex_cmds.h proto.h \
@@ -3164,7 +3246,7 @@ objects/gui_gtk_x11.o: gui_gtk_x11.c vim.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h structs.h \
  regexp.h gui.h gui_beval.h proto/gui_beval.pro ex_cmds.h proto.h \
  globals.h farsi.h arabic.h gui_gtk_f.h ../runtime/vim32x32.xpm \
- ../runtime/vim16x16.xpm ../runtime/vim48x48.xpm
+ ../runtime/vim16x16.xpm ../runtime/vim48x48.xpm $(GRESOURCE_HDR)
 objects/gui_x11.o: gui_x11.c vim.h auto/config.h feature.h os_unix.h auto/osdef.h \
  ascii.h keymap.h term.h macros.h option.h structs.h regexp.h gui.h \
  gui_beval.h proto/gui_beval.pro ex_cmds.h proto.h globals.h farsi.h \

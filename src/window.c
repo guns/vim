@@ -75,7 +75,6 @@ static int frame_check_width __ARGS((frame_T *topfrp, int width));
 #endif /* FEAT_WINDOWS */
 
 static win_T *win_alloc __ARGS((win_T *after, int hidden));
-static void set_fraction __ARGS((win_T *wp));
 
 #define URL_SLASH	1		/* path_is_url() has found "://" */
 #define URL_BACKSLASH	2		/* path_is_url() has found ":\\" */
@@ -2446,6 +2445,10 @@ win_close(win, free_buf)
 	if (win_valid(win))
 	    win->w_closing = FALSE;
 #endif
+	/* Make sure curbuf is valid. It can become invalid if 'bufhidden' is
+	 * "wipe". */
+	if (!buf_valid(curbuf))
+	    curbuf = firstbuf;
     }
 
     if (only_one_window() && win_valid(win) && win->w_buffer == NULL
@@ -5828,7 +5831,7 @@ win_drag_vsep_line(dragwin, offset)
 /*
  * Set wp->w_fraction for the current w_wrow and w_height.
  */
-    static void
+    void
 set_fraction(wp)
     win_T	*wp;
 {
@@ -6532,7 +6535,7 @@ vim_FullName(fname, buf, len, force)
 	/* something failed; use the file name (truncate when too long) */
 	vim_strncpy(buf, fname, len - 1);
     }
-#if defined(MACOS_CLASSIC) || defined(OS2) || defined(MSDOS) || defined(MSWIN)
+#if defined(MACOS_CLASSIC) || defined(MSDOS) || defined(MSWIN)
     slash_adjust(buf);
 #endif
     return retval;

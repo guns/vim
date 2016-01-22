@@ -329,6 +329,8 @@ EOF
 :$put =string(l)
 :let d=pyeval('{"a": "b", "c": 1, "d": ["e"]}')
 :$put =sort(items(d))
+:let v:errmsg = ''
+:$put ='pyeval(\"None\") = ' . pyeval('None') . v:errmsg
 :if has('float')
 :   let f=pyeval('0.0')
 :   $put =string(f)
@@ -370,7 +372,9 @@ EOF
 :sleep 1
 :py t.running = False
 :py t.join()
-:py l[0] = t.t > 8  # check if the background thread is working
+:" Check if the background thread is working.  Count should be 10, but on a
+:" busy system (AppVeyor) it can be much lower.
+:py l[0] = t.t > 4
 :py del time
 :py del threading
 :py del t
