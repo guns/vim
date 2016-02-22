@@ -1,6 +1,6 @@
 # Maintainer: Sung Pae <self@sungpae.com>
 pkgname=('vim-nerv' 'vim-nox-nerv')
-pkgver=
+pkgver=0
 pkgrel=1
 pkgdesc="Custom vim build"
 arch=('x86_64')
