@@ -810,6 +810,25 @@ VimToPython(typval_T *our_tv, int depth, PyObject *lookup_dict)
 	    }
 	}
     }
+    else if (our_tv->v_type == VAR_SPECIAL)
+    {
+	if (our_tv->vval.v_number == VVAL_FALSE)
+	{
+	    ret = Py_False;
+	    Py_INCREF(ret);
+	}
+	else if (our_tv->vval.v_number == VVAL_TRUE)
+	{
+	    ret = Py_True;
+	    Py_INCREF(ret);
+	}
+	else
+	{
+	    Py_INCREF(Py_None);
+	    ret = Py_None;
+	}
+	return ret;
+    }
     else
     {
 	Py_INCREF(Py_None);
@@ -5812,11 +5831,10 @@ convert_dl(PyObject *obj, typval_T *tv,
 	}
 	/* As we are not using copy_tv which increments reference count we must
 	 * do it ourself. */
-	switch(tv->v_type)
-	{
-	    case VAR_DICT: ++tv->vval.v_dict->dv_refcount; break;
-	    case VAR_LIST: ++tv->vval.v_list->lv_refcount; break;
-	}
+	if (tv->v_type == VAR_DICT)
+	    ++tv->vval.v_dict->dv_refcount;
+	else if (tv->v_type == VAR_LIST)
+	    ++tv->vval.v_list->lv_refcount;
     }
     else
     {

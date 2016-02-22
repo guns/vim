@@ -28,12 +28,6 @@
 # include <conio.h>
 #endif
 
-/*
- * MS-DOS only code, not used for Win16.
- */
-#ifndef WIN16
-
-
 #ifndef PROTO
 # include <bios.h>
 # ifdef DJGPP
@@ -370,8 +364,7 @@ mytextbackground(int iBkgColor)
  */
 
     static long
-mygetdigits(pp)
-    char_u **pp;
+mygetdigits(char_u **pp)
 {
     char_u	*p;
     long	retval = 0;
@@ -473,7 +466,7 @@ translate_altkeys(int rawkey)
  * Set normal fg/bg color, based on T_ME.  Called when t_me has been set.
  */
     void
-mch_set_normal_colors()
+mch_set_normal_colors(void)
 {
     char_u	*p;
     int		n;
@@ -1232,8 +1225,16 @@ cbrk_handler(void)
  * For DOS 3 and later return 3 (Fail)
  */
     static void interrupt
-catch_cint(bp, di, si, ds, es, dx, cx, bx, ax)
-    unsigned bp, di, si, ds, es, dx, cx, bx, ax;
+catch_cint(
+    unsigned bp,
+    unsigned di,
+    unsigned si,
+    unsigned ds,
+    unsigned es,
+    unsigned dx,
+    unsigned cx,
+    unsigned bx,
+    unsigned ax)
 {
     ax = (ax & 0xff00);	    /* set AL to 0 */
     if (_osmajor >= 3)
@@ -1876,7 +1877,7 @@ mch_set_shellsize(void)
  * Rows and/or Columns has changed.
  */
     void
-mch_new_shellsize()
+mch_new_shellsize(void)
 {
 #ifdef FEAT_MOUSE
     /* best guess for mouse coordinate computations */
@@ -1897,7 +1898,7 @@ mch_new_shellsize()
  * DOS console when 'columns' is set to a too large value.
  */
     void
-mch_check_columns()
+mch_check_columns(void)
 {
     static union REGS	regs;
 
@@ -2843,11 +2844,6 @@ Win16SetClipboardData(
 #endif	/* FEAT_CLIPBOARD */
 #endif /* DJGPP */
 
-/*
- * End of MS-DOS only code
- */
-#endif /* WIN16 */
-
 /* common MS-DOS and Win16 code follows */
 
     static int
@@ -2946,10 +2942,10 @@ mch_isdir(char_u *name)
  * Return -1 if unknown.
  */
     int
-mch_can_exe(name, path, use_path)
-    char_u	*name;
-    char_u	**path;
-    int		use_path;
+mch_can_exe(
+    char_u	*name,
+    char_u	**path,
+    int		use_path)
 {
     char	*p;
     int		mode;

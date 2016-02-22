@@ -1111,12 +1111,32 @@ typedef double	float_T;
 typedef struct listvar_S list_T;
 typedef struct dictvar_S dict_T;
 
+typedef struct jobvar_S job_T;
+typedef struct readq_S readq_T;
+typedef struct jsonq_S jsonq_T;
+typedef struct cbq_S cbq_T;
+typedef struct channel_S channel_T;
+
+typedef enum
+{
+    VAR_UNKNOWN = 0,
+    VAR_NUMBER,	 /* "v_number" is used */
+    VAR_STRING,	 /* "v_string" is used */
+    VAR_FUNC,	 /* "v_string" is function name */
+    VAR_LIST,	 /* "v_list" is used */
+    VAR_DICT,	 /* "v_dict" is used */
+    VAR_FLOAT,	 /* "v_float" is used */
+    VAR_SPECIAL, /* "v_number" is used */
+    VAR_JOB,	 /* "v_job" is used */
+    VAR_CHANNEL	 /* "v_channel" is used */
+} vartype_T;
+
 /*
  * Structure to hold an internal variable without a name.
  */
 typedef struct
 {
-    char	v_type;	    /* see below: VAR_NUMBER, VAR_STRING, etc. */
+    vartype_T	v_type;
     char	v_lock;	    /* see below: VAR_LOCKED, VAR_FIXED */
     union
     {
@@ -1127,17 +1147,14 @@ typedef struct
 	char_u		*v_string;	/* string value (can be NULL!) */
 	list_T		*v_list;	/* list value (can be NULL!) */
 	dict_T		*v_dict;	/* dict value (can be NULL!) */
+#ifdef FEAT_JOB
+	job_T		*v_job;		/* job value (can be NULL!) */
+#endif
+#ifdef FEAT_CHANNEL
+	channel_T	*v_channel;	/* channel value (can be NULL!) */
+#endif
     }		vval;
 } typval_T;
-
-/* Values for "v_type". */
-#define VAR_UNKNOWN 0
-#define VAR_NUMBER  1	/* "v_number" is used */
-#define VAR_STRING  2	/* "v_string" is used */
-#define VAR_FUNC    3	/* "v_string" is function name */
-#define VAR_LIST    4	/* "v_list" is used */
-#define VAR_DICT    5	/* "v_dict" is used */
-#define VAR_FLOAT   6	/* "v_float" is used */
 
 /* Values for "dv_scope". */
 #define VAR_SCOPE     1	/* a:, v:, s:, etc. scope dictionaries */
@@ -1201,7 +1218,6 @@ struct dictitem_S
     char_u	di_flags;	/* flags (only used for variable) */
     char_u	di_key[1];	/* key (actually longer!) */
 };
-
 typedef struct dictitem_S dictitem_T;
 
 #define DI_FLAGS_RO	1  /* "di_flags" value: read-only variable */
@@ -1224,6 +1240,190 @@ struct dictvar_S
     dict_T	*dv_used_next;	/* next dict in used dicts list */
     dict_T	*dv_used_prev;	/* previous dict in used dicts list */
 };
+
+typedef enum
+{
+    JOB_FAILED,
+    JOB_STARTED,
+    JOB_ENDED
+} jobstatus_T;
+
+/*
+ * Structure to hold info about a Job.
+ */
+struct jobvar_S
+{
+    job_T	*jv_next;
+    job_T	*jv_prev;
+#ifdef UNIX
+    pid_t	jv_pid;
+#endif
+#ifdef WIN32
+    PROCESS_INFORMATION	jv_proc_info;
+    HANDLE		jv_job_object;
+#endif
+    jobstatus_T	jv_status;
+    char_u	*jv_stoponexit; /* allocated */
+    int		jv_exitval;
+    char_u	*jv_exit_cb;	/* allocated */
+
+    int		jv_refcount;	/* reference count */
+    channel_T	*jv_channel;	/* channel for I/O, reference counted */
+};
+
+/*
+ * Structures to hold info about a Channel.
+ */
+struct readq_S
+{
+    char_u	*rq_buffer;
+    readq_T	*rq_next;
+    readq_T	*rq_prev;
+};
+
+struct jsonq_S
+{
+    typval_T	*jq_value;
+    jsonq_T	*jq_next;
+    jsonq_T	*jq_prev;
+};
+
+struct cbq_S
+{
+    char_u	*cq_callback;
+    int		cq_seq_nr;
+    cbq_T	*cq_next;
+    cbq_T	*cq_prev;
+};
+
+/* mode for a channel */
+typedef enum
+{
+    MODE_NL = 0,
+    MODE_RAW,
+    MODE_JSON,
+    MODE_JS
+} ch_mode_T;
+
+/* Ordering matters, it is used in for loops: IN is last, only SOCK/OUT/ERR
+ * are polled. */
+#define PART_SOCK   0
+#define CH_SOCK_FD	ch_part[PART_SOCK].ch_fd
+
+#if defined(UNIX) || defined(WIN32)
+# define CHANNEL_PIPES
+# define INVALID_FD  (-1)
+
+# define PART_OUT   1
+# define PART_ERR   2
+# define PART_IN    3
+# define CH_OUT_FD	ch_part[PART_OUT].ch_fd
+# define CH_ERR_FD	ch_part[PART_ERR].ch_fd
+# define CH_IN_FD	ch_part[PART_IN].ch_fd
+#endif
+
+/* The per-fd info for a channel. */
+typedef struct {
+    sock_T	ch_fd;	    /* socket/stdin/stdout/stderr, -1 if not used */
+
+# if defined(UNIX) && !defined(HAVE_SELECT)
+    int		ch_poll_idx;	/* used by channel_poll_setup() */
+# endif
+
+#ifdef FEAT_GUI_X11
+    XtInputId	ch_inputHandler; /* Cookie for input */
+#endif
+#ifdef FEAT_GUI_GTK
+    gint	ch_inputHandler; /* Cookie for input */
+#endif
+#ifdef WIN32
+    int		ch_inputHandler; /* ret.value of WSAAsyncSelect() */
+#endif
+
+    ch_mode_T	ch_mode;
+    int		ch_timeout;	/* request timeout in msec */
+
+    readq_T	ch_head;	/* header for circular raw read queue */
+    jsonq_T	ch_json_head;	/* header for circular json read queue */
+    int		ch_block_id;	/* ID that channel_read_json_block() is
+				   waiting for */
+
+    cbq_T	ch_cb_head;	/* dummy node for per-request callbacks */
+    char_u	*ch_callback;	/* call when a msg is not handled */
+} chanpart_T;
+
+struct channel_S {
+    channel_T	*ch_next;
+    channel_T	*ch_prev;
+
+    int		ch_id;		/* ID of the channel */
+
+    chanpart_T	ch_part[4];	/* info for socket, out, err and in */
+
+    int		ch_error;	/* When TRUE an error was reported.  Avoids
+				 * giving pages full of error messages when
+				 * the other side has exited, only mention the
+				 * first error until the connection works
+				 * again. */
+
+    void	(*ch_close_cb)(void); /* callback for when channel is closed */
+
+    char_u	*ch_callback;	/* call when any msg is not handled */
+
+    job_T	*ch_job;	/* Job that uses this channel; this does not
+				 * count as a reference to avoid a circular
+				 * reference. */
+
+    int		ch_refcount;	/* reference count */
+};
+
+#define JO_MODE		0x0001	/* channel mode */
+#define JO_IN_MODE	0x0002	/* stdin mode */
+#define JO_OUT_MODE	0x0004	/* stdout mode */
+#define JO_ERR_MODE	0x0008	/* stderr mode */
+#define JO_CALLBACK	0x0010	/* channel callback */
+#define JO_OUT_CALLBACK	0x0020	/* stdout callback */
+#define JO_ERR_CALLBACK	0x0040	/* stderr callback */
+#define JO_WAITTIME	0x0080	/* only for ch_open() */
+#define JO_TIMEOUT	0x0100	/* all timeouts */
+#define JO_OUT_TIMEOUT	0x0200	/* stdout timeouts */
+#define JO_ERR_TIMEOUT	0x0400	/* stderr timeouts */
+#define JO_PART		0x0800	/* "part" */
+#define JO_ID		0x1000	/* "id" */
+#define JO_STOPONEXIT	0x2000	/* "stoponexit" */
+#define JO_EXIT_CB	0x4000	/* "exit-cb" */
+#define JO_ALL		0xffffff
+
+#define JO_MODE_ALL	(JO_MODE + JO_IN_MODE + JO_OUT_MODE + JO_ERR_MODE)
+#define JO_CB_ALL	(JO_CALLBACK + JO_OUT_CALLBACK + JO_ERR_CALLBACK)
+#define JO_TIMEOUT_ALL	(JO_TIMEOUT + JO_OUT_TIMEOUT + JO_ERR_TIMEOUT)
+
+/*
+ * Options for job and channel commands.
+ */
+typedef struct
+{
+    int		jo_set;		/* JO_ bits for values that were set */
+
+    ch_mode_T	jo_mode;
+    ch_mode_T	jo_in_mode;
+    ch_mode_T	jo_out_mode;
+    ch_mode_T	jo_err_mode;
+    char_u	*jo_callback;	/* not allocated! */
+    char_u	*jo_out_cb;	/* not allocated! */
+    char_u	*jo_err_cb;	/* not allocated! */
+    int		jo_waittime;
+    int		jo_timeout;
+    int		jo_out_timeout;
+    int		jo_err_timeout;
+    int		jo_part;
+    int		jo_id;
+    char_u	jo_soe_buf[NUMBUFLEN];
+    char_u	*jo_stoponexit;
+    char_u	jo_ecb_buf[NUMBUFLEN];
+    char_u	*jo_exit_cb;
+} jobopt_T;
+
 
 /* structure used for explicit stack while garbage collecting hash tables */
 typedef struct ht_stack_S
@@ -2515,7 +2715,7 @@ struct VimMenu
     char_u	*actext;	    /* accelerator text (after TAB) */
     int		priority;	    /* Menu order priority */
 #ifdef FEAT_GUI
-    void	(*cb) __ARGS((vimmenu_T *));	    /* Call-back routine */
+    void	(*cb)(vimmenu_T *);	    /* Call-back routine */
 #endif
 #ifdef FEAT_TOOLBAR
     char_u	*iconfile;	    /* name of file for icon or NULL */
@@ -2548,10 +2748,6 @@ struct VimMenu
 #endif
 #ifdef FEAT_BEVAL_TIP
     BalloonEval *tip;		    /* tooltip for this menu item */
-#endif
-#ifdef FEAT_GUI_W16
-    UINT	id;		    /* Id of menu item */
-    HMENU	submenu_id;	    /* If this is submenu, add children here */
 #endif
 #ifdef FEAT_GUI_W32
     UINT	id;		    /* Id of menu item */
@@ -2683,3 +2879,18 @@ typedef struct {
   UINT32_T state[8];
   char_u   buffer[64];
 } context_sha256_T;
+
+/*
+ * Structure used for reading in json_decode().
+ */
+struct js_reader
+{
+    char_u	*js_buf;	/* text to be decoded */
+    char_u	*js_end;	/* NUL in js_buf */
+    int		js_used;	/* bytes used from js_buf */
+    int		(*js_fill)(struct js_reader *);
+				/* function to fill the buffer or NULL;
+                                 * return TRUE when the buffer was filled */
+    void	*js_cookie;	/* can be used by js_fill */
+};
+typedef struct js_reader js_read_T;

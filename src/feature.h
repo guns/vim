@@ -254,13 +254,6 @@
 #endif
 
 /*
- * +ex_extra		":retab", ":right", ":left", ":center", ":normal".
- */
-#ifdef FEAT_NORMAL
-# define FEAT_EX_EXTRA
-#endif
-
-/*
  * +extra_search	'hlsearch' and 'incsearch' options.
  */
 #ifdef FEAT_NORMAL
@@ -327,7 +320,7 @@
  *
  * Disabled for EBCDIC as it requires multibyte.
  */
-#if defined(FEAT_BIG) && !defined(WIN16) && VIM_SIZEOF_INT >= 4 && !defined(EBCDIC)
+#if defined(FEAT_BIG) && VIM_SIZEOF_INT >= 4 && !defined(EBCDIC)
 # define FEAT_ARABIC
 #endif
 #ifdef FEAT_ARABIC
@@ -561,7 +554,7 @@
 /* #define NO_BUILTIN_TCAPS */
 #endif
 
-#if !defined(NO_BUILTIN_TCAPS) && !defined(FEAT_GUI_W16)
+#if !defined(NO_BUILTIN_TCAPS)
 # ifdef FEAT_BIG
 #  define ALL_BUILTIN_TCAPS
 # else
@@ -631,8 +624,7 @@
  * Multibyte support doesn't work on z/OS Unix currently.
  */
 #if (defined(FEAT_NORMAL) || defined(FEAT_GUI_GTK) || defined(FEAT_ARABIC)) \
-	&& !defined(FEAT_MBYTE) && !defined(WIN16) \
-	&& VIM_SIZEOF_INT >= 4 && !defined(EBCDIC)
+	&& !defined(FEAT_MBYTE) && VIM_SIZEOF_INT >= 4 && !defined(EBCDIC)
 # define FEAT_MBYTE
 #endif
 
@@ -770,7 +762,7 @@
     && (defined(FEAT_GUI_GTK) \
 	|| (defined(FEAT_GUI_MOTIF) && defined(HAVE_XM_NOTEBOOK_H)) \
 	|| defined(FEAT_GUI_MAC) \
-	|| (defined(FEAT_GUI_MSWIN) && !defined(WIN16) \
+	|| (defined(FEAT_GUI_MSWIN) \
 	    && (!defined(_MSC_VER) || _MSC_VER > 1020)))
 # define FEAT_GUI_TABLINE
 #endif
@@ -1187,7 +1179,7 @@
 # if defined(MSDOS) || (defined(WIN3264) && !defined(FEAT_GUI_W32))
 #  define MCH_CURSOR_SHAPE
 # endif
-# if defined(FEAT_GUI_W32) || defined(FEAT_GUI_W16) || defined(FEAT_GUI_MOTIF) \
+# if defined(FEAT_GUI_W32) || defined(FEAT_GUI_MOTIF) \
 	|| defined(FEAT_GUI_ATHENA) || defined(FEAT_GUI_GTK) \
 	|| defined(FEAT_GUI_PHOTON)
 #  define FEAT_MOUSESHAPE
@@ -1237,6 +1229,7 @@
  * +sniff		Sniff interface: "--enable-sniff"
  * +sun_workshop	Sun Workshop integration
  * +netbeans_intg	Netbeans integration
+ * +channel		Inter process communication
  */
 
 /*
@@ -1258,6 +1251,20 @@
 #if (!defined(FEAT_LISTCMDS) || !defined(FEAT_EVAL)) \
 	&& defined(FEAT_NETBEANS_INTG)
 # undef FEAT_NETBEANS_INTG
+#endif
+
+/*
+ * The +channel feature requires +eval.
+ */
+#if !defined(FEAT_EVAL) && defined(FEAT_CHANNEL)
+# undef FEAT_CHANNEL
+#endif
+
+/*
+ * The +job feature requires +eval and Unix or MS-Windows.
+ */
+#if (defined(UNIX) || defined(WIN32)) && defined(FEAT_EVAL)
+# define FEAT_JOB
 #endif
 
 /*

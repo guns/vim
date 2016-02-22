@@ -29,6 +29,19 @@
  * depend". */
 #if defined(FEAT_MZSCHEME) || defined(PROTO)
 
+#ifdef PROTO
+typedef int Scheme_Object;
+typedef int Scheme_Closed_Prim;
+typedef int Scheme_Env;
+typedef int Scheme_Hash_Table;
+typedef int Scheme_Type;
+typedef int Scheme_Thread;
+typedef int Scheme_Closed_Prim;
+typedef int mzshort;
+typedef int Scheme_Prim;
+typedef int HINSTANCE;
+#endif
+
 /*
  * scheme_register_tls_space is only available on 32-bit Windows until
  * racket-6.3.  See
@@ -248,7 +261,7 @@ static int window_fixup_proc(void *obj)
 # define BUFFER_REF(buf) (vim_mz_buffer *)((buf)->b_mzscheme_ref)
 #endif
 
-#ifdef DYNAMIC_MZSCHEME
+#if defined(DYNAMIC_MZSCHEME) || defined(PROTO)
 static Scheme_Object *dll_scheme_eof;
 static Scheme_Object *dll_scheme_false;
 static Scheme_Object *dll_scheme_void;
@@ -406,6 +419,8 @@ static void (*dll_scheme_register_embedded_load)(intptr_t len, const char *s);
 static void (*dll_scheme_set_config_path)(Scheme_Object *p);
 # endif
 
+#if defined(DYNAMIC_MZSCHEME) /* not when defined(PROTO) */
+
 /* arrays are imported directly */
 # define scheme_eof dll_scheme_eof
 # define scheme_false dll_scheme_false
@@ -538,6 +553,8 @@ scheme_external_get_thread_local_variables(void)
 }
 #  endif
 # endif
+
+#endif
 
 typedef struct
 {
@@ -866,7 +883,7 @@ mzvim_check_threads(void)
 }
 #endif
 
-#ifdef MZSCHEME_GUI_THREADS
+#if defined(MZSCHEME_GUI_THREADS) || defined(PROTO)
 static void setup_timer(void);
 static void remove_timer(void);
 
@@ -1084,10 +1101,10 @@ startup_mzscheme(void)
 	MZ_GC_VAR_IN_REG(0, coll_path);
 	MZ_GC_REG();
 	/* workaround for dynamic loading on windows */
-	s = vim_getenv("PLTCOLLECTS", &mustfree);
+	s = vim_getenv((char_u *)"PLTCOLLECTS", &mustfree);
 	if (s != NULL)
 	{
-	    coll_path = scheme_make_path(s);
+	    coll_path = scheme_make_path((char *)s);
 	    MZ_GC_CHECK();
 	    if (mustfree)
 		vim_free(s);
@@ -1290,7 +1307,7 @@ mzscheme_init(void)
 #endif
 	if (load_base_module_failed || startup_mzscheme())
 	{
-	    EMSG(_("Exxx: Sorry, this command is disabled, the MzScheme's racket/base module could not be loaded."));
+	    EMSG(_("E895: Sorry, this command is disabled, the MzScheme's racket/base module could not be loaded."));
 	    return -1;
 	}
 	initialized = TRUE;
@@ -3084,6 +3101,14 @@ vim_to_mzscheme_impl(typval_T *vim_value, int depth, Scheme_Hash_Table *visited)
 
 	MZ_GC_UNREG();
     }
+    else if (vim_value->v_type == VAR_SPECIAL)
+    {
+	if (vim_value->vval.v_number <= VVAL_TRUE)
+	    result = scheme_make_integer((long)vim_value->vval.v_number);
+	else
+	    result = scheme_null;
+	MZ_GC_CHECK();
+    }
     else
     {
 	result = scheme_void;
@@ -3148,8 +3173,8 @@ mzscheme_to_vim_impl(Scheme_Object *obj, typval_T *tv, int depth,
 	copy_tv(found, tv);
     else if (SCHEME_VOIDP(obj))
     {
-	tv->v_type = VAR_NUMBER;
-	tv->vval.v_number = 0;
+	tv->v_type = VAR_SPECIAL;
+	tv->vval.v_number = VVAL_NULL;
     }
     else if (SCHEME_INTP(obj))
     {
@@ -3158,7 +3183,7 @@ mzscheme_to_vim_impl(Scheme_Object *obj, typval_T *tv, int depth,
     }
     else if (SCHEME_BOOLP(obj))
     {
-	tv->v_type = VAR_NUMBER;
+	tv->v_type = VAR_SPECIAL;
 	tv->vval.v_number = SCHEME_TRUEP(obj);
     }
 # ifdef FEAT_FLOAT
@@ -3724,7 +3749,7 @@ get_vim_curr_window(void)
 }
 
     static void
-make_modules()
+make_modules(void)
 {
     int		    i;
     Scheme_Env	    *mod = NULL;
