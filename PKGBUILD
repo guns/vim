@@ -1,6 +1,8 @@
 # Maintainer: Sung Pae <self@sungpae.com>
-pkgname=('vim-nerv' 'vim-nox-nerv')
-pkgver=0
+pkgname=('vim-nerv'
+         # 'vim-nox-nerv'
+         )
+pkgver=7.4.1490.98.g4457f16
 pkgrel=1
 pkgdesc="Custom vim build"
 arch=('x86_64')
@@ -27,8 +29,8 @@ package_vim-nerv() {
     __build__
 }
 
-package_vim-nox-nerv() {
-    depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm')
-    PREFIX=/usr PYTHON=python2 NOX=1 rake configure
-    __build__
-}
+# package_vim-nox-nerv() {
+#     depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm')
+#     PREFIX=/usr PYTHON=python2 NOX=1 rake configure
+#     __build__
+# }
