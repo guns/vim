@@ -5045,6 +5045,7 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
     int		fd_err[2];	/* for stderr */
 # ifdef FEAT_CHANNEL
     channel_T	*channel = NULL;
+    int		use_out_for_err = options->jo_io[PART_ERR] == JIO_OUT;
 #endif
 
     /* default is to fail */
@@ -5056,7 +5057,8 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
     /* TODO: without the channel feature connect the child to /dev/null? */
 # ifdef FEAT_CHANNEL
     /* Open pipes for stdin, stdout, stderr. */
-    if ((pipe(fd_in) < 0) || (pipe(fd_out) < 0) ||(pipe(fd_err) < 0))
+    if (pipe(fd_in) < 0 || pipe(fd_out) < 0
+				    || (!use_out_for_err && pipe(fd_err) < 0))
 	goto failed;
 
     channel = add_channel();
@@ -5093,17 +5095,26 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
 	ignored = dup(fd_in[0]);
 	close(fd_in[0]);
 
+	/* set up stderr for the child */
+	if (use_out_for_err)
+	{
+	    close(2);
+	    ignored = dup(fd_out[1]);
+	}
+	else
+	{
+	    close(fd_err[0]);
+	    close(2);
+	    ignored = dup(fd_err[1]);
+	    close(fd_err[1]);
+	}
+
 	/* set up stdout for the child */
 	close(fd_out[0]);
 	close(1);
 	ignored = dup(fd_out[1]);
 	close(fd_out[1]);
 
-	/* set up stderr for the child */
-	close(fd_err[0]);
-	close(2);
-	ignored = dup(fd_err[1]);
-	close(fd_err[1]);
 # endif
 
 	/* See above for type of argv. */
@@ -5123,11 +5134,14 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
     /* child stdin, stdout and stderr */
     close(fd_in[0]);
     close(fd_out[1]);
-    close(fd_err[1]);
 # ifdef FEAT_CHANNEL
-    channel_set_pipes(channel, fd_in[1], fd_out[0], fd_err[0]);
-    channel_set_job(channel, job);
-    channel_set_options(channel, options);
+    if (!use_out_for_err)
+# endif
+	close(fd_err[1]);
+# ifdef FEAT_CHANNEL
+    channel_set_pipes(channel, fd_in[1], fd_out[0],
+				    use_out_for_err ? INVALID_FD : fd_err[0]);
+    channel_set_job(channel, job, options);
 #  ifdef FEAT_GUI
     channel_gui_register(channel);
 #  endif
@@ -5202,12 +5216,14 @@ mch_stop_job(job_T *job, char_u *how)
     int	    sig = -1;
     pid_t   job_pid;
 
-    if (STRCMP(how, "hup") == 0)
-	sig = SIGHUP;
-    else if (*how == NUL || STRCMP(how, "term") == 0)
+    if (*how == NUL || STRCMP(how, "term") == 0)
 	sig = SIGTERM;
+    else if (STRCMP(how, "hup") == 0)
+	sig = SIGHUP;
     else if (STRCMP(how, "quit") == 0)
 	sig = SIGQUIT;
+    else if (STRCMP(how, "int") == 0)
+	sig = SIGINT;
     else if (STRCMP(how, "kill") == 0)
 	sig = SIGKILL;
     else if (isdigit(*how))
@@ -5233,9 +5249,9 @@ mch_clear_job(job_T *job)
 {
     /* call waitpid because child process may become zombie */
 # ifdef __NeXT__
-    wait4(job->jv_pid, NULL, WNOHANG, (struct rusage *)0);
+    (void)wait4(job->jv_pid, NULL, WNOHANG, (struct rusage *)0);
 # else
-    waitpid(job->jv_pid, NULL, WNOHANG);
+    (void)waitpid(job->jv_pid, NULL, WNOHANG);
 # endif
 }
 #endif
@@ -5338,7 +5354,6 @@ WaitForChar(long msec)
  * "msec" == 0 will check for characters once.
  * "msec" == -1 will block until a character is available.
  * When a GUI is being used, this will not be used for input -- webb
- * Returns also, when a request from Sniff is waiting -- toni.
  * Or when a Linux GPM mouse event is waiting.
  * Or when a clientserver message is on the queue.
  */
@@ -5425,15 +5440,6 @@ RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
 	fds[0].events = POLLIN;
 	nfd = 1;
 
-# ifdef FEAT_SNIFF
-#  define SNIFF_IDX 1
-	if (want_sniff_request)
-	{
-	    fds[SNIFF_IDX].fd = fd_from_sniff;
-	    fds[SNIFF_IDX].events = POLLIN;
-	    nfd++;
-	}
-# endif
 # ifdef FEAT_XCLIPBOARD
 	may_restore_clipboard();
 	if (xterm_Shell != (Widget)0)
@@ -5476,17 +5482,6 @@ RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
 	    finished = FALSE;
 # endif
 
-# ifdef FEAT_SNIFF
-	if (ret < 0)
-	    sniff_disconnect(1);
-	else if (want_sniff_request)
-	{
-	    if (fds[SNIFF_IDX].revents & POLLHUP)
-		sniff_disconnect(1);
-	    if (fds[SNIFF_IDX].revents & POLLIN)
-		sniff_request_waiting = 1;
-	}
-# endif
 # ifdef FEAT_XCLIPBOARD
 	if (xterm_Shell != (Widget)0 && (fds[xterm_idx].revents & POLLIN))
 	{
@@ -5572,15 +5567,6 @@ select_eintr:
 # endif
 	maxfd = fd;
 
-# ifdef FEAT_SNIFF
-	if (want_sniff_request)
-	{
-	    FD_SET(fd_from_sniff, &rfds);
-	    FD_SET(fd_from_sniff, &efds);
-	    if (maxfd < fd_from_sniff)
-		maxfd = fd_from_sniff;
-	}
-# endif
 # ifdef FEAT_XCLIPBOARD
 	may_restore_clipboard();
 	if (xterm_Shell != (Widget)0)
@@ -5650,17 +5636,6 @@ select_eintr:
 	    finished = FALSE;
 # endif
 
-# ifdef FEAT_SNIFF
-	if (ret < 0 )
-	    sniff_disconnect(1);
-	else if (ret > 0 && want_sniff_request)
-	{
-	    if (FD_ISSET(fd_from_sniff, &efds))
-		sniff_disconnect(1);
-	    if (FD_ISSET(fd_from_sniff, &rfds))
-		sniff_request_waiting = 1;
-	}
-# endif
 # ifdef FEAT_XCLIPBOARD
 	if (ret > 0 && xterm_Shell != (Widget)0
 		&& FD_ISSET(ConnectionNumber(xterm_dpy), &rfds))
@@ -6493,14 +6468,14 @@ have_dollars(int num, char_u **file)
 }
 #endif	/* ifndef __EMX__ */
 
-#ifndef HAVE_RENAME
+#if !defined(HAVE_RENAME) || defined(PROTO)
 /*
  * Scaled-down version of rename(), which is missing in Xenix.
  * This version can only move regular files and will fail if the
  * destination exists.
  */
     int
-mch_rename(const char *src, *dest)
+mch_rename(const char *src, const char *dest)
 {
     struct stat	    st;
 

@@ -10,6 +10,7 @@
 /*
  * eval.c: Expression evaluation.
  */
+#define USING_FLOAT_STUFF
 
 #include "vim.h"
 
@@ -25,16 +26,6 @@
 
 #ifdef MACOS
 # include <time.h>	/* for time_t */
-#endif
-
-#if defined(FEAT_FLOAT)
-# include <float.h>
-# if defined(HAVE_MATH_H)
-#  include <math.h>
-# endif
-# if defined(WIN32) && !defined(isnan)
-#  define isnan(x) _isnan(x)
-# endif
 #endif
 
 #define DICT_MAXNEST 100	/* maximum nesting of lists and dicts */
@@ -507,6 +498,9 @@ static void f_ceil(typval_T *argvars, typval_T *rettv);
 #endif
 #ifdef FEAT_CHANNEL
 static void f_ch_close(typval_T *argvars, typval_T *rettv);
+static void f_ch_evalexpr(typval_T *argvars, typval_T *rettv);
+static void f_ch_evalraw(typval_T *argvars, typval_T *rettv);
+static void f_ch_getbufnr(typval_T *argvars, typval_T *rettv);
 # ifdef FEAT_JOB
 static void f_ch_getjob(typval_T *argvars, typval_T *rettv);
 # endif
@@ -3158,8 +3152,8 @@ tv_op(typval_T *tv1, typval_T *tv2, char_u *op)
 		}
 		return OK;
 
-#ifdef FEAT_FLOAT
 	    case VAR_FLOAT:
+#ifdef FEAT_FLOAT
 		{
 		    float_T f;
 
@@ -3176,8 +3170,8 @@ tv_op(typval_T *tv1, typval_T *tv2, char_u *op)
 		    else
 			tv1->vval.v_float -= f;
 		}
-		return OK;
 #endif
+		return OK;
 	}
     }
 
@@ -7745,18 +7739,15 @@ failret:
 
 #if defined(FEAT_CHANNEL) || defined(PROTO)
 /*
- * Decrement the reference count on "channel" and free it when it goes down to
- * zero.
- * Returns TRUE when the channel was freed.
+ * Decrement the reference count on "channel" and maybe free it when it goes
+ * down to zero.  Don't free it if there is a pending action.
+ * Returns TRUE when the channel is no longer referenced.
  */
     int
 channel_unref(channel_T *channel)
 {
     if (channel != NULL && --channel->ch_refcount <= 0)
-    {
-	channel_free(channel);
-	return TRUE;
-    }
+	return channel_may_free(channel);
     return FALSE;
 }
 #endif
@@ -7768,10 +7759,14 @@ static job_T *first_job = NULL;
 job_free(job_T *job)
 {
 # ifdef FEAT_CHANNEL
+    ch_log(job->jv_channel, "Freeing job");
     if (job->jv_channel != NULL)
     {
-	/* The channel doesn't count as a references for the job, we need to
-	 * NULL the reference when the job is freed. */
+	/* The link from the channel to the job doesn't count as a reference,
+	 * thus don't decrement the refcount of the job.  The reference from
+	 * the job to the channel does count the refrence, decrement it and
+	 * NULL the reference.  We don't set ch_job_killed, unreferencing the
+	 * job doesn't mean it stops running. */
 	job->jv_channel->ch_job = NULL;
 	channel_unref(job->jv_channel);
     }
@@ -7799,7 +7794,19 @@ job_unref(job_T *job)
 	 * "stoponexit" flag or an exit callback. */
 	if (job->jv_status != JOB_STARTED
 		|| (job->jv_stoponexit == NULL && job->jv_exit_cb == NULL))
+	{
 	    job_free(job);
+	}
+# ifdef FEAT_CHANNEL
+	else if (job->jv_channel != NULL)
+	{
+	    /* Do remove the link to the channel, otherwise it hangs
+	     * around until Vim exits. See job_free() for refcount. */
+	    job->jv_channel->ch_job = NULL;
+	    channel_unref(job->jv_channel);
+	    job->jv_channel = NULL;
+	}
+# endif
     }
 }
 
@@ -8004,8 +8011,8 @@ tv2string(
 	case VAR_STRING:
 	    *tofree = string_quote(tv->vval.v_string, FALSE);
 	    return *tofree;
-#ifdef FEAT_FLOAT
 	case VAR_FLOAT:
+#ifdef FEAT_FLOAT
 	    *tofree = NULL;
 	    vim_snprintf((char *)numbuf, NUMBUFLEN - 1, "%g", tv->vval.v_float);
 	    return numbuf;
@@ -8198,6 +8205,9 @@ static struct fst
 #endif
 #ifdef FEAT_CHANNEL
     {"ch_close",	1, 1, f_ch_close},
+    {"ch_evalexpr",	2, 3, f_ch_evalexpr},
+    {"ch_evalraw",	2, 3, f_ch_evalraw},
+    {"ch_getbufnr",	2, 2, f_ch_getbufnr},
 # ifdef FEAT_JOB
     {"ch_getjob",	1, 1, f_ch_getjob},
 # endif
@@ -8405,7 +8415,9 @@ static struct fst
     {"range",		1, 3, f_range},
     {"readfile",	1, 3, f_readfile},
     {"reltime",		0, 2, f_reltime},
+#ifdef FEAT_FLOAT
     {"reltimefloat",	1, 1, f_reltimefloat},
+#endif
     {"reltimestr",	1, 1, f_reltimestr},
     {"remote_expr",	2, 3, f_remote_expr},
     {"remote_foreground", 1, 1, f_remote_foreground},
@@ -9205,7 +9217,7 @@ f_argidx(typval_T *argvars UNUSED, typval_T *rettv)
  * "arglistid()" function
  */
     static void
-f_arglistid(typval_T *argvars UNUSED, typval_T *rettv)
+f_arglistid(typval_T *argvars, typval_T *rettv)
 {
     win_T	*wp;
 
@@ -9650,27 +9662,12 @@ f_bufloaded(typval_T *argvars, typval_T *rettv)
     rettv->vval.v_number = (buf != NULL && buf->b_ml.ml_mfp != NULL);
 }
 
-static buf_T *get_buf_tv(typval_T *tv, int curtab_only);
-
-/*
- * Get buffer by number or pattern.
- */
     static buf_T *
-get_buf_tv(typval_T *tv, int curtab_only)
+buflist_find_by_name(char_u *name, int curtab_only)
 {
-    char_u	*name = tv->vval.v_string;
     int		save_magic;
     char_u	*save_cpo;
     buf_T	*buf;
-
-    if (tv->v_type == VAR_NUMBER)
-	return buflist_findnr((int)tv->vval.v_number);
-    if (tv->v_type != VAR_STRING)
-	return NULL;
-    if (name == NULL || *name == NUL)
-	return curbuf;
-    if (name[0] == '$' && name[1] == NUL)
-	return lastbuf;
 
     /* Ignore 'magic' and 'cpoptions' here to make scripts portable */
     save_magic = p_magic;
@@ -9683,6 +9680,28 @@ get_buf_tv(typval_T *tv, int curtab_only)
 
     p_magic = save_magic;
     p_cpo = save_cpo;
+    return buf;
+}
+
+/*
+ * Get buffer by number or pattern.
+ */
+    static buf_T *
+get_buf_tv(typval_T *tv, int curtab_only)
+{
+    char_u	*name = tv->vval.v_string;
+    buf_T	*buf;
+
+    if (tv->v_type == VAR_NUMBER)
+	return buflist_findnr((int)tv->vval.v_number);
+    if (tv->v_type != VAR_STRING)
+	return NULL;
+    if (name == NULL || *name == NUL)
+	return curbuf;
+    if (name[0] == '$' && name[1] == NUL)
+	return lastbuf;
+
+    buf = buflist_find_by_name(name, curtab_only);
 
     /* If not found, try expanding the name, like done for bufexists(). */
     if (buf == NULL)
@@ -9973,10 +9992,43 @@ handle_mode(typval_T *item, jobopt_T *opt, ch_mode_T *modep, int jo)
     return OK;
 }
 
+    static int
+handle_io(typval_T *item, int part, jobopt_T *opt)
+{
+    char_u	*val = get_tv_string(item);
+
+    opt->jo_set |= JO_OUT_IO << (part - PART_OUT);
+    if (STRCMP(val, "null") == 0)
+	opt->jo_io[part] = JIO_NULL;
+    else if (STRCMP(val, "pipe") == 0)
+	opt->jo_io[part] = JIO_PIPE;
+    else if (STRCMP(val, "file") == 0)
+	opt->jo_io[part] = JIO_FILE;
+    else if (STRCMP(val, "buffer") == 0)
+	opt->jo_io[part] = JIO_BUFFER;
+    else if (STRCMP(val, "out") == 0 && part == PART_ERR)
+	opt->jo_io[part] = JIO_OUT;
+    else
+    {
+	EMSG2(_(e_invarg2), val);
+	return FAIL;
+    }
+    return OK;
+}
+
     static void
 clear_job_options(jobopt_T *opt)
 {
     vim_memset(opt, 0, sizeof(jobopt_T));
+}
+
+/*
+ * Get the PART_ number from the first character of an option name.
+ */
+    static int
+part_from_char(int c)
+{
+    return c == 'i' ? PART_IN : c == 'o' ? PART_OUT: PART_ERR;
 }
 
 /*
@@ -9993,6 +10045,7 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported)
     dict_T	*dict;
     int		todo;
     hashitem_T	*hi;
+    int		part;
 
     opt->jo_set = 0;
     if (tv->v_type == VAR_UNKNOWN)
@@ -10042,6 +10095,51 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported)
 		if (handle_mode(item, opt, &opt->jo_err_mode, JO_ERR_MODE)
 								      == FAIL)
 		    return FAIL;
+	    }
+	    else if (STRCMP(hi->hi_key, "in-io") == 0
+		    || STRCMP(hi->hi_key, "out-io") == 0
+		    || STRCMP(hi->hi_key, "err-io") == 0)
+	    {
+		if (!(supported & JO_OUT_IO))
+		    break;
+		if (handle_io(item, part_from_char(*hi->hi_key), opt) == FAIL)
+		    return FAIL;
+	    }
+	    else if (STRCMP(hi->hi_key, "in-name") == 0
+		    || STRCMP(hi->hi_key, "out-name") == 0
+		    || STRCMP(hi->hi_key, "err-name") == 0)
+	    {
+		part = part_from_char(*hi->hi_key);
+
+		if (!(supported & JO_OUT_IO))
+		    break;
+		opt->jo_set |= JO_OUT_NAME << (part - PART_OUT);
+		opt->jo_io_name[part] =
+		       get_tv_string_buf_chk(item, opt->jo_io_name_buf[part]);
+	    }
+	    else if (STRCMP(hi->hi_key, "in-top") == 0
+		    || STRCMP(hi->hi_key, "in-bot") == 0)
+	    {
+		linenr_T *lp;
+
+		if (!(supported & JO_OUT_IO))
+		    break;
+		if (hi->hi_key[3] == 't')
+		{
+		    lp = &opt->jo_in_top;
+		    opt->jo_set |= JO_IN_TOP;
+		}
+		else
+		{
+		    lp = &opt->jo_in_bot;
+		    opt->jo_set |= JO_IN_BOT;
+		}
+		*lp = get_tv_number(item);
+		if (*lp < 0)
+		{
+		    EMSG2(_(e_invarg2), get_tv_string(item));
+		    return FAIL;
+		}
 	    }
 	    else if (STRCMP(hi->hi_key, "callback") == 0)
 	    {
@@ -10213,7 +10311,37 @@ f_ch_close(typval_T *argvars, typval_T *rettv UNUSED)
     channel_T *channel = get_channel_arg(&argvars[0]);
 
     if (channel != NULL)
+    {
 	channel_close(channel, FALSE);
+	channel_clear(channel);
+    }
+}
+
+/*
+ * "ch_getbufnr()" function
+ */
+    static void
+f_ch_getbufnr(typval_T *argvars, typval_T *rettv)
+{
+    channel_T *channel = get_channel_arg(&argvars[0]);
+
+    rettv->vval.v_number = -1;
+    if (channel != NULL)
+    {
+	char_u	*what = get_tv_string(&argvars[1]);
+	int	part;
+
+	if (STRCMP(what, "err") == 0)
+	    part = PART_ERR;
+	else if (STRCMP(what, "out") == 0)
+	    part = PART_OUT;
+	else if (STRCMP(what, "in") == 0)
+	    part = PART_IN;
+	else
+	    part = PART_SOCK;
+	if (channel->ch_part[part].ch_buffer != NULL)
+	    rettv->vval.v_number = channel->ch_part[part].ch_buffer->b_fnum;
+    }
 }
 
 # ifdef FEAT_JOB
@@ -10382,7 +10510,10 @@ common_channel_read(typval_T *argvars, typval_T *rettv, int raw)
 		id = opt.jo_id;
 	    channel_read_json_block(channel, part, timeout, id, &listtv);
 	    if (listtv != NULL)
+	    {
 		*rettv = *listtv;
+		vim_free(listtv);
+	    }
 	    else
 	    {
 		rettv->v_type = VAR_SPECIAL;
@@ -10417,10 +10548,16 @@ f_ch_readraw(typval_T *argvars, typval_T *rettv)
  * Otherwise returns NULL.
  */
     static channel_T *
-send_common(typval_T *argvars, char_u *text, int id, char *fun, int *part_read)
+send_common(
+	typval_T    *argvars,
+	char_u	    *text,
+	int	    id,
+	int	    eval,
+	jobopt_T    *opt,
+	char	    *fun,
+	int	    *part_read)
 {
     channel_T	*channel;
-    jobopt_T	opt;
     int		part_send;
 
     channel = get_channel_arg(&argvars[0]);
@@ -10429,26 +10566,34 @@ send_common(typval_T *argvars, char_u *text, int id, char *fun, int *part_read)
     part_send = channel_part_send(channel);
     *part_read = channel_part_read(channel);
 
-    clear_job_options(&opt);
-    if (get_job_options(&argvars[2], &opt, JO_CALLBACK) == FAIL)
+    clear_job_options(opt);
+    if (get_job_options(&argvars[2], opt, JO_CALLBACK + JO_TIMEOUT) == FAIL)
 	return NULL;
 
     /* Set the callback. An empty callback means no callback and not reading
-     * the response. */
-    if (opt.jo_callback != NULL && *opt.jo_callback != NUL)
-	channel_set_req_callback(channel, part_send, opt.jo_callback, id);
+     * the response. With "ch_evalexpr()" and "ch_evalraw()" a callback is not
+     * allowed. */
+    if (opt->jo_callback != NULL && *opt->jo_callback != NUL)
+    {
+	if (eval)
+	{
+	    EMSG2(_("E917: Cannot use a callback with %s()"), fun);
+	    return NULL;
+	}
+	channel_set_req_callback(channel, part_send, opt->jo_callback, id);
+    }
 
     if (channel_send(channel, part_send, text, fun) == OK
-						   && opt.jo_callback == NULL)
+						  && opt->jo_callback == NULL)
 	return channel;
     return NULL;
 }
 
 /*
- * "ch_sendexpr()" function
+ * common for "ch_evalexpr()" and "ch_sendexpr()"
  */
     static void
-f_ch_sendexpr(typval_T *argvars, typval_T *rettv)
+ch_expr_common(typval_T *argvars, typval_T *rettv, int eval)
 {
     char_u	*text;
     typval_T	*listtv;
@@ -10457,6 +10602,7 @@ f_ch_sendexpr(typval_T *argvars, typval_T *rettv)
     ch_mode_T	ch_mode;
     int		part_send;
     int		part_read;
+    jobopt_T    opt;
     int		timeout;
 
     /* return an empty string by default */
@@ -10471,7 +10617,7 @@ f_ch_sendexpr(typval_T *argvars, typval_T *rettv)
     ch_mode = channel_get_mode(channel, part_send);
     if (ch_mode == MODE_RAW || ch_mode == MODE_NL)
     {
-	EMSG(_("E912: cannot use ch_sendexpr() with a raw or nl channel"));
+	EMSG(_("E912: cannot use ch_evalexpr()/ch_sendexpr() with a raw or nl channel"));
 	return;
     }
 
@@ -10481,11 +10627,15 @@ f_ch_sendexpr(typval_T *argvars, typval_T *rettv)
     if (text == NULL)
 	return;
 
-    channel = send_common(argvars, text, id, "sendexpr", &part_read);
+    channel = send_common(argvars, text, id, eval, &opt,
+			    eval ? "ch_evalexpr" : "ch_sendexpr", &part_read);
     vim_free(text);
-    if (channel != NULL)
+    if (channel != NULL && eval)
     {
-	/* TODO: timeout from options */
+	if (opt.jo_set & JO_TIMEOUT)
+	    timeout = opt.jo_timeout;
+	else
+	    timeout = channel_get_timeout(channel, part_read);
 	timeout = channel_get_timeout(channel, part_read);
 	if (channel_read_json_block(channel, part_read, timeout, id, &listtv)
 									== OK)
@@ -10502,15 +10652,34 @@ f_ch_sendexpr(typval_T *argvars, typval_T *rettv)
 }
 
 /*
- * "ch_sendraw()" function
+ * "ch_evalexpr()" function
  */
     static void
-f_ch_sendraw(typval_T *argvars, typval_T *rettv)
+f_ch_evalexpr(typval_T *argvars, typval_T *rettv)
+{
+    ch_expr_common(argvars, rettv, TRUE);
+}
+
+/*
+ * "ch_sendexpr()" function
+ */
+    static void
+f_ch_sendexpr(typval_T *argvars, typval_T *rettv)
+{
+    ch_expr_common(argvars, rettv, FALSE);
+}
+
+/*
+ * common for "ch_evalraw()" and "ch_sendraw()"
+ */
+    static void
+ch_raw_common(typval_T *argvars, typval_T *rettv, int eval)
 {
     char_u	buf[NUMBUFLEN];
     char_u	*text;
     channel_T	*channel;
     int		part_read;
+    jobopt_T    opt;
     int		timeout;
 
     /* return an empty string by default */
@@ -10518,13 +10687,34 @@ f_ch_sendraw(typval_T *argvars, typval_T *rettv)
     rettv->vval.v_string = NULL;
 
     text = get_tv_string_buf(&argvars[1], buf);
-    channel = send_common(argvars, text, 0, "sendraw", &part_read);
-    if (channel != NULL)
+    channel = send_common(argvars, text, 0, eval, &opt,
+			      eval ? "ch_evalraw" : "ch_sendraw", &part_read);
+    if (channel != NULL && eval)
     {
-	/* TODO: timeout from options */
-	timeout = channel_get_timeout(channel, part_read);
+	if (opt.jo_set & JO_TIMEOUT)
+	    timeout = opt.jo_timeout;
+	else
+	    timeout = channel_get_timeout(channel, part_read);
 	rettv->vval.v_string = channel_read_block(channel, part_read, timeout);
     }
+}
+
+/*
+ * "ch_evalraw()" function
+ */
+    static void
+f_ch_evalraw(typval_T *argvars, typval_T *rettv)
+{
+    ch_raw_common(argvars, rettv, TRUE);
+}
+
+/*
+ * "ch_sendraw()" function
+ */
+    static void
+f_ch_sendraw(typval_T *argvars, typval_T *rettv)
+{
+    ch_raw_common(argvars, rettv, FALSE);
 }
 
 /*
@@ -13862,9 +14052,6 @@ f_has(typval_T *argvars, typval_T *rettv)
 #ifdef FEAT_SMARTINDENT
 	"smartindent",
 #endif
-#ifdef FEAT_SNIFF
-	"sniff",
-#endif
 #ifdef STARTUPTIME
 	"startuptime",
 #endif
@@ -14945,8 +15132,31 @@ f_job_start(typval_T *argvars UNUSED, typval_T *rettv)
     opt.jo_mode = MODE_NL;
     if (get_job_options(&argvars[1], &opt,
 	    JO_MODE_ALL + JO_CB_ALL + JO_TIMEOUT_ALL
-					+ JO_STOPONEXIT + JO_EXIT_CB) == FAIL)
+			    + JO_STOPONEXIT + JO_EXIT_CB + JO_OUT_IO) == FAIL)
 	return;
+
+    if ((opt.jo_set & JO_IN_IO) && opt.jo_io[PART_IN] == JIO_BUFFER)
+    {
+	buf_T *buf;
+
+	/* check that we can find the buffer before starting the job */
+	if (!(opt.jo_set & JO_IN_NAME))
+	{
+	    EMSG(_("E915: in-io buffer requires in-name to be set"));
+	    return;
+	}
+	buf = buflist_find_by_name(opt.jo_io_name[PART_IN], FALSE);
+	if (buf == NULL)
+	    return;
+	if (buf->b_ml.ml_mfp == NULL)
+	{
+	    EMSG2(_("E918: buffer must be loaded: %s"),
+						     opt.jo_io_name[PART_IN]);
+	    return;
+	}
+	job->jv_in_buf = buf;
+    }
+
     job_set_options(job, &opt);
 
 #ifndef USE_ARGV
@@ -14990,7 +15200,8 @@ f_job_start(typval_T *argvars UNUSED, typval_T *rettv)
 #ifdef USE_ARGV
 	    argv[argc++] = (char *)s;
 #else
-	    if (li != l->lv_first)
+	    /* Only escape when needed, double quotes are not always allowed. */
+	    if (li != l->lv_first && vim_strpbrk(s, (char_u *)" \t\"") != NULL)
 	    {
 		s = vim_strsave_shellescape(s, FALSE, TRUE);
 		if (s == NULL)
@@ -15035,6 +15246,10 @@ f_job_start(typval_T *argvars UNUSED, typval_T *rettv)
     ch_logs(NULL, "Starting job: %s", (char *)cmd);
 # endif
     mch_start_job((char *)cmd, job, &opt);
+#endif
+
+#ifdef FEAT_CHANNEL
+    channel_write_in(job->jv_channel);
 #endif
 
 theend:
@@ -15158,10 +15373,20 @@ f_job_stop(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 		return;
 	    }
 	}
+# ifdef FEAT_CHANNEL
+	ch_logs(job->jv_channel, "Stopping job with '%s'", (char *)arg);
+# endif
 	if (mch_stop_job(job, arg) == FAIL)
 	    rettv->vval.v_number = 0;
 	else
+	{
 	    rettv->vval.v_number = 1;
+	    /* Assume that "hup" does not kill the job. */
+	    if (job->jv_channel != NULL && STRCMP(arg, "hup") != 0)
+		job->jv_channel->ch_job_killed = TRUE;
+	}
+	/* We don't try freeing the job, obviously the caller still has a
+	 * reference to it. */
     }
 }
 #endif
@@ -17622,7 +17847,7 @@ f_round(typval_T *argvars, typval_T *rettv)
  * "screenattr()" function
  */
     static void
-f_screenattr(typval_T *argvars UNUSED, typval_T *rettv)
+f_screenattr(typval_T *argvars, typval_T *rettv)
 {
     int		row;
     int		col;
@@ -17642,7 +17867,7 @@ f_screenattr(typval_T *argvars UNUSED, typval_T *rettv)
  * "screenchar()" function
  */
     static void
-f_screenchar(typval_T *argvars UNUSED, typval_T *rettv)
+f_screenchar(typval_T *argvars, typval_T *rettv)
 {
     int		row;
     int		col;
@@ -19037,11 +19262,21 @@ do_sort_uniq(typval_T *argvars, typval_T *rettv, int sort)
 		    goto theend;	/* type error; errmsg already given */
 		if (i == 1)
 		    info.item_compare_ic = TRUE;
-		else
+		else if (argvars[1].v_type != VAR_NUMBER)
 		    info.item_compare_func = get_tv_string(&argvars[1]);
+		else if (i != 0)
+		{
+		    EMSG(_(e_invarg));
+		    goto theend;
+		}
 		if (info.item_compare_func != NULL)
 		{
-		    if (STRCMP(info.item_compare_func, "n") == 0)
+		    if (*info.item_compare_func == NUL)
+		    {
+			/* empty string means default sort */
+			info.item_compare_func = NULL;
+		    }
+		    else if (STRCMP(info.item_compare_func, "n") == 0)
 		    {
 			info.item_compare_func = NULL;
 			info.item_compare_numeric = TRUE;
@@ -20799,7 +21034,7 @@ f_virtcol(typval_T *argvars, typval_T *rettv)
  * "visualmode()" function
  */
     static void
-f_visualmode(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
+f_visualmode(typval_T *argvars, typval_T *rettv)
 {
     char_u	str[2];
 

@@ -2021,19 +2021,6 @@ if test "$enable_channel" = "yes"; then
   AC_SUBST(CHANNEL_OBJ)
 fi
 
-AC_MSG_CHECKING(--enable-sniff argument)
-AC_ARG_ENABLE(sniff,
-	[  --enable-sniff          Include Sniff interface.], ,
-	[enable_sniff="no"])
-AC_MSG_RESULT($enable_sniff)
-if test "$enable_sniff" = "yes"; then
-  AC_DEFINE(FEAT_SNIFF)
-  SNIFF_SRC="if_sniff.c"
-  AC_SUBST(SNIFF_SRC)
-  SNIFF_OBJ="objects/if_sniff.o"
-  AC_SUBST(SNIFF_OBJ)
-fi
-
 AC_MSG_CHECKING(--enable-multibyte argument)
 AC_ARG_ENABLE(multibyte,
 	[  --enable-multibyte      Include multibyte editing support.], ,
@@ -3159,6 +3146,7 @@ AC_HEADER_TIME
 AC_CHECK_TYPE(ino_t, long)
 AC_CHECK_TYPE(dev_t, unsigned)
 AC_C_BIGENDIAN(,,,)
+AC_C_INLINE
 
 AC_MSG_CHECKING(for rlim_t)
 if eval "test \"`echo '$''{'ac_cv_type_rlim_t'+set}'`\" = set"; then
@@ -3678,6 +3666,33 @@ AC_TRY_LINK([
     d = atan(1.11);
     ],
 	AC_MSG_RESULT(yes); AC_DEFINE(HAVE_FLOAT_FUNCS),
+	AC_MSG_RESULT(no))
+
+dnl isinf() and isnan() need to include header files and may need -lm.
+AC_MSG_CHECKING([for isinf()])
+AC_TRY_LINK([
+#ifdef HAVE_MATH_H
+# include <math.h>
+#endif
+#if STDC_HEADERS
+# include <stdlib.h>
+# include <stddef.h>
+#endif
+], [int r = isinf(1.11); ],
+	AC_MSG_RESULT(yes); AC_DEFINE(HAVE_ISINF),
+	AC_MSG_RESULT(no))
+
+AC_MSG_CHECKING([for isnan()])
+AC_TRY_LINK([
+#ifdef HAVE_MATH_H
+# include <math.h>
+#endif
+#if STDC_HEADERS
+# include <stdlib.h>
+# include <stddef.h>
+#endif
+], [int r = isnan(1.11); ],
+	AC_MSG_RESULT(yes); AC_DEFINE(HAVE_ISNAN),
 	AC_MSG_RESULT(no))
 
 dnl Link with -lposix1e for ACL stuff; if not found, try -lacl for SGI

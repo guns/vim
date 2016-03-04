@@ -1,4 +1,4 @@
-*starting.txt*  For Vim version 7.4.  Last change: 2016 Feb 21
+*starting.txt*  For Vim version 7.4.  Last change: 2016 Mar 03
 
 
 		  VIM REFERENCE MANUAL    by Bram Moolenaar
@@ -414,6 +414,11 @@ a slash.  Thus "-R" means recovery and "-/R" readonly.
 		not needed, because Vim will be able to find out what type
 		of terminal you are using.  (See |terminal-info|.)  {not in Vi}
 
+							*--not-a-term*
+--not-a-term	Tells Vim that the user knows that the input and/or output is
+		not connected to a terminal.  This will avoid the warning and
+		the two second delay that would happen. {not in Vi}
+
 							*-d*
 -d		Start in diff mode, like |vimdiff|.
 		{not in Vi} {not available when compiled without the |+diff|
@@ -827,6 +832,8 @@ accordingly.  Vim proceeds in this order:
 	-  The user exrc file(s).  Same as for the user vimrc file, but with
 	   "vimrc" replaced by "exrc".  But only one of ".exrc" and "_exrc" is
 	   used, depending on the system.  And without the (*)!
+	-  You would usually have "syntax on" and/or "filetype on" commands,
+	   which trigger initializing filetype detection, see |syntax-loading|.
 
      d. If the 'exrc' option is on (which is not the default), the current
 	directory is searched for three files.  The first that exists is used,
@@ -1148,7 +1155,7 @@ There are several ways to exit Vim:
 - Use `:cquit`.  Also when there are changes.
 
 When using `:cquit` or when there was an error message Vim exits with exit
-code 1.  Errors can be avoide by using `:silent!`.
+code 1.  Errors can be avoided by using `:silent!`.
 
 ==============================================================================
 8. Saving settings					*save-settings*

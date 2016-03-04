@@ -1683,27 +1683,6 @@ mch_inchar(
     if (typeaheadlen > 0)
 	goto theend;
 
-#ifdef FEAT_SNIFF
-    if (want_sniff_request)
-    {
-	if (sniff_request_waiting)
-	{
-	    /* return K_SNIFF */
-	    typeahead[typeaheadlen++] = CSI;
-	    typeahead[typeaheadlen++] = (char_u)KS_EXTRA;
-	    typeahead[typeaheadlen++] = (char_u)KE_SNIFF;
-	    sniff_request_waiting = 0;
-	    want_sniff_request = 0;
-	    goto theend;
-	}
-	else if (time < 0 || time > 250)
-	{
-	    /* don't wait too long, a request might be pending */
-	    time = 250;
-	}
-    }
-#endif
-
     if (time >= 0)
     {
 	if (!WaitForChar(time))     /* no character available */
@@ -5021,6 +5000,7 @@ mch_start_job(char *cmd, job_T *job, jobopt_T *options)
     HANDLE		jo;
 # ifdef FEAT_CHANNEL
     channel_T		*channel;
+    int			use_out_for_err = options->jo_io[PART_ERR] == JIO_OUT;
     HANDLE		ifd[2];
     HANDLE		ofd[2];
     HANDLE		efd[2];
@@ -5059,13 +5039,14 @@ mch_start_job(char *cmd, job_T *job, jobopt_T *options)
        || !pSetHandleInformation(ifd[1], HANDLE_FLAG_INHERIT, 0)
        || !CreatePipe(&ofd[0], &ofd[1], &saAttr, 0)
        || !pSetHandleInformation(ofd[0], HANDLE_FLAG_INHERIT, 0)
-       || !CreatePipe(&efd[0], &efd[1], &saAttr, 0)
-       || !pSetHandleInformation(efd[0], HANDLE_FLAG_INHERIT, 0))
+       || (!use_out_for_err
+	   && (!CreatePipe(&efd[0], &efd[1], &saAttr, 0)
+	    || !pSetHandleInformation(efd[0], HANDLE_FLAG_INHERIT, 0))))
 	goto failed;
     si.dwFlags |= STARTF_USESTDHANDLES;
     si.hStdInput = ifd[0];
     si.hStdOutput = ofd[1];
-    si.hStdError = efd[1];
+    si.hStdError = use_out_for_err ? ofd[1] : efd[1];
 # endif
 
     if (!vim_create_process(cmd, TRUE,
@@ -5096,13 +5077,13 @@ mch_start_job(char *cmd, job_T *job, jobopt_T *options)
 # ifdef FEAT_CHANNEL
     CloseHandle(ifd[0]);
     CloseHandle(ofd[1]);
-    CloseHandle(efd[1]);
+    if (!use_out_for_err)
+	CloseHandle(efd[1]);
 
     job->jv_channel = channel;
-    channel_set_pipes(channel, (sock_T)ifd[1], (sock_T)ofd[0], (sock_T)efd[0]);
-    channel_set_job(channel, job);
-    channel_set_options(channel, options);
-
+    channel_set_pipes(channel, (sock_T)ifd[1], (sock_T)ofd[0],
+			       use_out_for_err ? INVALID_FD : (sock_T)efd[0]);
+    channel_set_job(channel, job, options);
 #   ifdef FEAT_GUI
      channel_gui_register(channel);
 #   endif
@@ -5141,10 +5122,9 @@ mch_job_status(job_T *job)
     int
 mch_stop_job(job_T *job, char_u *how)
 {
-    int ret = 0;
-    int ctrl_c = STRCMP(how, "int") == 0;
+    int ret;
 
-    if (STRCMP(how, "kill") == 0)
+    if (STRCMP(how, "term") == 0 || STRCMP(how, "kill") == 0 || *how == NUL)
     {
 	if (job->jv_job_object != NULL)
 	    return TerminateJobObject(job->jv_job_object, 0) ? OK : FAIL;
@@ -5155,9 +5135,9 @@ mch_stop_job(job_T *job, char_u *how)
     if (!AttachConsole(job->jv_proc_info.dwProcessId))
 	return FAIL;
     ret = GenerateConsoleCtrlEvent(
-	    ctrl_c ? CTRL_C_EVENT : CTRL_BREAK_EVENT,
-	    job->jv_proc_info.dwProcessId)
-	? OK : FAIL;
+		STRCMP(how, "int") == 0 ? CTRL_C_EVENT : CTRL_BREAK_EVENT,
+		job->jv_proc_info.dwProcessId)
+	    ? OK : FAIL;
     FreeConsole();
     return ret;
 }

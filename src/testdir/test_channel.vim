@@ -110,17 +110,17 @@ func s:communicate(port)
   endif
 
   " Simple string request and reply.
-  call assert_equal('got it', ch_sendexpr(handle, 'hello!'))
+  call assert_equal('got it', ch_evalexpr(handle, 'hello!'))
 
   " Request that triggers sending two ex commands.  These will usually be
   " handled before getting the response, but it's not guaranteed, thus wait a
   " tiny bit for the commands to get executed.
-  call assert_equal('ok', ch_sendexpr(handle, 'make change'))
+  call assert_equal('ok', ch_evalexpr(handle, 'make change'))
   sleep 10m
   call assert_equal('added1', getline(line('$') - 1))
   call assert_equal('added2', getline('$'))
 
-  call assert_equal('ok', ch_sendexpr(handle, 'do normal'))
+  call assert_equal('ok', ch_evalexpr(handle, 'do normal', {'timeout': 100}))
   sleep 10m
   call assert_equal('added more', getline('$'))
 
@@ -154,37 +154,37 @@ func s:communicate(port)
   call ch_setoptions(handle, {'callback': ''})
 
   " Send an eval request that works.
-  call assert_equal('ok', ch_sendexpr(handle, 'eval-works'))
+  call assert_equal('ok', ch_evalexpr(handle, 'eval-works'))
   sleep 10m
-  call assert_equal([-1, 'foo123'], ch_sendexpr(handle, 'eval-result'))
+  call assert_equal([-1, 'foo123'], ch_evalexpr(handle, 'eval-result'))
 
   " Send an eval request that fails.
-  call assert_equal('ok', ch_sendexpr(handle, 'eval-fails'))
+  call assert_equal('ok', ch_evalexpr(handle, 'eval-fails'))
   sleep 10m
-  call assert_equal([-2, 'ERROR'], ch_sendexpr(handle, 'eval-result'))
+  call assert_equal([-2, 'ERROR'], ch_evalexpr(handle, 'eval-result'))
 
   " Send an eval request that works but can't be encoded.
-  call assert_equal('ok', ch_sendexpr(handle, 'eval-error'))
+  call assert_equal('ok', ch_evalexpr(handle, 'eval-error'))
   sleep 10m
-  call assert_equal([-3, 'ERROR'], ch_sendexpr(handle, 'eval-result'))
+  call assert_equal([-3, 'ERROR'], ch_evalexpr(handle, 'eval-result'))
 
   " Send a bad eval request. There will be no response.
-  call assert_equal('ok', ch_sendexpr(handle, 'eval-bad'))
+  call assert_equal('ok', ch_evalexpr(handle, 'eval-bad'))
   sleep 10m
-  call assert_equal([-3, 'ERROR'], ch_sendexpr(handle, 'eval-result'))
+  call assert_equal([-3, 'ERROR'], ch_evalexpr(handle, 'eval-result'))
 
   " Send an expr request
-  call assert_equal('ok', ch_sendexpr(handle, 'an expr'))
+  call assert_equal('ok', ch_evalexpr(handle, 'an expr'))
   sleep 10m
   call assert_equal('one', getline(line('$') - 2))
   call assert_equal('two', getline(line('$') - 1))
   call assert_equal('three', getline('$'))
 
   " Request a redraw, we don't check for the effect.
-  call assert_equal('ok', ch_sendexpr(handle, 'redraw'))
-  call assert_equal('ok', ch_sendexpr(handle, 'redraw!'))
+  call assert_equal('ok', ch_evalexpr(handle, 'redraw'))
+  call assert_equal('ok', ch_evalexpr(handle, 'redraw!'))
 
-  call assert_equal('ok', ch_sendexpr(handle, 'empty-request'))
+  call assert_equal('ok', ch_evalexpr(handle, 'empty-request'))
 
   " Reading while there is nothing available.
   call assert_equal(v:none, ch_read(handle, {'timeout': 0}))
@@ -195,14 +195,14 @@ func s:communicate(port)
   call assert_true(reltimefloat(elapsed) < 0.6)
 
   " Send without waiting for a response, then wait for a response.
-  call ch_sendexpr(handle, 'wait a bit',  {'callback': 0})
+  call ch_sendexpr(handle, 'wait a bit')
   let resp = ch_read(handle)
   call assert_equal(type([]), type(resp))
   call assert_equal(type(11), type(resp[0]))
   call assert_equal('waited', resp[1])
 
   " make the server quit, can't check if this works, should not hang.
-  call ch_sendexpr(handle, '!quit!', {'callback': 0})
+  call ch_sendexpr(handle, '!quit!')
 endfunc
 
 func Test_communicate()
@@ -218,18 +218,18 @@ func s:two_channels(port)
     return
   endif
 
-  call assert_equal('got it', ch_sendexpr(handle, 'hello!'))
+  call assert_equal('got it', ch_evalexpr(handle, 'hello!'))
 
   let newhandle = ch_open('localhost:' . a:port, s:chopt)
   if ch_status(newhandle) == "fail"
     call assert_false(1, "Can't open second channel")
     return
   endif
-  call assert_equal('got it', ch_sendexpr(newhandle, 'hello!'))
-  call assert_equal('got it', ch_sendexpr(handle, 'hello!'))
+  call assert_equal('got it', ch_evalexpr(newhandle, 'hello!'))
+  call assert_equal('got it', ch_evalexpr(handle, 'hello!'))
 
   call ch_close(handle)
-  call assert_equal('got it', ch_sendexpr(newhandle, 'hello!'))
+  call assert_equal('got it', ch_evalexpr(newhandle, 'hello!'))
 
   call ch_close(newhandle)
 endfunc
@@ -247,7 +247,7 @@ func s:server_crash(port)
     return
   endif
 
-  call ch_sendexpr(handle, '!crash!')
+  call ch_evalexpr(handle, '!crash!')
 
   sleep 10m
 endfunc
@@ -256,6 +256,8 @@ func Test_server_crash()
   call ch_log('Test_server_crash()')
   call s:run_server('s:server_crash')
 endfunc
+
+"""""""""
 
 let s:reply = ""
 func s:Handler(chan, msg)
@@ -271,12 +273,12 @@ func s:channel_handler(port)
   endif
 
   " Test that it works while waiting on a numbered message.
-  call assert_equal('ok', ch_sendexpr(handle, 'call me'))
+  call assert_equal('ok', ch_evalexpr(handle, 'call me'))
   sleep 10m
   call assert_equal('we called you', s:reply)
 
   " Test that it works while not waiting on a numbered message.
-  call ch_sendexpr(handle, 'call me again', {'callback': 0})
+  call ch_sendexpr(handle, 'call me again')
   sleep 10m
   call assert_equal('we did call you', s:reply)
 endfunc
@@ -289,6 +291,59 @@ func Test_channel_handler()
   call s:run_server('s:channel_handler')
   unlet s:chopt.callback
 endfunc
+
+"""""""""
+
+let s:reply1 = ""
+func s:HandleRaw1(chan, msg)
+  unlet s:reply1
+  let s:reply1 = a:msg
+endfunc
+
+let s:reply2 = ""
+func s:HandleRaw2(chan, msg)
+  unlet s:reply2
+  let s:reply2 = a:msg
+endfunc
+
+let s:reply3 = ""
+func s:HandleRaw3(chan, msg)
+  unlet s:reply3
+  let s:reply3 = a:msg
+endfunc
+
+func s:raw_one_time_callback(port)
+  let handle = ch_open('localhost:' . a:port, s:chopt)
+  if ch_status(handle) == "fail"
+    call assert_false(1, "Can't open channel")
+    return
+  endif
+  call ch_setoptions(handle, {'mode': 'raw'})
+
+  " The message are sent raw, we do our own JSON strings here.
+  call ch_sendraw(handle, "[1, \"hello!\"]", {'callback': 's:HandleRaw1'})
+  sleep 10m
+  call assert_equal("[1, \"got it\"]", s:reply1)
+  call ch_sendraw(handle, "[2, \"echo something\"]", {'callback': 's:HandleRaw2'})
+  call ch_sendraw(handle, "[3, \"wait a bit\"]", {'callback': 's:HandleRaw3'})
+  sleep 10m
+  call assert_equal("[2, \"something\"]", s:reply2)
+  " wait for up to 500 msec for the 200 msec delayed reply
+  for i in range(50)
+    sleep 10m
+    if s:reply3 != ''
+      break
+    endif
+  endfor
+  call assert_equal("[3, \"waited\"]", s:reply3)
+endfunc
+
+func Test_raw_one_time_callback()
+  call ch_log('Test_raw_one_time_callback()')
+  call s:run_server('s:raw_one_time_callback')
+endfunc
+
+"""""""""
 
 " Test that trying to connect to a non-existing port fails quickly.
 func Test_connect_waittime()
@@ -325,6 +380,8 @@ func Test_connect_waittime()
   endtry
 endfunc
 
+"""""""""
+
 func Test_raw_pipe()
   if !has('job')
     return
@@ -334,15 +391,15 @@ func Test_raw_pipe()
   call assert_equal("run", job_status(job))
   try
     let handle = job_getchannel(job)
-    call ch_sendraw(handle, "echo something\n", {'callback': 0})
+    call ch_sendraw(handle, "echo something\n")
     let msg = ch_readraw(handle)
     call assert_equal("something\n", substitute(msg, "\r", "", 'g'))
 
-    call ch_sendraw(handle, "double this\n", {'callback': 0})
+    call ch_sendraw(handle, "double this\n")
     let msg = ch_readraw(handle)
     call assert_equal("this\nAND this\n", substitute(msg, "\r", "", 'g'))
 
-    let reply = ch_sendraw(handle, "quit\n")
+    let reply = ch_evalraw(handle, "quit\n", {'timeout': 100})
     call assert_equal("Goodbye!\n", substitute(reply, "\r", "", 'g'))
   finally
     call job_stop(job)
@@ -358,15 +415,142 @@ func Test_nl_pipe()
   call assert_equal("run", job_status(job))
   try
     let handle = job_getchannel(job)
-    call ch_sendraw(handle, "echo something\n", {'callback': 0})
+    call ch_sendraw(handle, "echo something\n")
     call assert_equal("something", ch_readraw(handle))
 
-    call ch_sendraw(handle, "double this\n", {'callback': 0})
+    call ch_sendraw(handle, "echoerr wrong\n")
+    call assert_equal("wrong", ch_readraw(handle, {'part': 'err'}))
+
+    call ch_sendraw(handle, "double this\n")
     call assert_equal("this", ch_readraw(handle))
     call assert_equal("AND this", ch_readraw(handle))
 
-    let reply = ch_sendraw(handle, "quit\n")
+    let reply = ch_evalraw(handle, "quit\n")
     call assert_equal("Goodbye!", reply)
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+func Test_nl_err_to_out_pipe()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_nl_err_to_out_pipe()')
+  let job = job_start(s:python . " test_channel_pipe.py", {'err-io': 'out'})
+  call assert_equal("run", job_status(job))
+  try
+    let handle = job_getchannel(job)
+    call ch_sendraw(handle, "echo something\n")
+    call assert_equal("something", ch_readraw(handle))
+
+    call ch_sendraw(handle, "echoerr wrong\n")
+    call assert_equal("wrong", ch_readraw(handle))
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+func Test_pipe_to_buffer()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_pipe_to_buffer()')
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'out-io': 'buffer', 'out-name': 'pipe-output'})
+  call assert_equal("run", job_status(job))
+  try
+    let handle = job_getchannel(job)
+    call ch_sendraw(handle, "echo line one\n")
+    call ch_sendraw(handle, "echo line two\n")
+    call ch_sendraw(handle, "double this\n")
+    call ch_sendraw(handle, "quit\n")
+    sp pipe-output
+    for i in range(100)
+      sleep 10m
+      if line('$') >= 6
+	break
+      endif
+    endfor
+    call assert_equal(['Reading from channel output...', 'line one', 'line two', 'this', 'AND this', 'Goodbye!'], getline(1, '$'))
+    bwipe!
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+func Test_pipe_from_buffer()
+  if !has('job')
+    return
+  endif
+call ch_logfile('channellog', 'w')
+  call ch_log('Test_pipe_from_buffer()')
+
+  sp pipe-input
+  call setline(1, ['echo one', 'echo two', 'echo three'])
+
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'in-io': 'buffer', 'in-name': 'pipe-input'})
+  call assert_equal("run", job_status(job))
+  try
+    let handle = job_getchannel(job)
+    call assert_equal('one', ch_read(handle))
+    call assert_equal('two', ch_read(handle))
+    call assert_equal('three', ch_read(handle))
+    bwipe!
+  finally
+    call job_stop(job)
+  endtry
+call ch_logfile('')
+endfunc
+
+func Test_pipe_to_nameless_buffer()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_pipe_to_nameless_buffer()')
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'out-io': 'buffer'})
+  call assert_equal("run", job_status(job))
+  try
+    let handle = job_getchannel(job)
+    call ch_sendraw(handle, "echo line one\n")
+    call ch_sendraw(handle, "echo line two\n")
+    exe ch_getbufnr(handle, "out") . 'sbuf'
+    for i in range(100)
+      sleep 10m
+      if line('$') >= 3
+	break
+      endif
+    endfor
+    call assert_equal(['Reading from channel output...', 'line one', 'line two'], getline(1, '$'))
+    bwipe!
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+func Test_pipe_to_buffer_json()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_pipe_to_buffer_json()')
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'out-io': 'buffer', 'out-mode': 'json'})
+  call assert_equal("run", job_status(job))
+  try
+    let handle = job_getchannel(job)
+    call ch_sendraw(handle, "echo [0, \"hello\"]\n")
+    call ch_sendraw(handle, "echo [-2, 12.34]\n")
+    exe ch_getbufnr(handle, "out") . 'sbuf'
+    for i in range(100)
+      sleep 10m
+      if line('$') >= 3
+	break
+      endif
+    endfor
+    call assert_equal(['Reading from channel output...', '[0,"hello"]', '[-2,12.34]'], getline(1, '$'))
+    bwipe!
   finally
     call job_stop(job)
   endtry
@@ -434,7 +618,7 @@ func s:open_delay(port)
     call assert_false(1, "Can't open channel")
     return
   endif
-  call assert_equal('got it', ch_sendexpr(channel, 'hello!'))
+  call assert_equal('got it', ch_evalexpr(channel, 'hello!'))
   call ch_close(channel)
 endfunc
 
@@ -457,7 +641,7 @@ function s:test_call(port)
     return
   endif
 
-  call assert_equal('ok', ch_sendexpr(handle, 'call-func'))
+  call assert_equal('ok', ch_evalexpr(handle, 'call-func'))
   sleep 20m
   call assert_equal([1, 2, 3], s:call_ret)
 endfunc
@@ -481,14 +665,21 @@ endfunc
 
 func Test_exit_callback()
   if has('job')
+    call ch_log('Test_exit_callback()')
     call s:run_server('s:test_exit_callback')
 
-    " the job may take a little while to exit
-    sleep 50m
+    " wait up to a second for the job to exit
+    for i in range(100)
+      if s:job_exit_ret == 'done'
+	break
+      endif
+      sleep 10m
+      " calling job_status() triggers the callback
+      call job_status(s:exit_job)
+    endfor
 
-    " calling job_status() triggers the callback
-    call job_status(s:exit_job)
     call assert_equal('done', s:job_exit_ret)
+    unlet s:exit_job
   endif
 endfunc
 
@@ -507,7 +698,7 @@ function s:test_close_callback(port)
   endif
   call ch_setoptions(handle, {'close-cb': 'MyCloseCb'})
 
-  call assert_equal('', ch_sendexpr(handle, 'close me'))
+  call assert_equal('', ch_evalexpr(handle, 'close me'))
   sleep 20m
   call assert_equal('closed', s:ch_close_ret)
 endfunc
@@ -517,3 +708,5 @@ func Test_close_callback()
   call s:run_server('s:test_close_callback')
 endfunc
 
+" Uncomment this to see what happens, output is in src/testdir/channellog.
+" call ch_logfile('channellog', 'w')

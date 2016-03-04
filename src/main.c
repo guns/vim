@@ -50,6 +50,7 @@ typedef struct
 
     int		want_full_screen;
     int		stdout_isatty;		/* is stdout a terminal? */
+    int		not_a_term;		/* no warning for missing term? */
     char_u	*term;			/* specified terminal name */
 #ifdef FEAT_CRYPT
     int		ask_for_key;		/* -x argument */
@@ -1175,7 +1176,10 @@ main_loop(
 			curwin->w_p_cole > 0
 # endif
 			)
-		 && !equalpos(last_cursormoved, curwin->w_cursor))
+# ifdef FEAT_AUTOCMD
+		 && !equalpos(last_cursormoved, curwin->w_cursor)
+# endif
+		 )
 	    {
 # ifdef FEAT_AUTOCMD
 		if (has_cursormoved())
@@ -1185,12 +1189,16 @@ main_loop(
 # ifdef FEAT_CONCEAL
 		if (curwin->w_p_cole > 0)
 		{
+#  ifdef FEAT_AUTOCMD
 		    conceal_old_cursor_line = last_cursormoved.lnum;
+#  endif
 		    conceal_new_cursor_line = curwin->w_cursor.lnum;
 		    conceal_update_lines = TRUE;
 		}
 # endif
+# ifdef FEAT_AUTOCMD
 		last_cursormoved = curwin->w_cursor;
+# endif
 	    }
 #endif
 
@@ -1856,6 +1864,7 @@ command_line_scan(mparm_T *parmp)
 				/* "--version" give version message */
 				/* "--literal" take files literally */
 				/* "--nofork" don't fork */
+				/* "--not-a-term" don't warn for not a term */
 				/* "--noplugin[s]" skip plugins */
 				/* "--cmd <cmd>" execute cmd before vimrc */
 		if (STRICMP(argv[0] + argv_idx, "help") == 0)
@@ -1883,6 +1892,8 @@ command_line_scan(mparm_T *parmp)
 		}
 		else if (STRNICMP(argv[0] + argv_idx, "noplugin", 8) == 0)
 		    p_lpl = FALSE;
+		else if (STRNICMP(argv[0] + argv_idx, "not-a-term", 10) == 0)
+		    parmp->not_a_term = TRUE;
 		else if (STRNICMP(argv[0] + argv_idx, "cmd", 3) == 0)
 		{
 		    want_argument = TRUE;
@@ -2519,7 +2530,7 @@ check_tty(mparm_T *parmp)
 	    /* don't want the delay when started from the desktop */
 	    && !gui.starting
 #endif
-	    )
+	    && !parmp->not_a_term)
     {
 #ifdef NBDEBUG
 	/*
@@ -3303,6 +3314,7 @@ usage(void)
     main_msg(_("-F\t\t\tStart in Farsi mode"));
 #endif
     main_msg(_("-T <terminal>\tSet terminal type to <terminal>"));
+    main_msg(_("--not-a-term\t\tSkip warning for input/output not being a terminal"));
     main_msg(_("-u <vimrc>\t\tUse <vimrc> instead of any .vimrc"));
 #ifdef FEAT_GUI
     main_msg(_("-U <gvimrc>\t\tUse <gvimrc> instead of any .gvimrc"));
