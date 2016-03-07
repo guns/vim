@@ -108,6 +108,10 @@ func s:communicate(port)
     call assert_false(1, "Can't open channel")
     return
   endif
+  if has('job')
+    " check that no job is handled correctly
+    call assert_equal('no process', string(ch_getjob(handle)))
+  endif
 
   " Simple string request and reply.
   call assert_equal('got it', ch_evalexpr(handle, 'hello!'))
@@ -145,6 +149,9 @@ func s:communicate(port)
     unlet s:responseHandle
   endif
   call assert_equal('got it', s:responseMsg)
+
+  " Collect garbage, tests that our handle isn't collected.
+  call garbagecollect()
 
   " check setting options (without testing the effect)
   call ch_setoptions(handle, {'callback': 's:NotUsed'})
@@ -290,6 +297,72 @@ func Test_channel_handler()
   let s:chopt.callback = function('s:Handler')
   call s:run_server('s:channel_handler')
   unlet s:chopt.callback
+endfunc
+
+"""""""""
+
+let s:ch_reply = ''
+func s:ChHandler(chan, msg)
+  unlet s:ch_reply
+  let s:ch_reply = a:msg
+endfunc
+
+let s:zero_reply = ''
+func s:OneHandler(chan, msg)
+  unlet s:zero_reply
+  let s:zero_reply = a:msg
+endfunc
+
+func s:channel_zero(port)
+  let handle = ch_open('localhost:' . a:port, s:chopt)
+  if ch_status(handle) == "fail"
+    call assert_false(1, "Can't open channel")
+    return
+  endif
+
+  " Check that eval works.
+  call assert_equal('got it', ch_evalexpr(handle, 'hello!'))
+
+  " Check that eval works if a zero id message is sent back.
+  let s:ch_reply = ''
+  call assert_equal('sent zero', ch_evalexpr(handle, 'send zero'))
+  sleep 10m
+  if s:has_handler
+    call assert_equal('zero index', s:ch_reply)
+  else
+    call assert_equal('', s:ch_reply)
+  endif
+
+  " Check that handler works if a zero id message is sent back.
+  let s:ch_reply = ''
+  let s:zero_reply = ''
+  call ch_sendexpr(handle, 'send zero', {'callback': 's:OneHandler'})
+  " Somehow the second message takes a bit of time.
+  for i in range(50)
+    if s:zero_reply == 'sent zero'
+      break
+    endif
+    sleep 10m
+  endfor
+  if s:has_handler
+    call assert_equal('zero index', s:ch_reply)
+  else
+    call assert_equal('', s:ch_reply)
+  endif
+  call assert_equal('sent zero', s:zero_reply)
+endfunc
+
+func Test_zero_reply()
+  call ch_log('Test_zero_reply()')
+  " Run with channel handler
+  let s:has_handler = 1
+  let s:chopt.callback = 's:ChHandler'
+  call s:run_server('s:channel_zero')
+  unlet s:chopt.callback
+
+  " Run without channel handler
+  let s:has_handler = 0
+  call s:run_server('s:channel_zero')
 endfunc
 
 """""""""
@@ -451,6 +524,31 @@ func Test_nl_err_to_out_pipe()
   endtry
 endfunc
 
+func Test_nl_read_file()
+  if !has('job')
+    return
+  endif
+  " TODO: make this work for MS-Windows.
+  if !has('unix')
+    return
+  endif
+  call ch_log('Test_nl_read_file()')
+  call writefile(['echo something', 'echoerr wrong', 'double this'], 'Xinput')
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'in-io': 'file', 'in-name': 'Xinput'})
+  call assert_equal("run", job_status(job))
+  try
+    let handle = job_getchannel(job)
+    call assert_equal("something", ch_readraw(handle))
+    call assert_equal("wrong", ch_readraw(handle, {'part': 'err'}))
+    call assert_equal("this", ch_readraw(handle))
+    call assert_equal("AND this", ch_readraw(handle))
+  finally
+    call job_stop(job)
+    call delete('Xinput')
+  endtry
+endfunc
+
 func Test_pipe_to_buffer()
   if !has('job')
     return
@@ -483,7 +581,6 @@ func Test_pipe_from_buffer()
   if !has('job')
     return
   endif
-call ch_logfile('channellog', 'w')
   call ch_log('Test_pipe_from_buffer()')
 
   sp pipe-input
@@ -501,7 +598,6 @@ call ch_logfile('channellog', 'w')
   finally
     call job_stop(job)
   endtry
-call ch_logfile('')
 endfunc
 
 func Test_pipe_to_nameless_buffer()
@@ -550,6 +646,83 @@ func Test_pipe_to_buffer_json()
       endif
     endfor
     call assert_equal(['Reading from channel output...', '[0,"hello"]', '[-2,12.34]'], getline(1, '$'))
+    bwipe!
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+" Wait a little while for the last line, minus "offset", to equal "line".
+func Wait_for_last_line(line, offset)
+  for i in range(100)
+    sleep 10m
+    if getline(line('$') - a:offset) == a:line
+      break
+    endif
+  endfor
+endfunc
+
+func Test_pipe_io_two_buffers()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_pipe_io_two_buffers()')
+
+  " Create two buffers, one to read from and one to write to.
+  split pipe-output
+  set buftype=nofile
+  split pipe-input
+  set buftype=nofile
+
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'in-io': 'buffer', 'in-name': 'pipe-input', 'in-top': 0,
+	\  'out-io': 'buffer', 'out-name': 'pipe-output'})
+  call assert_equal("run", job_status(job))
+  try
+    exe "normal Gaecho hello\<CR>"
+    exe bufwinnr('pipe-output') . "wincmd w"
+    call Wait_for_last_line('hello', 0)
+    call assert_equal('hello', getline('$'))
+
+    exe bufwinnr('pipe-input') . "wincmd w"
+    exe "normal Gadouble this\<CR>"
+    exe bufwinnr('pipe-output') . "wincmd w"
+    call Wait_for_last_line('AND this', 0)
+    call assert_equal('this', getline(line('$') - 1))
+    call assert_equal('AND this', getline('$'))
+
+    bwipe!
+    exe bufwinnr('pipe-input') . "wincmd w"
+    bwipe!
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+func Test_pipe_io_one_buffer()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_pipe_io_one_buffer()')
+
+  " Create one buffer to read from and to write to.
+  split pipe-io
+  set buftype=nofile
+
+  let job = job_start(s:python . " test_channel_pipe.py",
+	\ {'in-io': 'buffer', 'in-name': 'pipe-io', 'in-top': 0,
+	\  'out-io': 'buffer', 'out-name': 'pipe-io'})
+  call assert_equal("run", job_status(job))
+  try
+    exe "normal Goecho hello\<CR>"
+    call Wait_for_last_line('hello', 1)
+    call assert_equal('hello', getline(line('$') - 1))
+
+    exe "normal Gadouble this\<CR>"
+    call Wait_for_last_line('AND this', 1)
+    call assert_equal('this', getline(line('$') - 2))
+    call assert_equal('AND this', getline(line('$') - 1))
+
     bwipe!
   finally
     call job_stop(job)

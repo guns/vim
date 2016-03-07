@@ -5037,16 +5037,16 @@ error:
 
 #if defined(FEAT_JOB) || defined(PROTO)
     void
-mch_start_job(char **argv, job_T *job, jobopt_T *options)
+mch_start_job(char **argv, job_T *job, jobopt_T *options UNUSED)
 {
     pid_t	pid;
+# ifdef FEAT_CHANNEL
     int		fd_in[2];	/* for stdin */
     int		fd_out[2];	/* for stdout */
     int		fd_err[2];	/* for stderr */
-# ifdef FEAT_CHANNEL
     channel_T	*channel = NULL;
+    int		use_file_for_in = options->jo_io[PART_IN] == JIO_FILE;
     int		use_out_for_err = options->jo_io[PART_ERR] == JIO_OUT;
-#endif
 
     /* default is to fail */
     job->jv_status = JOB_FAILED;
@@ -5055,10 +5055,23 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
     fd_err[0] = -1;
 
     /* TODO: without the channel feature connect the child to /dev/null? */
-# ifdef FEAT_CHANNEL
     /* Open pipes for stdin, stdout, stderr. */
-    if (pipe(fd_in) < 0 || pipe(fd_out) < 0
-				    || (!use_out_for_err && pipe(fd_err) < 0))
+    if (use_file_for_in)
+    {
+	char_u *fname = options->jo_io_name[PART_IN];
+
+	fd_in[0] = mch_open((char *)fname, O_RDONLY, 0);
+	if (fd_in[0] < 0)
+	{
+	    EMSG2(_(e_notopen), fname);
+	    goto failed;
+	}
+    }
+    else if (pipe(fd_in) < 0)
+	goto failed;
+    if (pipe(fd_out) < 0)
+	goto failed;
+    if (!use_out_for_err && pipe(fd_err) < 0)
 	goto failed;
 
     channel = add_channel();
@@ -5090,7 +5103,8 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
 	/* TODO: re-enable this when pipes connect without a channel */
 # ifdef FEAT_CHANNEL
 	/* set up stdin for the child */
-	close(fd_in[1]);
+	if (!use_file_for_in)
+	    close(fd_in[1]);
 	close(0);
 	ignored = dup(fd_in[0]);
 	close(fd_in[0]);
@@ -5114,7 +5128,6 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
 	close(1);
 	ignored = dup(fd_out[1]);
 	close(fd_out[1]);
-
 # endif
 
 	/* See above for type of argv. */
@@ -5131,16 +5144,17 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
     job->jv_channel = channel;
 # endif
 
+# ifdef FEAT_CHANNEL
     /* child stdin, stdout and stderr */
-    close(fd_in[0]);
+    if (!use_file_for_in)
+	close(fd_in[0]);
     close(fd_out[1]);
-# ifdef FEAT_CHANNEL
     if (!use_out_for_err)
-# endif
 	close(fd_err[1]);
-# ifdef FEAT_CHANNEL
-    channel_set_pipes(channel, fd_in[1], fd_out[0],
-				    use_out_for_err ? INVALID_FD : fd_err[0]);
+    channel_set_pipes(channel,
+		      use_file_for_in ? INVALID_FD : fd_in[1],
+		      fd_out[0],
+		      use_out_for_err ? INVALID_FD : fd_err[0]);
     channel_set_job(channel, job, options);
 #  ifdef FEAT_GUI
     channel_gui_register(channel);
@@ -5149,15 +5163,15 @@ mch_start_job(char **argv, job_T *job, jobopt_T *options)
 
     return;
 
-failed:
+failed: ;
 # ifdef FEAT_CHANNEL
     if (channel != NULL)
 	channel_free(channel);
-# endif
     if (fd_in[0] >= 0)
     {
 	close(fd_in[0]);
-	close(fd_in[1]);
+	if (!use_file_for_in)
+	    close(fd_in[1]);
     }
     if (fd_out[0] >= 0)
     {
@@ -5169,6 +5183,7 @@ failed:
 	close(fd_err[0]);
 	close(fd_err[1]);
     }
+# endif
 }
 
     char *
