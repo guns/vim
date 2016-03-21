@@ -1110,6 +1110,7 @@ typedef double	float_T;
 
 typedef struct listvar_S list_T;
 typedef struct dictvar_S dict_T;
+typedef struct partial_S partial_T;
 
 typedef struct jobvar_S job_T;
 typedef struct readq_S readq_T;
@@ -1123,6 +1124,7 @@ typedef enum
     VAR_NUMBER,	 /* "v_number" is used */
     VAR_STRING,	 /* "v_string" is used */
     VAR_FUNC,	 /* "v_string" is function name */
+    VAR_PARTIAL, /* "v_partial" is used */
     VAR_LIST,	 /* "v_list" is used */
     VAR_DICT,	 /* "v_dict" is used */
     VAR_FLOAT,	 /* "v_float" is used */
@@ -1147,6 +1149,7 @@ typedef struct
 	char_u		*v_string;	/* string value (can be NULL!) */
 	list_T		*v_list;	/* list value (can be NULL!) */
 	dict_T		*v_dict;	/* dict value (can be NULL!) */
+	partial_T	*v_partial;	/* closure: function with args */
 #ifdef FEAT_JOB_CHANNEL
 	job_T		*v_job;		/* job value (can be NULL!) */
 	channel_T	*v_channel;	/* channel value (can be NULL!) */
@@ -1239,6 +1242,15 @@ struct dictvar_S
     dict_T	*dv_used_prev;	/* previous dict in used dicts list */
 };
 
+struct partial_S
+{
+    int		pt_refcount;	/* reference count */
+    char_u	*pt_name;	/* function name */
+    int		pt_argc;	/* number of arguments */
+    typval_T	*pt_argv;	/* arguments in allocated array */
+    dict_T	*pt_dict;	/* dict for "self" */
+};
+
 typedef enum
 {
     JOB_FAILED,
@@ -1264,6 +1276,7 @@ struct jobvar_S
     char_u	*jv_stoponexit; /* allocated */
     int		jv_exitval;
     char_u	*jv_exit_cb;	/* allocated */
+    partial_T	*jv_exit_partial;
 
     buf_T	*jv_in_buf;	/* buffer from "in-name" */
 
@@ -1291,6 +1304,7 @@ struct jsonq_S
 struct cbq_S
 {
     char_u	*cq_callback;
+    partial_T	*cq_partial;
     int		cq_seq_nr;
     cbq_T	*cq_next;
     cbq_T	*cq_prev;
@@ -1304,6 +1318,14 @@ typedef enum
     MODE_JSON,
     MODE_JS
 } ch_mode_T;
+
+typedef enum {
+    JIO_PIPE,	    /* default */
+    JIO_NULL,
+    JIO_FILE,
+    JIO_BUFFER,
+    JIO_OUT
+} job_io_T;
 
 /* Ordering matters, it is used in for loops: IN is last, only SOCK/OUT/ERR
  * are polled. */
@@ -1337,15 +1359,25 @@ typedef struct {
 #endif
 
     ch_mode_T	ch_mode;
+    job_io_T	ch_io;
     int		ch_timeout;	/* request timeout in msec */
 
     readq_T	ch_head;	/* header for circular raw read queue */
     jsonq_T	ch_json_head;	/* header for circular json read queue */
     int		ch_block_id;	/* ID that channel_read_json_block() is
 				   waiting for */
+    /* When ch_waiting is TRUE use ch_deadline to wait for incomplete message
+     * to be complete. */
+    int		ch_waiting;
+#ifdef WIN32
+    DWORD	ch_deadline;
+#else
+    struct timeval ch_deadline;
+#endif
 
     cbq_T	ch_cb_head;	/* dummy node for per-request callbacks */
     char_u	*ch_callback;	/* call when a msg is not handled */
+    partial_T	*ch_partial;
 
     buf_T	*ch_buffer;	/* buffer to read from or write to */
     linenr_T	ch_buf_top;	/* next line to send */
@@ -1357,8 +1389,12 @@ struct channel_S {
     channel_T	*ch_prev;
 
     int		ch_id;		/* ID of the channel */
+    int		ch_last_msg_id;	/* ID of the last message */
 
     chanpart_T	ch_part[4];	/* info for socket, out, err and in */
+
+    char	*ch_hostname;	/* only for socket, allocated */
+    int		ch_port;	/* only for socket */
 
     int		ch_error;	/* When TRUE an error was reported.  Avoids
 				 * giving pages full of error messages when
@@ -1371,7 +1407,9 @@ struct channel_S {
 				 * closed */
 
     char_u	*ch_callback;	/* call when any msg is not handled */
+    partial_T	*ch_partial;
     char_u	*ch_close_cb;	/* call when channel is closed */
+    partial_T	*ch_close_partial;
 
     job_T	*ch_job;	/* Job that uses this channel; this does not
 				 * count as a reference to avoid a circular
@@ -1397,18 +1435,18 @@ struct channel_S {
 #define JO_PART		    0x1000	/* "part" */
 #define JO_ID		    0x2000	/* "id" */
 #define JO_STOPONEXIT	    0x4000	/* "stoponexit" */
-#define JO_EXIT_CB	    0x8000	/* "exit-cb" */
-#define JO_OUT_IO	    0x10000	/* "out-io" */
-#define JO_ERR_IO	    0x20000	/* "err-io" (JO_OUT_IO << 1) */
-#define JO_IN_IO	    0x40000	/* "in-io" (JO_OUT_IO << 2) */
-#define JO_OUT_NAME	    0x80000	/* "out-name" */
-#define JO_ERR_NAME	    0x100000	/* "err-name" (JO_OUT_NAME << 1) */
-#define JO_IN_NAME	    0x200000	/* "in-name" (JO_OUT_NAME << 2) */
-#define JO_IN_TOP	    0x400000	/* "in-top" */
-#define JO_IN_BOT	    0x800000	/* "in-bot" */
-#define JO_OUT_BUF	    0x1000000	/* "out-buf" */
-#define JO_ERR_BUF	    0x2000000	/* "err-buf" (JO_OUT_BUF << 1) */
-#define JO_IN_BUF	    0x4000000	/* "in-buf" (JO_OUT_BUF << 2) */
+#define JO_EXIT_CB	    0x8000	/* "exit_cb" */
+#define JO_OUT_IO	    0x10000	/* "out_io" */
+#define JO_ERR_IO	    0x20000	/* "err_io" (JO_OUT_IO << 1) */
+#define JO_IN_IO	    0x40000	/* "in_io" (JO_OUT_IO << 2) */
+#define JO_OUT_NAME	    0x80000	/* "out_name" */
+#define JO_ERR_NAME	    0x100000	/* "err_name" (JO_OUT_NAME << 1) */
+#define JO_IN_NAME	    0x200000	/* "in_name" (JO_OUT_NAME << 2) */
+#define JO_IN_TOP	    0x400000	/* "in_top" */
+#define JO_IN_BOT	    0x800000	/* "in_bot" */
+#define JO_OUT_BUF	    0x1000000	/* "out_buf" */
+#define JO_ERR_BUF	    0x2000000	/* "err_buf" (JO_OUT_BUF << 1) */
+#define JO_IN_BUF	    0x4000000	/* "in_buf" (JO_OUT_BUF << 2) */
 #define JO_CHANNEL	    0x8000000	/* "channel" */
 #define JO_ALL		    0xfffffff
 
@@ -1416,14 +1454,6 @@ struct channel_S {
 #define JO_CB_ALL \
     (JO_CALLBACK + JO_OUT_CALLBACK + JO_ERR_CALLBACK + JO_CLOSE_CALLBACK)
 #define JO_TIMEOUT_ALL	(JO_TIMEOUT + JO_OUT_TIMEOUT + JO_ERR_TIMEOUT)
-
-typedef enum {
-    JIO_PIPE,	    /* default */
-    JIO_NULL,
-    JIO_FILE,
-    JIO_BUFFER,
-    JIO_OUT
-} job_io_T;
 
 /*
  * Options for job and channel commands.
@@ -1447,9 +1477,15 @@ typedef struct
     linenr_T	jo_in_bot;
 
     char_u	*jo_callback;	/* not allocated! */
+    partial_T	*jo_partial;	/* not referenced! */
     char_u	*jo_out_cb;	/* not allocated! */
+    partial_T	*jo_out_partial; /* not referenced! */
     char_u	*jo_err_cb;	/* not allocated! */
+    partial_T	*jo_err_partial; /* not referenced! */
     char_u	*jo_close_cb;	/* not allocated! */
+    partial_T	*jo_close_partial; /* not referenced! */
+    char_u	*jo_exit_cb;	/* not allocated! */
+    partial_T	*jo_exit_partial; /* not referenced! */
     int		jo_waittime;
     int		jo_timeout;
     int		jo_out_timeout;
@@ -1459,7 +1495,6 @@ typedef struct
     char_u	jo_soe_buf[NUMBUFLEN];
     char_u	*jo_stoponexit;
     char_u	jo_ecb_buf[NUMBUFLEN];
-    char_u	*jo_exit_cb;
 } jobopt_T;
 
 
@@ -2179,7 +2214,7 @@ typedef struct w_line
 struct frame_S
 {
     char	fr_layout;	/* FR_LEAF, FR_COL or FR_ROW */
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
     int		fr_width;
     int		fr_newwidth;	/* new width used in win_equal_rec() */
 #endif
@@ -2349,8 +2384,6 @@ struct window_S
 				       status/command line(s) */
 #ifdef FEAT_WINDOWS
     int		w_status_height;    /* number of status lines (0 or 1) */
-#endif
-#ifdef FEAT_VERTSPLIT
     int		w_wincol;	    /* Leftmost column of window in screen.
 				       use W_WINCOL() */
     int		w_width;	    /* Width of window, excluding separation.
@@ -2932,3 +2965,18 @@ struct js_reader
     void	*js_cookie;	/* can be used by js_fill */
 };
 typedef struct js_reader js_read_T;
+
+typedef struct timer_S timer_T;
+struct timer_S
+{
+    int		tr_id;
+#ifdef FEAT_TIMERS
+    timer_T	*tr_next;
+    timer_T	*tr_prev;
+    proftime_T	tr_due;		    /* when the callback is to be invoked */
+    int		tr_repeat;	    /* number of times to repeat, -1 forever */
+    long	tr_interval;	    /* only set when it repeats */
+    char_u	*tr_callback;	    /* allocated */
+    partial_T	*tr_partial;
+#endif
+};

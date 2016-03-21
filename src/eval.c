@@ -452,8 +452,8 @@ static char_u *tv2string(typval_T *tv, char_u **tofree, char_u *numbuf, int copy
 static char_u *string_quote(char_u *str, int function);
 static int get_env_tv(char_u **arg, typval_T *rettv, int evaluate);
 static int find_internal_func(char_u *name);
-static char_u *deref_func_name(char_u *name, int *lenp, int no_autoload);
-static int get_func_tv(char_u *name, int len, typval_T *rettv, char_u **arg, linenr_T firstline, linenr_T lastline, int *doesrange, int evaluate, dict_T *selfdict);
+static char_u *deref_func_name(char_u *name, int *lenp, partial_T **partial, int no_autoload);
+static int get_func_tv(char_u *name, int len, typval_T *rettv, char_u **arg, linenr_T firstline, linenr_T lastline, int *doesrange, int evaluate, partial_T *partial, dict_T *selfdict);
 static void emsg_funcname(char *ermsg, char_u *name);
 static int non_zero_arg(typval_T *argvars);
 
@@ -501,6 +501,7 @@ static void f_ch_evalexpr(typval_T *argvars, typval_T *rettv);
 static void f_ch_evalraw(typval_T *argvars, typval_T *rettv);
 static void f_ch_getbufnr(typval_T *argvars, typval_T *rettv);
 static void f_ch_getjob(typval_T *argvars, typval_T *rettv);
+static void f_ch_info(typval_T *argvars, typval_T *rettv);
 static void f_ch_log(typval_T *argvars, typval_T *rettv);
 static void f_ch_logfile(typval_T *argvars, typval_T *rettv);
 static void f_ch_open(typval_T *argvars, typval_T *rettv);
@@ -793,6 +794,10 @@ static void f_test(typval_T *argvars, typval_T *rettv);
 static void f_tan(typval_T *argvars, typval_T *rettv);
 static void f_tanh(typval_T *argvars, typval_T *rettv);
 #endif
+#ifdef FEAT_TIMERS
+static void f_timer_start(typval_T *argvars, typval_T *rettv);
+static void f_timer_stop(typval_T *argvars, typval_T *rettv);
+#endif
 static void f_tolower(typval_T *argvars, typval_T *rettv);
 static void f_toupper(typval_T *argvars, typval_T *rettv);
 static void f_tr(typval_T *argvars, typval_T *rettv);
@@ -862,7 +867,7 @@ static int valid_varname(char_u *varname);
 static int tv_check_lock(int lock, char_u *name, int use_gettext);
 static int item_copy(typval_T *from, typval_T *to, int deep, int copyID);
 static char_u *find_option_end(char_u **arg, int *opt_flags);
-static char_u *trans_function_name(char_u **pp, int skip, int flags, funcdict_T *fd);
+static char_u *trans_function_name(char_u **pp, int skip, int flags, funcdict_T *fd, partial_T **partial);
 static int eval_fname_script(char_u *p);
 static int eval_fname_sid(char_u *p);
 static void list_func_head(ufunc_T *fp, int indent);
@@ -1675,7 +1680,7 @@ call_vim_function(
     rettv->v_type = VAR_UNKNOWN;		/* clear_tv() uses this */
     ret = call_func(func, (int)STRLEN(func), rettv, argc, argvars,
 		    curwin->w_cursor.lnum, curwin->w_cursor.lnum,
-		    &doesrange, TRUE, NULL);
+		    &doesrange, TRUE, NULL, NULL);
     if (safe)
     {
 	--sandbox;
@@ -3091,6 +3096,7 @@ tv_op(typval_T *tv1, typval_T *tv2, char_u *op)
 	    case VAR_UNKNOWN:
 	    case VAR_DICT:
 	    case VAR_FUNC:
+	    case VAR_PARTIAL:
 	    case VAR_SPECIAL:
 	    case VAR_JOB:
 	    case VAR_CHANNEL:
@@ -3456,6 +3462,7 @@ ex_call(exarg_T *eap)
     int		doesrange;
     int		failed = FALSE;
     funcdict_T	fudi;
+    partial_T	*partial = NULL;
 
     if (eap->skip)
     {
@@ -3469,7 +3476,7 @@ ex_call(exarg_T *eap)
 	return;
     }
 
-    tofree = trans_function_name(&arg, eap->skip, TFN_INT, &fudi);
+    tofree = trans_function_name(&arg, eap->skip, TFN_INT, &fudi, &partial);
     if (fudi.fd_newkey != NULL)
     {
 	/* Still need to give an error message for missing key. */
@@ -3484,9 +3491,12 @@ ex_call(exarg_T *eap)
     if (fudi.fd_dict != NULL)
 	++fudi.fd_dict->dv_refcount;
 
-    /* If it is the name of a variable of type VAR_FUNC use its contents. */
+    /* If it is the name of a variable of type VAR_FUNC or VAR_PARTIAL use its
+     * contents.  For VAR_PARTIAL get its partial, unless we already have one
+     * from trans_function_name(). */
     len = (int)STRLEN(tofree);
-    name = deref_func_name(tofree, &len, FALSE);
+    name = deref_func_name(tofree, &len,
+				    partial != NULL ? NULL : &partial, FALSE);
 
     /* Skip white space to allow ":call func ()".  Not good, but required for
      * backward compatibility. */
@@ -3525,7 +3535,7 @@ ex_call(exarg_T *eap)
 	arg = startarg;
 	if (get_func_tv(name, (int)STRLEN(name), &rettv, &arg,
 		    eap->line1, eap->line2, &doesrange,
-					    !eap->skip, fudi.fd_dict) == FAIL)
+				   !eap->skip, partial, fudi.fd_dict) == FAIL)
 	{
 	    failed = TRUE;
 	    break;
@@ -3870,6 +3880,7 @@ item_lock(typval_T *tv, int deep, int lock)
 	case VAR_NUMBER:
 	case VAR_STRING:
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	case VAR_FLOAT:
 	case VAR_SPECIAL:
 	case VAR_JOB:
@@ -4542,31 +4553,19 @@ eval4(char_u **arg, typval_T *rettv, int evaluate)
 		}
 	    }
 
-	    else if (rettv->v_type == VAR_FUNC || var2.v_type == VAR_FUNC)
+	    else if (rettv->v_type == VAR_FUNC || var2.v_type == VAR_FUNC
+		|| rettv->v_type == VAR_PARTIAL || var2.v_type == VAR_PARTIAL)
 	    {
-		if (rettv->v_type != var2.v_type
-			|| (type != TYPE_EQUAL && type != TYPE_NEQUAL))
+		if (type != TYPE_EQUAL && type != TYPE_NEQUAL)
 		{
-		    if (rettv->v_type != var2.v_type)
-			EMSG(_("E693: Can only compare Funcref with Funcref"));
-		    else
-			EMSG(_("E694: Invalid operation for Funcrefs"));
+		    EMSG(_("E694: Invalid operation for Funcrefs"));
 		    clear_tv(rettv);
 		    clear_tv(&var2);
 		    return FAIL;
 		}
-		else
-		{
-		    /* Compare two Funcrefs for being equal or unequal. */
-		    if (rettv->vval.v_string == NULL
-						|| var2.vval.v_string == NULL)
-			n1 = FALSE;
-		    else
-			n1 = STRCMP(rettv->vval.v_string,
-						     var2.vval.v_string) == 0;
-		    if (type == TYPE_NEQUAL)
-			n1 = !n1;
-		}
+		n1 = tv_equal(rettv, &var2, FALSE, FALSE);
+		if (type == TYPE_NEQUAL)
+		    n1 = !n1;
 	    }
 
 #ifdef FEAT_FLOAT
@@ -5230,14 +5229,16 @@ eval7(
 	{
 	    if (**arg == '(')		/* recursive! */
 	    {
+		partial_T *partial;
+
 		/* If "s" is the name of a variable of type VAR_FUNC
 		 * use its contents. */
-		s = deref_func_name(s, &len, !evaluate);
+		s = deref_func_name(s, &len, &partial, !evaluate);
 
 		/* Invoke the function. */
 		ret = get_func_tv(s, len, rettv, arg,
 			  curwin->w_cursor.lnum, curwin->w_cursor.lnum,
-			  &len, evaluate, NULL);
+			  &len, evaluate, partial, NULL);
 
 		/* If evaluate is FALSE rettv->v_type was not set in
 		 * get_func_tv, but it's needed in handle_subscript() to parse
@@ -5359,6 +5360,7 @@ eval_index(
     switch (rettv->v_type)
     {
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	    if (verbose)
 		EMSG(_("E695: Cannot index a Funcref"));
 	    return FAIL;
@@ -5480,6 +5482,7 @@ eval_index(
 	{
 	    case VAR_UNKNOWN:
 	    case VAR_FUNC:
+	    case VAR_PARTIAL:
 	    case VAR_FLOAT:
 	    case VAR_SPECIAL:
 	    case VAR_JOB:
@@ -6182,6 +6185,19 @@ tv_equal(
     static int  recursive_cnt = 0;	    /* catch recursive loops */
     int		r;
 
+    /* For VAR_FUNC and VAR_PARTIAL only compare the function name. */
+    if ((tv1->v_type == VAR_FUNC
+		|| (tv1->v_type == VAR_PARTIAL && tv1->vval.v_partial != NULL))
+	    && (tv2->v_type == VAR_FUNC
+		|| (tv2->v_type == VAR_PARTIAL && tv2->vval.v_partial != NULL)))
+    {
+	s1 = tv1->v_type == VAR_FUNC ? tv1->vval.v_string
+					       : tv1->vval.v_partial->pt_name;
+	s2 = tv2->v_type == VAR_FUNC ? tv2->vval.v_string
+					       : tv2->vval.v_partial->pt_name;
+	return (s1 != NULL && s2 != NULL && STRCMP(s1, s2) == 0);
+    }
+
     if (tv1->v_type != tv2->v_type)
 	return FALSE;
 
@@ -6213,11 +6229,6 @@ tv_equal(
 	    --recursive_cnt;
 	    return r;
 
-	case VAR_FUNC:
-	    return (tv1->vval.v_string != NULL
-		    && tv2->vval.v_string != NULL
-		    && STRCMP(tv1->vval.v_string, tv2->vval.v_string) == 0);
-
 	case VAR_NUMBER:
 	    return tv1->vval.v_number == tv2->vval.v_number;
 
@@ -6241,6 +6252,8 @@ tv_equal(
 #ifdef FEAT_JOB_CHANNEL
 	    return tv1->vval.v_channel == tv2->vval.v_channel;
 #endif
+	case VAR_FUNC:
+	case VAR_PARTIAL:
 	case VAR_UNKNOWN:
 	    break;
     }
@@ -7793,6 +7806,12 @@ echo_string(
 	    r = tv->vval.v_string;
 	    break;
 
+	case VAR_PARTIAL:
+	    *tofree = NULL;
+	    /* TODO: arguments */
+	    r = tv->vval.v_partial == NULL ? NULL : tv->vval.v_partial->pt_name;
+	    break;
+
 	case VAR_LIST:
 	    if (tv->vval.v_list == NULL)
 	    {
@@ -7878,6 +7897,50 @@ tv2string(
 	case VAR_FUNC:
 	    *tofree = string_quote(tv->vval.v_string, TRUE);
 	    return *tofree;
+	case VAR_PARTIAL:
+	    {
+		partial_T   *pt = tv->vval.v_partial;
+		char_u	    *fname = string_quote(pt == NULL ? NULL
+							: pt->pt_name, FALSE);
+		garray_T    ga;
+		int	    i;
+		char_u	    *tf;
+
+		ga_init2(&ga, 1, 100);
+		ga_concat(&ga, (char_u *)"function(");
+		if (fname != NULL)
+		{
+		    ga_concat(&ga, fname);
+		    vim_free(fname);
+		}
+		if (pt != NULL && pt->pt_argc > 0)
+		{
+		    ga_concat(&ga, (char_u *)", [");
+		    for (i = 0; i < pt->pt_argc; ++i)
+		    {
+			if (i > 0)
+			    ga_concat(&ga, (char_u *)", ");
+			ga_concat(&ga,
+			     tv2string(&pt->pt_argv[i], &tf, numbuf, copyID));
+			vim_free(tf);
+		    }
+		    ga_concat(&ga, (char_u *)"]");
+		}
+		if (pt != NULL && pt->pt_dict != NULL)
+		{
+		    typval_T dtv;
+
+		    ga_concat(&ga, (char_u *)", ");
+		    dtv.v_type = VAR_DICT;
+		    dtv.vval.v_dict = pt->pt_dict;
+		    ga_concat(&ga, tv2string(&dtv, &tf, numbuf, copyID));
+		    vim_free(tf);
+		}
+		ga_concat(&ga, (char_u *)")");
+
+		*tofree = ga.ga_data;
+		return *tofree;
+	    }
 	case VAR_STRING:
 	    *tofree = string_quote(tv->vval.v_string, FALSE);
 	    return *tofree;
@@ -8079,6 +8142,7 @@ static struct fst
     {"ch_evalraw",	2, 3, f_ch_evalraw},
     {"ch_getbufnr",	2, 2, f_ch_getbufnr},
     {"ch_getjob",	1, 1, f_ch_getjob},
+    {"ch_info",		1, 1, f_ch_info},
     {"ch_log",		1, 2, f_ch_log},
     {"ch_logfile",	1, 2, f_ch_logfile},
     {"ch_open",		1, 2, f_ch_open},
@@ -8146,7 +8210,7 @@ static struct fst
     {"foldtext",	0, 0, f_foldtext},
     {"foldtextresult",	1, 1, f_foldtextresult},
     {"foreground",	0, 0, f_foreground},
-    {"function",	1, 1, f_function},
+    {"function",	1, 3, f_function},
     {"garbagecollect",	0, 1, f_garbagecollect},
     {"get",		2, 3, f_get},
     {"getbufline",	2, 3, f_getbufline},
@@ -8375,6 +8439,10 @@ static struct fst
 #endif
     {"tempname",	0, 0, f_tempname},
     {"test",		1, 1, f_test},
+#ifdef FEAT_TIMERS
+    {"timer_start",	2, 3, f_timer_start},
+    {"timer_stop",	1, 1, f_timer_stop},
+#endif
     {"tolower",		1, 1, f_tolower},
     {"toupper",		1, 1, f_toupper},
     {"tr",		3, 3, f_tr},
@@ -8524,12 +8592,17 @@ find_internal_func(
 /*
  * Check if "name" is a variable of type VAR_FUNC.  If so, return the function
  * name it contains, otherwise return "name".
+ * If "partialp" is not NULL, and "name" is of type VAR_PARTIAL also set
+ * "partialp".
  */
     static char_u *
-deref_func_name(char_u *name, int *lenp, int no_autoload)
+deref_func_name(char_u *name, int *lenp, partial_T **partialp, int no_autoload)
 {
     dictitem_T	*v;
     int		cc;
+
+    if (partialp != NULL)
+	*partialp = NULL;
 
     cc = name[*lenp];
     name[*lenp] = NUL;
@@ -8544,6 +8617,21 @@ deref_func_name(char_u *name, int *lenp, int no_autoload)
 	}
 	*lenp = (int)STRLEN(v->di_tv.vval.v_string);
 	return v->di_tv.vval.v_string;
+    }
+
+    if (v != NULL && v->di_tv.v_type == VAR_PARTIAL)
+    {
+	partial_T *pt = v->di_tv.vval.v_partial;
+
+	if (pt == NULL)
+	{
+	    *lenp = 0;
+	    return (char_u *)"";	/* just in case */
+	}
+	if (partialp != NULL)
+	    *partialp = pt;
+	*lenp = (int)STRLEN(pt->pt_name);
+	return pt->pt_name;
     }
 
     return name;
@@ -8563,6 +8651,7 @@ get_func_tv(
     linenr_T	lastline,	/* last line of range */
     int		*doesrange,	/* return: function handled range */
     int		evaluate,
+    partial_T	*partial,	/* for extra arguments */
     dict_T	*selfdict)	/* Dictionary for "self" */
 {
     char_u	*argp;
@@ -8574,7 +8663,7 @@ get_func_tv(
      * Get the arguments.
      */
     argp = *arg;
-    while (argcount < MAX_FUNC_ARGS)
+    while (argcount < MAX_FUNC_ARGS - (partial == NULL ? 0 : partial->pt_argc))
     {
 	argp = skipwhite(argp + 1);	    /* skip the '(' or ',' */
 	if (*argp == ')' || *argp == ',' || *argp == NUL)
@@ -8595,7 +8684,7 @@ get_func_tv(
 
     if (ret == OK)
 	ret = call_func(name, len, rettv, argcount, argvars,
-			  firstline, lastline, doesrange, evaluate, selfdict);
+		 firstline, lastline, doesrange, evaluate, partial, selfdict);
     else if (!aborting())
     {
 	if (argcount == MAX_FUNC_ARGS)
@@ -8611,27 +8700,6 @@ get_func_tv(
     return ret;
 }
 
-
-/*
- * Call a function with its resolved parameters
- * Return FAIL when the function can't be called,  OK otherwise.
- * Also returns OK when an error was encountered while executing the function.
- */
-    int
-call_func(
-    char_u	*funcname,	/* name of the function */
-    int		len,		/* length of "name" */
-    typval_T	*rettv,		/* return value goes here */
-    int		argcount,	/* number of "argvars" */
-    typval_T	*argvars,	/* vars for arguments, must have "argcount"
-				   PLUS ONE elements! */
-    linenr_T	firstline,	/* first line of range */
-    linenr_T	lastline,	/* last line of range */
-    int		*doesrange,	/* return: function handled range */
-    int		evaluate,
-    dict_T	*selfdict)	/* Dictionary for "self" */
-{
-    int		ret = FAIL;
 #define ERROR_UNKNOWN	0
 #define ERROR_TOOMANY	1
 #define ERROR_TOOFEW	2
@@ -8639,26 +8707,21 @@ call_func(
 #define ERROR_DICT	4
 #define ERROR_NONE	5
 #define ERROR_OTHER	6
-    int		error = ERROR_NONE;
-    int		i;
-    int		llen;
-    ufunc_T	*fp;
 #define FLEN_FIXED 40
-    char_u	fname_buf[FLEN_FIXED + 1];
+
+/*
+ * In a script change <SID>name() and s:name() to K_SNR 123_name().
+ * Change <SNR>123_name() to K_SNR 123_name().
+ * Use "fname_buf[FLEN_FIXED + 1]" when it fits, otherwise allocate memory
+ * (slow).
+ */
+    static char_u *
+fname_trans_sid(char_u *name, char_u *fname_buf, char_u **tofree, int *error)
+{
+    int		llen;
     char_u	*fname;
-    char_u	*name;
+    int		i;
 
-    /* Make a copy of the name, if it comes from a funcref variable it could
-     * be changed or deleted in the called function. */
-    name = vim_strnsave(funcname, len);
-    if (name == NULL)
-	return ret;
-
-    /*
-     * In a script change <SID>name() and s:name() to K_SNR 123_name().
-     * Change <SNR>123_name() to K_SNR 123_name().
-     * Use fname_buf[] when it fits, otherwise allocate memory (slow).
-     */
     llen = eval_fname_script(name);
     if (llen > 0)
     {
@@ -8669,7 +8732,7 @@ call_func(
 	if (eval_fname_sid(name))	/* "<SID>" or "s:" */
 	{
 	    if (current_SID <= 0)
-		error = ERROR_SCRIPT;
+		*error = ERROR_SCRIPT;
 	    else
 	    {
 		sprintf((char *)fname_buf + 3, "%ld_", (long)current_SID);
@@ -8685,9 +8748,10 @@ call_func(
 	{
 	    fname = alloc((unsigned)(i + STRLEN(name + llen) + 1));
 	    if (fname == NULL)
-		error = ERROR_OTHER;
+		*error = ERROR_OTHER;
 	    else
 	    {
+		*tofree = fname;
 		mch_memmove(fname, fname_buf, (size_t)i);
 		STRCPY(fname + i, name + llen);
 	    }
@@ -8695,8 +8759,73 @@ call_func(
     }
     else
 	fname = name;
+    return fname;
+}
+
+/*
+ * Call a function with its resolved parameters
+ * Return FAIL when the function can't be called,  OK otherwise.
+ * Also returns OK when an error was encountered while executing the function.
+ */
+    int
+call_func(
+    char_u	*funcname,	/* name of the function */
+    int		len,		/* length of "name" */
+    typval_T	*rettv,		/* return value goes here */
+    int		argcount_in,	/* number of "argvars" */
+    typval_T	*argvars_in,	/* vars for arguments, must have "argcount"
+				   PLUS ONE elements! */
+    linenr_T	firstline,	/* first line of range */
+    linenr_T	lastline,	/* last line of range */
+    int		*doesrange,	/* return: function handled range */
+    int		evaluate,
+    partial_T	*partial,	/* optional, can be NULL */
+    dict_T	*selfdict_in)	/* Dictionary for "self" */
+{
+    int		ret = FAIL;
+    int		error = ERROR_NONE;
+    int		i;
+    ufunc_T	*fp;
+    char_u	fname_buf[FLEN_FIXED + 1];
+    char_u	*tofree = NULL;
+    char_u	*fname;
+    char_u	*name;
+    int		argcount = argcount_in;
+    typval_T	*argvars = argvars_in;
+    dict_T	*selfdict = selfdict_in;
+    typval_T	argv[MAX_FUNC_ARGS + 1]; /* used when "partial" is not NULL */
+    int		argv_clear = 0;
+
+    /* Make a copy of the name, if it comes from a funcref variable it could
+     * be changed or deleted in the called function. */
+    name = vim_strnsave(funcname, len);
+    if (name == NULL)
+	return ret;
+
+    fname = fname_trans_sid(name, fname_buf, &tofree, &error);
 
     *doesrange = FALSE;
+
+    if (partial != NULL)
+    {
+	if (partial->pt_dict != NULL)
+	{
+	    /* When the function has a partial with a dict and there is a dict
+	     * argument, use the dict argument.  That is backwards compatible.
+	     */
+	    if (selfdict_in == NULL)
+		selfdict = partial->pt_dict;
+	}
+	if (error == ERROR_NONE && partial->pt_argc > 0)
+	{
+	    for (argv_clear = 0; argv_clear < partial->pt_argc; ++argv_clear)
+		copy_tv(&partial->pt_argv[argv_clear], &argv[argv_clear]);
+	    for (i = 0; i < argcount_in; ++i)
+		argv[i + argv_clear] = argvars_in[i];
+	    argvars = argv;
+	    argcount = partial->pt_argc + argcount_in;
+	}
+    }
 
 
     /* execute the function if no errors detected and executing */
@@ -8844,8 +8973,9 @@ call_func(
 	}
     }
 
-    if (fname != name && fname != fname_buf)
-	vim_free(fname);
+    while (argv_clear > 0)
+	clear_tv(&argv[--argv_clear]);
+    vim_free(tofree);
     vim_free(name);
 
     return ret;
@@ -9162,6 +9292,12 @@ ga_concat_esc(garray_T *gap, char_u *str)
     char_u  *p;
     char_u  buf[NUMBUFLEN];
 
+    if (str == NULL)
+    {
+	ga_concat(gap, (char_u *)"NULL");
+	return;
+    }
+
     for (p = str; *p != NUL; ++p)
 	switch (*p)
 	{
@@ -9304,7 +9440,8 @@ f_assert_fails(typval_T *argvars, typval_T *rettv UNUSED)
 	char_u	buf[NUMBUFLEN];
 	char	*error = (char *)get_tv_string_buf_chk(&argvars[1], buf);
 
-	if (strstr((char *)vimvars[VV_ERRMSG].vv_str, error) == NULL)
+	if (error == NULL
+		  || strstr((char *)vimvars[VV_ERRMSG].vv_str, error) == NULL)
 	{
 	    prepare_assert_error(&ga);
 	    fill_assert_error(&ga, &argvars[2], NULL, &argvars[1],
@@ -9737,6 +9874,7 @@ f_byteidxcomp(typval_T *argvars, typval_T *rettv)
 func_call(
     char_u	*name,
     typval_T	*args,
+    partial_T	*partial,
     dict_T	*selfdict,
     typval_T	*rettv)
 {
@@ -9749,7 +9887,7 @@ func_call(
     for (item = args->vval.v_list->lv_first; item != NULL;
 							 item = item->li_next)
     {
-	if (argc == MAX_FUNC_ARGS)
+	if (argc == MAX_FUNC_ARGS - (partial == NULL ? 0 : partial->pt_argc))
 	{
 	    EMSG(_("E699: Too many arguments"));
 	    break;
@@ -9763,7 +9901,7 @@ func_call(
     if (item == NULL)
 	r = call_func(name, (int)STRLEN(name), rettv, argc, argv,
 				 curwin->w_cursor.lnum, curwin->w_cursor.lnum,
-						      &dummy, TRUE, selfdict);
+					     &dummy, TRUE, partial, selfdict);
 
     /* Free the arguments. */
     while (argc > 0)
@@ -9773,12 +9911,13 @@ func_call(
 }
 
 /*
- * "call(func, arglist)" function
+ * "call(func, arglist [, dict])" function
  */
     static void
 f_call(typval_T *argvars, typval_T *rettv)
 {
     char_u	*func;
+    partial_T   *partial = NULL;
     dict_T	*selfdict = NULL;
 
     if (argvars[1].v_type != VAR_LIST)
@@ -9791,6 +9930,11 @@ f_call(typval_T *argvars, typval_T *rettv)
 
     if (argvars[0].v_type == VAR_FUNC)
 	func = argvars[0].vval.v_string;
+    else if (argvars[0].v_type == VAR_PARTIAL)
+    {
+	partial = argvars[0].vval.v_partial;
+	func = partial->pt_name;
+    }
     else
 	func = get_tv_string(&argvars[0]);
     if (*func == NUL)
@@ -9806,7 +9950,7 @@ f_call(typval_T *argvars, typval_T *rettv)
 	selfdict = argvars[2].vval.v_dict;
     }
 
-    (void)func_call(func, &argvars[1], selfdict, rettv);
+    (void)func_call(func, &argvars[1], partial, selfdict, rettv);
 }
 
 #ifdef FEAT_FLOAT
@@ -9884,6 +10028,18 @@ f_ch_getjob(typval_T *argvars, typval_T *rettv)
 	if (channel->ch_job != NULL)
 	    ++channel->ch_job->jv_refcount;
     }
+}
+
+/*
+ * "ch_info()" function
+ */
+    static void
+f_ch_info(typval_T *argvars, typval_T *rettv UNUSED)
+{
+    channel_T *channel = get_channel_arg(&argvars[0], TRUE);
+
+    if (channel != NULL && rettv_dict_alloc(rettv) != FAIL)
+	channel_info(channel, rettv->vval.v_dict);
 }
 
 /*
@@ -10626,6 +10782,9 @@ f_empty(typval_T *argvars, typval_T *rettv)
 	case VAR_FUNC:
 	    n = argvars[0].vval.v_string == NULL
 					  || *argvars[0].vval.v_string == NUL;
+	    break;
+	case VAR_PARTIAL:
+	    n = FALSE;
 	    break;
 	case VAR_NUMBER:
 	    n = argvars[0].vval.v_number == 0;
@@ -11688,15 +11847,41 @@ f_foreground(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 f_function(typval_T *argvars, typval_T *rettv)
 {
     char_u	*s;
+    char_u	*name;
+    int		use_string = FALSE;
+    partial_T   *arg_pt = NULL;
 
-    s = get_tv_string(&argvars[0]);
-    if (s == NULL || *s == NUL || VIM_ISDIGIT(*s))
+    if (argvars[0].v_type == VAR_FUNC)
+    {
+	/* function(MyFunc, [arg], dict) */
+	s = argvars[0].vval.v_string;
+    }
+    else if (argvars[0].v_type == VAR_PARTIAL
+					 && argvars[0].vval.v_partial != NULL)
+    {
+	/* function(dict.MyFunc, [arg]) */
+	arg_pt = argvars[0].vval.v_partial;
+	s = arg_pt->pt_name;
+    }
+    else
+    {
+	/* function('MyFunc', [arg], dict) */
+	s = get_tv_string(&argvars[0]);
+	use_string = TRUE;
+    }
+
+    if (s == NULL || *s == NUL || (use_string && VIM_ISDIGIT(*s)))
 	EMSG2(_(e_invarg2), s);
     /* Don't check an autoload name for existence here. */
-    else if (vim_strchr(s, AUTOLOAD_CHAR) == NULL && !function_exists(s))
+    else if (use_string && vim_strchr(s, AUTOLOAD_CHAR) == NULL
+						       && !function_exists(s))
 	EMSG2(_("E700: Unknown function: %s"), s);
     else
     {
+	int	dict_idx = 0;
+	int	arg_idx = 0;
+	list_T	*list = NULL;
+
 	if (STRNCMP(s, "s:", 2) == 0 || STRNCMP(s, "<SID>", 5) == 0)
 	{
 	    char	sid_buf[25];
@@ -11707,18 +11892,147 @@ f_function(typval_T *argvars, typval_T *rettv)
 	     * would also work, but some plugins depend on the name being
 	     * printable text. */
 	    sprintf(sid_buf, "<SNR>%ld_", (long)current_SID);
-	    rettv->vval.v_string =
-			    alloc((int)(STRLEN(sid_buf) + STRLEN(s + off) + 1));
-	    if (rettv->vval.v_string != NULL)
+	    name = alloc((int)(STRLEN(sid_buf) + STRLEN(s + off) + 1));
+	    if (name != NULL)
 	    {
-		STRCPY(rettv->vval.v_string, sid_buf);
-		STRCAT(rettv->vval.v_string, s + off);
+		STRCPY(name, sid_buf);
+		STRCAT(name, s + off);
 	    }
 	}
 	else
-	    rettv->vval.v_string = vim_strsave(s);
-	rettv->v_type = VAR_FUNC;
+	    name = vim_strsave(s);
+
+	if (argvars[1].v_type != VAR_UNKNOWN)
+	{
+	    if (argvars[2].v_type != VAR_UNKNOWN)
+	    {
+		/* function(name, [args], dict) */
+		arg_idx = 1;
+		dict_idx = 2;
+	    }
+	    else if (argvars[1].v_type == VAR_DICT)
+		/* function(name, dict) */
+		dict_idx = 1;
+	    else
+		/* function(name, [args]) */
+		arg_idx = 1;
+	    if (dict_idx > 0)
+	    {
+		if (argvars[dict_idx].v_type != VAR_DICT)
+		{
+		    EMSG(_("E922: expected a dict"));
+		    vim_free(name);
+		    return;
+		}
+		if (argvars[dict_idx].vval.v_dict == NULL)
+		    dict_idx = 0;
+	    }
+	    if (arg_idx > 0)
+	    {
+		if (argvars[arg_idx].v_type != VAR_LIST)
+		{
+		    EMSG(_("E923: Second argument of function() must be a list or a dict"));
+		    vim_free(name);
+		    return;
+		}
+		list = argvars[arg_idx].vval.v_list;
+		if (list == NULL || list->lv_len == 0)
+		    arg_idx = 0;
+	    }
+	}
+	if (dict_idx > 0 || arg_idx > 0 || arg_pt != NULL)
+	{
+	    partial_T	*pt = (partial_T *)alloc_clear(sizeof(partial_T));
+
+	    /* result is a VAR_PARTIAL */
+	    if (pt == NULL)
+		vim_free(name);
+	    else
+	    {
+		if (arg_idx > 0 || (arg_pt != NULL && arg_pt->pt_argc > 0))
+		{
+		    listitem_T	*li;
+		    int		i = 0;
+		    int		arg_len = 0;
+		    int		lv_len = 0;
+
+		    if (arg_pt != NULL)
+			arg_len = arg_pt->pt_argc;
+		    if (list != NULL)
+			lv_len = list->lv_len;
+		    pt->pt_argc = arg_len + lv_len;
+		    pt->pt_argv = (typval_T *)alloc(
+					      sizeof(typval_T) * pt->pt_argc);
+		    if (pt->pt_argv == NULL)
+		    {
+			vim_free(pt);
+			vim_free(name);
+			return;
+		    }
+		    else
+		    {
+			for (i = 0; i < arg_len; i++)
+			    copy_tv(&arg_pt->pt_argv[i], &pt->pt_argv[i]);
+			if (lv_len > 0)
+			    for (li = list->lv_first; li != NULL;
+							     li = li->li_next)
+				copy_tv(&li->li_tv, &pt->pt_argv[i++]);
+		    }
+		}
+
+		/* For "function(dict.func, [], dict)" and "func" is a partial
+		 * use "dict".  That is backwards compatible. */
+		if (dict_idx > 0)
+		{
+		    pt->pt_dict = argvars[dict_idx].vval.v_dict;
+		    ++pt->pt_dict->dv_refcount;
+		}
+		else if (arg_pt != NULL)
+		{
+		    pt->pt_dict = arg_pt->pt_dict;
+		    if (pt->pt_dict != NULL)
+			++pt->pt_dict->dv_refcount;
+		}
+
+		pt->pt_refcount = 1;
+		pt->pt_name = name;
+		func_ref(pt->pt_name);
+	    }
+	    rettv->v_type = VAR_PARTIAL;
+	    rettv->vval.v_partial = pt;
+	}
+	else
+	{
+	    /* result is a VAR_FUNC */
+	    rettv->v_type = VAR_FUNC;
+	    rettv->vval.v_string = name;
+	    func_ref(name);
+	}
     }
+}
+
+    static void
+partial_free(partial_T *pt)
+{
+    int i;
+
+    for (i = 0; i < pt->pt_argc; ++i)
+	clear_tv(&pt->pt_argv[i]);
+    vim_free(pt->pt_argv);
+    func_unref(pt->pt_name);
+    vim_free(pt->pt_name);
+    vim_free(pt);
+}
+
+/*
+ * Unreference a closure: decrement the reference count and free it when it
+ * becomes zero.
+ */
+    void
+partial_unref(partial_T *pt)
+{
+    if (pt != NULL && --pt->pt_refcount <= 0)
+	partial_free(pt);
 }
 
 /*
@@ -13415,6 +13729,9 @@ f_has(typval_T *argvars, typval_T *rettv)
 #ifdef HAVE_TGETENT
 	"tgetent",
 #endif
+#ifdef FEAT_TIMERS
+	"timers",
+#endif
 #ifdef FEAT_TITLE
 	"title",
 #endif
@@ -13431,7 +13748,7 @@ f_has(typval_T *argvars, typval_T *rettv)
 #ifdef FEAT_VIMINFO
 	"viminfo",
 #endif
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 	"vertsplit",
 #endif
 #ifdef FEAT_VIRTUALEDIT
@@ -14598,6 +14915,7 @@ f_len(typval_T *argvars, typval_T *rettv)
 	case VAR_SPECIAL:
 	case VAR_FLOAT:
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	case VAR_JOB:
 	case VAR_CHANNEL:
 	    EMSG(_("E701: Invalid type for len()"));
@@ -18169,6 +18487,7 @@ typedef struct
     int		item_compare_float;
 #endif
     char_u	*item_compare_func;
+    partial_T	*item_compare_partial;
     dict_T	*item_compare_selfdict;
     int		item_compare_func_err;
     int		item_compare_keep_zero;
@@ -18278,6 +18597,8 @@ item_compare2(const void *s1, const void *s2)
     typval_T	rettv;
     typval_T	argv[3];
     int		dummy;
+    char_u	*func_name;
+    partial_T	*partial = sortinfo->item_compare_partial;
 
     /* shortcut after failure in previous call; compare all items equal */
     if (sortinfo->item_compare_func_err)
@@ -18286,16 +18607,20 @@ item_compare2(const void *s1, const void *s2)
     si1 = (sortItem_T *)s1;
     si2 = (sortItem_T *)s2;
 
+    if (partial == NULL)
+	func_name = sortinfo->item_compare_func;
+    else
+	func_name = partial->pt_name;
+
     /* Copy the values.  This is needed to be able to set v_lock to VAR_FIXED
      * in the copy without changing the original list items. */
     copy_tv(&si1->item->li_tv, &argv[0]);
     copy_tv(&si2->item->li_tv, &argv[1]);
 
     rettv.v_type = VAR_UNKNOWN;		/* clear_tv() uses this */
-    res = call_func(sortinfo->item_compare_func,
-				 (int)STRLEN(sortinfo->item_compare_func),
+    res = call_func(func_name, (int)STRLEN(func_name),
 				 &rettv, 2, argv, 0L, 0L, &dummy, TRUE,
-				 sortinfo->item_compare_selfdict);
+				 partial, sortinfo->item_compare_selfdict);
     clear_tv(&argv[0]);
     clear_tv(&argv[1]);
 
@@ -18358,12 +18683,15 @@ do_sort_uniq(typval_T *argvars, typval_T *rettv, int sort)
 	info.item_compare_float = FALSE;
 #endif
 	info.item_compare_func = NULL;
+	info.item_compare_partial = NULL;
 	info.item_compare_selfdict = NULL;
 	if (argvars[1].v_type != VAR_UNKNOWN)
 	{
 	    /* optional second argument: {func} */
 	    if (argvars[1].v_type == VAR_FUNC)
 		info.item_compare_func = argvars[1].vval.v_string;
+	    else if (argvars[1].v_type == VAR_PARTIAL)
+		info.item_compare_partial = argvars[1].vval.v_partial;
 	    else
 	    {
 		int	    error = FALSE;
@@ -18443,7 +18771,8 @@ do_sort_uniq(typval_T *argvars, typval_T *rettv, int sort)
 	    info.item_compare_func_err = FALSE;
 	    info.item_compare_keep_zero = FALSE;
 	    /* test the compare function */
-	    if (info.item_compare_func != NULL
+	    if ((info.item_compare_func != NULL
+					 || info.item_compare_partial != NULL)
 		    && item_compare2((void *)&ptrs[0], (void *)&ptrs[1])
 							 == ITEM_COMPARE_FAIL)
 		EMSG(_("E702: Sort compare function failed"));
@@ -18452,6 +18781,7 @@ do_sort_uniq(typval_T *argvars, typval_T *rettv, int sort)
 		/* Sort the array with item pointers. */
 		qsort((void *)ptrs, (size_t)len, sizeof(sortItem_T),
 		    info.item_compare_func == NULL
+					  && info.item_compare_partial == NULL
 					       ? item_compare : item_compare2);
 
 		if (!info.item_compare_func_err)
@@ -18471,7 +18801,8 @@ do_sort_uniq(typval_T *argvars, typval_T *rettv, int sort)
 	    /* f_uniq(): ptrs will be a stack of items to remove */
 	    info.item_compare_func_err = FALSE;
 	    info.item_compare_keep_zero = TRUE;
-	    item_compare_func_ptr = info.item_compare_func
+	    item_compare_func_ptr = info.item_compare_func != NULL
+					  || info.item_compare_partial != NULL
 					       ? item_compare2 : item_compare;
 
 	    for (li = l->lv_first; li != NULL && li->li_next != NULL;
@@ -19830,6 +20161,82 @@ f_tanh(typval_T *argvars, typval_T *rettv)
 }
 #endif
 
+#if defined(FEAT_JOB_CHANNEL) || defined(FEAT_TIMERS) || defined(PROTO)
+/*
+ * Get a callback from "arg".  It can be a Funcref or a function name.
+ * When "arg" is zero return an empty string.
+ * Return NULL for an invalid argument.
+ */
+    char_u *
+get_callback(typval_T *arg, partial_T **pp)
+{
+    if (arg->v_type == VAR_PARTIAL && arg->vval.v_partial != NULL)
+    {
+	*pp = arg->vval.v_partial;
+	return (*pp)->pt_name;
+    }
+    *pp = NULL;
+    if (arg->v_type == VAR_FUNC || arg->v_type == VAR_STRING)
+	return arg->vval.v_string;
+    if (arg->v_type == VAR_NUMBER && arg->vval.v_number == 0)
+	return (char_u *)"";
+    EMSG(_("E921: Invalid callback argument"));
+    return NULL;
+}
+#endif
+
+#ifdef FEAT_TIMERS
+/*
+ * "timer_start(time, callback [, options])" function
+ */
+    static void
+f_timer_start(typval_T *argvars, typval_T *rettv)
+{
+    long    msec = get_tv_number(&argvars[0]);
+    timer_T *timer;
+    int	    repeat = 0;
+    char_u  *callback;
+    dict_T  *dict;
+
+    if (argvars[2].v_type != VAR_UNKNOWN)
+    {
+	if (argvars[2].v_type != VAR_DICT
+				   || (dict = argvars[2].vval.v_dict) == NULL)
+	{
+	    EMSG2(_(e_invarg2), get_tv_string(&argvars[2]));
+	    return;
+	}
+	if (dict_find(dict, (char_u *)"repeat", -1) != NULL)
+	    repeat = get_dict_number(dict, (char_u *)"repeat");
+    }
+
+    timer = create_timer(msec, repeat);
+    callback = get_callback(&argvars[1], &timer->tr_partial);
+    if (callback == NULL)
+    {
+	stop_timer(timer);
+	rettv->vval.v_number = -1;
+    }
+    else
+    {
+	timer->tr_callback = vim_strsave(callback);
+	rettv->vval.v_number = timer->tr_id;
+    }
+}
+
+/*
+ * "timer_stop(timer)" function
+ */
+    static void
+f_timer_stop(typval_T *argvars, typval_T *rettv UNUSED)
+{
+    timer_T *timer = find_timer(get_tv_number(&argvars[0]));
+
+    if (timer != NULL)
+	stop_timer(timer);
+}
+#endif
+
 /*
  * "tolower(string)" function
  */
@@ -20032,6 +20439,7 @@ f_type(typval_T *argvars, typval_T *rettv)
     {
 	case VAR_NUMBER: n = 0; break;
 	case VAR_STRING: n = 1; break;
+	case VAR_PARTIAL:
 	case VAR_FUNC:   n = 2; break;
 	case VAR_LIST:   n = 3; break;
 	case VAR_DICT:   n = 4; break;
@@ -20252,10 +20660,8 @@ f_winrestcmd(typval_T *argvars UNUSED, typval_T *rettv)
     {
 	sprintf((char *)buf, "%dresize %d|", winnr, wp->w_height);
 	ga_concat(&ga, buf);
-# ifdef FEAT_VERTSPLIT
 	sprintf((char *)buf, "vert %dresize %d|", winnr, wp->w_width);
 	ga_concat(&ga, buf);
-# endif
 	++winnr;
     }
     ga_append(&ga, NUL);
@@ -20307,7 +20713,7 @@ f_winrestview(typval_T *argvars, typval_T *rettv UNUSED)
 
 	check_cursor();
 	win_new_height(curwin, curwin->w_height);
-# ifdef FEAT_VERTSPLIT
+# ifdef FEAT_WINDOWS
 	win_new_width(curwin, W_WIDTH(curwin));
 # endif
 	changed_window_setting();
@@ -20362,7 +20768,7 @@ f_winwidth(typval_T *argvars, typval_T *rettv)
     if (wp == NULL)
 	rettv->vval.v_number = -1;
     else
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 	rettv->vval.v_number = wp->w_width;
 #else
 	rettv->vval.v_number = Columns;
@@ -21299,11 +21705,14 @@ handle_subscript(
     while (ret == OK
 	    && (**arg == '['
 		|| (**arg == '.' && rettv->v_type == VAR_DICT)
-		|| (**arg == '(' && (!evaluate || rettv->v_type == VAR_FUNC)))
+		|| (**arg == '(' && (!evaluate || rettv->v_type == VAR_FUNC
+					    || rettv->v_type == VAR_PARTIAL)))
 	    && !vim_iswhite(*(*arg - 1)))
     {
 	if (**arg == '(')
 	{
+	    partial_T	*pt = NULL;
+
 	    /* need to copy the funcref so that we can clear rettv */
 	    if (evaluate)
 	    {
@@ -21311,13 +21720,19 @@ handle_subscript(
 		rettv->v_type = VAR_UNKNOWN;
 
 		/* Invoke the function.  Recursive! */
-		s = functv.vval.v_string;
+		if (functv.v_type == VAR_PARTIAL)
+		{
+		    pt = functv.vval.v_partial;
+		    s = pt->pt_name;
+		}
+		else
+		    s = functv.vval.v_string;
 	    }
 	    else
 		s = (char_u *)"";
 	    ret = get_func_tv(s, (int)STRLEN(s), rettv, arg,
 			curwin->w_cursor.lnum, curwin->w_cursor.lnum,
-			&len, evaluate, selfdict);
+			&len, evaluate, pt, selfdict);
 
 	    /* Clear the funcref afterwards, so that deleting it while
 	     * evaluating the arguments is possible (see test55). */
@@ -21354,6 +21769,67 @@ handle_subscript(
 	    }
 	}
     }
+
+    if ((rettv->v_type == VAR_FUNC || rettv->v_type == VAR_PARTIAL)
+							  && selfdict != NULL)
+    {
+	char_u	    *fname = rettv->v_type == VAR_FUNC ? rettv->vval.v_string
+					     : rettv->vval.v_partial->pt_name;
+	char_u	    *tofree = NULL;
+	ufunc_T	    *fp;
+	char_u	    fname_buf[FLEN_FIXED + 1];
+	int	    error;
+
+	/* Translate "s:func" to the stored function name. */
+	fname = fname_trans_sid(fname, fname_buf, &tofree, &error);
+	fp = find_func(fname);
+	vim_free(tofree);
+
+	/* Turn "dict.Func" into a partial for "Func" with "dict". */
+	if (fp != NULL && (fp->uf_flags & FC_DICT))
+	{
+	    partial_T	*pt = (partial_T *)alloc_clear(sizeof(partial_T));
+
+	    if (pt != NULL)
+	    {
+		pt->pt_refcount = 1;
+		pt->pt_dict = selfdict;
+		selfdict = NULL;
+		if (rettv->v_type == VAR_FUNC)
+		{
+		    /* just a function: use selfdict */
+		    pt->pt_name = rettv->vval.v_string;
+		}
+		else
+		{
+		    partial_T	*ret_pt = rettv->vval.v_partial;
+		    int		i;
+
+		    /* partial: use selfdict and copy args */
+		    pt->pt_name = vim_strsave(ret_pt->pt_name);
+		    if (ret_pt->pt_argc > 0)
+		    {
+			pt->pt_argv = (typval_T *)alloc(
+					  sizeof(typval_T) * ret_pt->pt_argc);
+			if (pt->pt_argv == NULL)
+			    /* out of memory: drop the arguments */
+			    pt->pt_argc = 0;
+			else
+			{
+			    pt->pt_argc = ret_pt->pt_argc;
+			    for (i = 0; i < pt->pt_argc; i++)
+				copy_tv(&ret_pt->pt_argv[i], &pt->pt_argv[i]);
+			}
+		    }
+		    partial_unref(ret_pt);
+		}
+		func_ref(pt->pt_name);
+		rettv->v_type = VAR_PARTIAL;
+		rettv->vval.v_partial = pt;
+	    }
+	}
+    }
+
     dict_unref(selfdict);
     return ret;
 }
@@ -21405,6 +21881,9 @@ free_tv(typval_T *varp)
 	    case VAR_STRING:
 		vim_free(varp->vval.v_string);
 		break;
+	    case VAR_PARTIAL:
+		partial_unref(varp->vval.v_partial);
+		break;
 	    case VAR_LIST:
 		list_unref(varp->vval.v_list);
 		break;
@@ -21447,6 +21926,10 @@ clear_tv(typval_T *varp)
 	    case VAR_STRING:
 		vim_free(varp->vval.v_string);
 		varp->vval.v_string = NULL;
+		break;
+	    case VAR_PARTIAL:
+		partial_unref(varp->vval.v_partial);
+		varp->vval.v_partial = NULL;
 		break;
 	    case VAR_LIST:
 		list_unref(varp->vval.v_list);
@@ -21524,6 +22007,7 @@ get_tv_number_chk(typval_T *varp, int *denote)
 	    break;
 #endif
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	    EMSG(_("E703: Using a Funcref as a Number"));
 	    break;
 	case VAR_STRING:
@@ -21572,6 +22056,7 @@ get_tv_float(typval_T *varp)
 	case VAR_FLOAT:
 	    return varp->vval.v_float;
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	    EMSG(_("E891: Using a Funcref as a Float"));
 	    break;
 	case VAR_STRING:
@@ -21688,6 +22173,7 @@ get_tv_string_buf_chk(typval_T *varp, char_u *buf)
 	    sprintf((char *)buf, "%ld", (long)varp->vval.v_number);
 	    return buf;
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	    EMSG(_("E729: using Funcref as a String"));
 	    break;
 	case VAR_LIST:
@@ -22087,7 +22573,7 @@ list_one_var_a(
     msg_advance(22);
     if (type == VAR_NUMBER)
 	msg_putchar('#');
-    else if (type == VAR_FUNC)
+    else if (type == VAR_FUNC || type == VAR_PARTIAL)
 	msg_putchar('*');
     else if (type == VAR_LIST)
     {
@@ -22106,7 +22592,7 @@ list_one_var_a(
 
     msg_outtrans(string);
 
-    if (type == VAR_FUNC)
+    if (type == VAR_FUNC || type == VAR_PARTIAL)
 	msg_puts((char_u *)"()");
     if (*first)
     {
@@ -22138,7 +22624,8 @@ set_var(
     }
     v = find_var_in_ht(ht, 0, varname, TRUE);
 
-    if (tv->v_type == VAR_FUNC && var_check_func_name(name, v == NULL))
+    if ((tv->v_type == VAR_FUNC || tv->v_type == VAR_PARTIAL)
+				      && var_check_func_name(name, v == NULL))
 	return;
 
     if (v != NULL)
@@ -22383,6 +22870,15 @@ copy_tv(typval_T *from, typval_T *to)
 		    func_ref(to->vval.v_string);
 	    }
 	    break;
+	case VAR_PARTIAL:
+	    if (from->vval.v_partial == NULL)
+		to->vval.v_partial = NULL;
+	    else
+	    {
+		to->vval.v_partial = from->vval.v_partial;
+		++to->vval.v_partial->pt_refcount;
+	    }
+	    break;
 	case VAR_LIST:
 	    if (from->vval.v_list == NULL)
 		to->vval.v_list = NULL;
@@ -22437,6 +22933,7 @@ item_copy(
 	case VAR_FLOAT:
 	case VAR_STRING:
 	case VAR_FUNC:
+	case VAR_PARTIAL:
 	case VAR_SPECIAL:
 	case VAR_JOB:
 	case VAR_CHANNEL:
@@ -22838,7 +23335,7 @@ ex_function(exarg_T *eap)
      * g:func	    global function name, same as "func"
      */
     p = eap->arg;
-    name = trans_function_name(&p, eap->skip, 0, &fudi);
+    name = trans_function_name(&p, eap->skip, 0, &fudi, NULL);
     paren = (vim_strchr(p, '(') != NULL);
     if (name == NULL && (fudi.fd_dict == NULL || !paren) && !eap->skip)
     {
@@ -23151,7 +23648,7 @@ ex_function(exarg_T *eap)
 		if (*p == '!')
 		    p = skipwhite(p + 1);
 		p += eval_fname_script(p);
-		vim_free(trans_function_name(&p, TRUE, 0, NULL));
+		vim_free(trans_function_name(&p, TRUE, 0, NULL, NULL));
 		if (*skipwhite(p) == '(')
 		{
 		    ++nesting;
@@ -23406,7 +23903,8 @@ trans_function_name(
     char_u	**pp,
     int		skip,		/* only find the end, don't evaluate */
     int		flags,
-    funcdict_T	*fdp)		/* return: info about dictionary used */
+    funcdict_T	*fdp,		/* return: info about dictionary used */
+    partial_T	**partial)	/* return: partial of a FuncRef */
 {
     char_u	*name = NULL;
     char_u	*start;
@@ -23476,6 +23974,14 @@ trans_function_name(
 	    name = vim_strsave(lv.ll_tv->vval.v_string);
 	    *pp = end;
 	}
+	else if (lv.ll_tv->v_type == VAR_PARTIAL
+					  && lv.ll_tv->vval.v_partial != NULL)
+	{
+	    name = vim_strsave(lv.ll_tv->vval.v_partial->pt_name);
+	    *pp = end;
+	    if (partial != NULL)
+		*partial = lv.ll_tv->vval.v_partial;
+	}
 	else
 	{
 	    if (!skip && !(flags & TFN_QUIET) && (fdp == NULL
@@ -23499,14 +24005,15 @@ trans_function_name(
     if (lv.ll_exp_name != NULL)
     {
 	len = (int)STRLEN(lv.ll_exp_name);
-	name = deref_func_name(lv.ll_exp_name, &len, flags & TFN_NO_AUTOLOAD);
+	name = deref_func_name(lv.ll_exp_name, &len, partial,
+						     flags & TFN_NO_AUTOLOAD);
 	if (name == lv.ll_exp_name)
 	    name = NULL;
     }
     else
     {
 	len = (int)(end - *pp);
-	name = deref_func_name(*pp, &len, flags & TFN_NO_AUTOLOAD);
+	name = deref_func_name(*pp, &len, partial, flags & TFN_NO_AUTOLOAD);
 	if (name == *pp)
 	    name = NULL;
     }
@@ -23731,7 +24238,7 @@ function_exists(char_u *name)
     int	    n = FALSE;
 
     p = trans_function_name(&nm, FALSE, TFN_INT|TFN_QUIET|TFN_NO_AUTOLOAD,
-			    NULL);
+			    NULL, NULL);
     nm = skipwhite(nm);
 
     /* Only accept "funcname", "funcname ", "funcname (..." and
@@ -23748,7 +24255,7 @@ get_expanded_name(char_u *name, int check)
     char_u	*nm = name;
     char_u	*p;
 
-    p = trans_function_name(&nm, FALSE, TFN_INT|TFN_QUIET, NULL);
+    p = trans_function_name(&nm, FALSE, TFN_INT|TFN_QUIET, NULL, NULL);
 
     if (p != NULL && *nm == NUL)
 	if (!check || translated_function_exists(p))
@@ -24104,7 +24611,7 @@ ex_delfunction(exarg_T *eap)
     funcdict_T	fudi;
 
     p = eap->arg;
-    name = trans_function_name(&p, eap->skip, 0, &fudi);
+    name = trans_function_name(&p, eap->skip, 0, &fudi, NULL);
     vim_free(fudi.fd_newkey);
     if (name == NULL)
     {
@@ -25111,6 +25618,7 @@ write_viminfo_varlist(FILE *fp)
 
 		    case VAR_UNKNOWN:
 		    case VAR_FUNC:
+		    case VAR_PARTIAL:
 		    case VAR_JOB:
 		    case VAR_CHANNEL:
 				     continue;

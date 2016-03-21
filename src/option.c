@@ -244,8 +244,6 @@
 #define PV_UL		OPT_BOTH(OPT_BUF(BV_UL))
 #ifdef FEAT_WINDOWS
 # define PV_WFH		OPT_WIN(WV_WFH)
-#endif
-#ifdef FEAT_VERTSPLIT
 # define PV_WFW		OPT_WIN(WV_WFW)
 #endif
 #define PV_WRAP		OPT_WIN(WV_WRAP)
@@ -467,10 +465,9 @@ struct vimoption
 # define ISP_LATIN1 (char_u *)"@,161-255"
 #endif
 
-/* The 16 bit MS-DOS version is low on space, make the string as short as
- * possible when compiling with few features. */
+/* Make the string as short as possible when compiling with few features. */
 #if defined(FEAT_DIFF) || defined(FEAT_FOLDING) || defined(FEAT_SPELL) \
-	|| defined(FEAT_VERTSPLIT) || defined(FEAT_CLIPBOARD) \
+	|| defined(FEAT_WINDOWS) || defined(FEAT_CLIPBOARD) \
 	|| defined(FEAT_INS_EXPAND) || defined(FEAT_SYN_HL) || defined(FEAT_CONCEAL)
 # define HIGHLIGHT_INIT "8:SpecialKey,@:NonText,d:Directory,e:ErrorMsg,i:IncSearch,l:Search,m:MoreMsg,M:ModeMsg,n:LineNr,N:CursorLineNr,r:Question,s:StatusLine,S:StatusLineNC,c:VertSplit,t:Title,v:Visual,V:VisualNOS,w:WarningMsg,W:WildMenu,f:Folded,F:FoldColumn,A:DiffAdd,C:DiffChange,D:DiffDelete,T:DiffText,>:SignColumn,-:Conceal,B:SpellBad,P:SpellCap,R:SpellRare,L:SpellLocal,+:Pmenu,=:PmenuSel,x:PmenuSbar,X:PmenuThumb,*:TabLine,#:TabLineSel,_:TabLineFill,!:CursorColumn,.:CursorLine,o:ColorColumn"
 #else
@@ -1041,7 +1038,7 @@ static struct vimoption options[] =
 			    (char_u *)&p_dy, PV_NONE,
 			    {(char_u *)"", (char_u *)0L} SCRIPTID_INIT},
     {"eadirection", "ead",  P_STRING|P_VI_DEF,
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 			    (char_u *)&p_ead, PV_NONE,
 			    {(char_u *)"both", (char_u *)0L}
 #else
@@ -1052,6 +1049,15 @@ static struct vimoption options[] =
     {"edcompatible","ed",   P_BOOL|P_VI_DEF,
 			    (char_u *)&p_ed, PV_NONE,
 			    {(char_u *)FALSE, (char_u *)0L} SCRIPTID_INIT},
+    {"emoji",  "emo",	    P_BOOL|P_VI_DEF|P_RCLR,
+#if defined(FEAT_MBYTE)
+			    (char_u *)&p_emoji, PV_NONE,
+			    {(char_u *)TRUE, (char_u *)0L}
+#else
+			    (char_u *)NULL, PV_NONE,
+			    {(char_u *)0L, (char_u *)0L}
+#endif
+			    SCRIPTID_INIT},
     {"encoding",    "enc",  P_STRING|P_VI_DEF|P_RCLR|P_NO_ML,
 #ifdef FEAT_MBYTE
 			    (char_u *)&p_enc, PV_NONE,
@@ -2484,7 +2490,7 @@ static struct vimoption options[] =
 #endif
 			    {(char_u *)FALSE, (char_u *)0L} SCRIPTID_INIT},
     {"splitright",  "spr",  P_BOOL|P_VI_DEF,
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 			    (char_u *)&p_spr, PV_NONE,
 #else
 			    (char_u *)NULL, PV_NONE,
@@ -2884,7 +2890,7 @@ static struct vimoption options[] =
 #endif
 			    {(char_u *)FALSE, (char_u *)0L} SCRIPTID_INIT},
     {"winfixwidth", "wfw", P_BOOL|P_VI_DEF|P_RSTAT,
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 			    (char_u *)VAR_WIN, PV_WFW,
 #else
 			    (char_u *)NULL, PV_NONE,
@@ -2898,14 +2904,14 @@ static struct vimoption options[] =
 #endif
 			    {(char_u *)1L, (char_u *)0L} SCRIPTID_INIT},
     {"winminwidth", "wmw", P_NUM|P_VI_DEF,
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 			    (char_u *)&p_wmw, PV_NONE,
 #else
 			    (char_u *)NULL, PV_NONE,
 #endif
 			    {(char_u *)1L, (char_u *)0L} SCRIPTID_INIT},
     {"winwidth",   "wiw",   P_NUM|P_VI_DEF,
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 			    (char_u *)&p_wiw, PV_NONE,
 #else
 			    (char_u *)NULL, PV_NONE,
@@ -2958,7 +2964,7 @@ static struct vimoption options[] =
     p_term("t_CS", T_CCS)
     p_term("t_Cs", T_UCS)
     p_term("t_cs", T_CS)
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
     p_term("t_CV", T_CSV)
 #endif
     p_term("t_da", T_DA)
@@ -3041,7 +3047,7 @@ static char *(p_bsdir_values[]) = {"current", "last", "buffer", NULL};
 static char *(p_scbopt_values[]) = {"ver", "hor", "jump", NULL};
 #endif
 static char *(p_debug_values[]) = {"msg", "throw", "beep", NULL};
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
 static char *(p_ead_values[]) = {"both", "ver", "hor", NULL};
 #endif
 #if defined(FEAT_QUICKFIX)
@@ -4011,6 +4017,15 @@ set_init_3(void)
 	}
     }
 #endif
+
+    if (bufempty())
+    {
+	int idx_ffs = findoption((char_u *)"ffs");
+
+	/* Apply the first entry of 'fileformats' to the initial buffer. */
+	if (idx_ffs >= 0 && (options[idx_ffs].flags & P_WAS_SET))
+	    set_fileformat(default_fileformat(), OPT_LOCAL);
+    }
 
 #ifdef FEAT_TITLE
     set_title_defaults();
@@ -5988,7 +6003,7 @@ did_set_string_option(
 
     /* 'ambiwidth' */
 #ifdef FEAT_MBYTE
-    else if (varp == &p_ambw)
+    else if (varp == &p_ambw || varp == &p_emoji)
     {
 	if (check_opt_strings(p_ambw, p_ambw_values, FALSE) != OK)
 	    errmsg = e_invarg;
@@ -6789,7 +6804,7 @@ did_set_string_option(
 
     }
 
-#ifdef FEAT_VERTSPLIT
+#ifdef FEAT_WINDOWS
     /* 'eadirection' */
     else if (varp == &p_ead)
     {
@@ -8461,7 +8476,7 @@ set_num_option(
 	win_setminheight();
     }
 
-# ifdef FEAT_VERTSPLIT
+# ifdef FEAT_WINDOWS
     else if (pp == &p_wiw)
     {
 	if (p_wiw < 1)
@@ -10255,8 +10270,6 @@ get_varp(struct vimoption *p)
 #endif
 #ifdef FEAT_WINDOWS
 	case PV_WFH:	return (char_u *)&(curwin->w_p_wfh);
-#endif
-#ifdef FEAT_VERTSPLIT
 	case PV_WFW:	return (char_u *)&(curwin->w_p_wfw);
 #endif
 #if defined(FEAT_WINDOWS) && defined(FEAT_QUICKFIX)
