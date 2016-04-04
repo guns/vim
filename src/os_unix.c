@@ -176,11 +176,11 @@ typedef int waitstatus;
 static pid_t wait4pid(pid_t, waitstatus *);
 
 static int  WaitForChar(long);
-static int  WaitForCharOrMouse(long);
+static int  WaitForCharOrMouse(long, int *break_loop);
 #if defined(__BEOS__) || defined(VMS)
-int  RealWaitForChar(int, long, int *);
+int  RealWaitForChar(int, long, int *, int *break_loop);
 #else
-static int  RealWaitForChar(int, long, int *);
+static int  RealWaitForChar(int, long, int *, int *break_loop);
 #endif
 
 #ifdef FEAT_XCLIPBOARD
@@ -366,7 +366,7 @@ mch_write(char_u *s, int len)
 {
     ignored = (int)write(1, (char *)s, len);
     if (p_wd)		/* Unix is too fast, slow down a bit more */
-	RealWaitForChar(read_cmd_fd, p_wd, NULL);
+	RealWaitForChar(read_cmd_fd, p_wd, NULL, NULL);
 }
 
 /*
@@ -4762,7 +4762,7 @@ mch_call_shell(
 		     * to some terminal (vt52?).
 		     */
 		    ++noread_cnt;
-		    while (RealWaitForChar(fromshell_fd, 10L, NULL))
+		    while (RealWaitForChar(fromshell_fd, 10L, NULL, NULL))
 		    {
 			len = read_eintr(fromshell_fd, buffer
 # ifdef FEAT_MBYTE
@@ -5343,7 +5343,7 @@ mch_clear_job(job_T *job)
     void
 mch_breakcheck(void)
 {
-    if (curr_tmode == TMODE_RAW && RealWaitForChar(read_cmd_fd, 0L, NULL))
+    if (curr_tmode == TMODE_RAW && RealWaitForChar(read_cmd_fd, 0L, NULL, NULL))
 	fill_input_buf(FALSE);
 }
 
@@ -5360,10 +5360,11 @@ WaitForChar(long msec)
 #ifdef FEAT_TIMERS
     long    due_time;
     long    remaining = msec;
+    int	    break_loop = FALSE;
 
     /* When waiting very briefly don't trigger timers. */
     if (msec >= 0 && msec < 10L)
-	return WaitForCharOrMouse(msec);
+	return WaitForCharOrMouse(msec, NULL);
 
     while (msec < 0 || remaining > 0)
     {
@@ -5372,14 +5373,18 @@ WaitForChar(long msec)
 	due_time = check_due_timer();
 	if (due_time <= 0 || (msec > 0 && due_time > remaining))
 	    due_time = remaining;
-	if (WaitForCharOrMouse(due_time))
+	if (WaitForCharOrMouse(due_time, &break_loop))
 	    return TRUE;
+	if (break_loop)
+	    /* Nothing available, but need to return so that side effects get
+	     * handled, such as handling a message on a channel. */
+	    return FALSE;
 	if (msec > 0)
 	    remaining -= due_time;
     }
     return FALSE;
 #else
-    return WaitForCharOrMouse(msec);
+    return WaitForCharOrMouse(msec, NULL);
 #endif
 }
 
@@ -5390,7 +5395,7 @@ WaitForChar(long msec)
  * When a GUI is being used, this will never get called -- webb
  */
     static int
-WaitForCharOrMouse(long msec)
+WaitForCharOrMouse(long msec, int *break_loop)
 {
 #ifdef FEAT_MOUSE_GPM
     int		gpm_process_wanted;
@@ -5436,9 +5441,10 @@ WaitForCharOrMouse(long msec)
 # endif
 # ifdef FEAT_MOUSE_GPM
 	gpm_process_wanted = 0;
-	avail = RealWaitForChar(read_cmd_fd, msec, &gpm_process_wanted);
+	avail = RealWaitForChar(read_cmd_fd, msec,
+					     &gpm_process_wanted, break_loop);
 # else
-	avail = RealWaitForChar(read_cmd_fd, msec, NULL);
+	avail = RealWaitForChar(read_cmd_fd, msec, NULL, break_loop);
 # endif
 	if (!avail)
 	{
@@ -5457,10 +5463,11 @@ WaitForCharOrMouse(long msec)
 # ifdef FEAT_XCLIPBOARD
 	   || (!avail && rest != 0)
 # endif
-	  );
+	  )
+	;
 
 #else
-    avail = RealWaitForChar(read_cmd_fd, msec, NULL);
+    avail = RealWaitForChar(read_cmd_fd, msec, NULL, break_loop);
 #endif
     return avail;
 }
@@ -5479,7 +5486,7 @@ WaitForCharOrMouse(long msec)
 #else
     static int
 #endif
-RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
+RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED, int *break_loop)
 {
     int		ret;
     int		result;
@@ -5532,7 +5539,8 @@ RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
 # endif
 #endif
 #ifndef HAVE_SELECT
-	struct pollfd   fds[6 + MAX_OPEN_CHANNELS];
+			/* each channel may use in, out and err */
+	struct pollfd   fds[6 + 3 * MAX_OPEN_CHANNELS];
 	int		nfd;
 # ifdef FEAT_XCLIPBOARD
 	int		xterm_idx = -1;
@@ -5592,6 +5600,8 @@ RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
 	ret = poll(fds, nfd, towait);
 
 	result = ret > 0 && (fds[0].revents & POLLIN);
+	if (break_loop != NULL && ret > 0)
+	    *break_loop = TRUE;
 
 # ifdef FEAT_MZSCHEME
 	if (ret == 0 && mzquantum_used)
@@ -5643,7 +5653,7 @@ RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
 
 	struct timeval  tv;
 	struct timeval	*tvp;
-	fd_set		rfds, efds;
+	fd_set		rfds, wfds, efds;
 	int		maxfd;
 	long		towait = msec;
 
@@ -5676,6 +5686,7 @@ RealWaitForChar(int fd, long msec, int *check_for_gpm UNUSED)
 	 */
 select_eintr:
 	FD_ZERO(&rfds);
+	FD_ZERO(&wfds);
 	FD_ZERO(&efds);
 	FD_SET(fd, &rfds);
 # if !defined(__QNX__) && !defined(__CYGWIN32__)
@@ -5716,13 +5727,15 @@ select_eintr:
 	}
 # endif
 # ifdef FEAT_JOB_CHANNEL
-	maxfd = channel_select_setup(maxfd, &rfds);
+	maxfd = channel_select_setup(maxfd, &rfds, &wfds);
 # endif
 
-	ret = select(maxfd + 1, &rfds, NULL, &efds, tvp);
+	ret = select(maxfd + 1, &rfds, &wfds, &efds, tvp);
 	result = ret > 0 && FD_ISSET(fd, &rfds);
 	if (result)
 	    --ret;
+	if (break_loop != NULL && ret > 0)
+	    *break_loop = TRUE;
 
 # ifdef EINTR
 	if (ret == -1 && errno == EINTR)
@@ -5799,7 +5812,7 @@ select_eintr:
 # endif
 #ifdef FEAT_JOB_CHANNEL
 	if (ret > 0)
-	    ret = channel_select_check(ret, &rfds);
+	    ret = channel_select_check(ret, &rfds, &wfds);
 #endif
 
 #endif /* HAVE_SELECT */

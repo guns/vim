@@ -85,7 +85,6 @@ SCRIPTS_ALL = \
 	test102.out \
 	test103.out \
 	test104.out \
-	test105.out \
 	test107.out \
 	test108.out \
 	test_autocmd_option.out \
@@ -184,6 +183,8 @@ NEW_TESTS = test_arglist.res \
 	    test_viml.res \
 	    test_visual.res \
 	    test_window_id.res \
+	    test_alot_latin.res \
+	    test_alot_utf8.res \
 	    test_alot.res
 
 

@@ -1,4 +1,4 @@
-*todo.txt*      For Vim version 7.4.  Last change: 2016 Mar 20
+*todo.txt*      For Vim version 7.4.  Last change: 2016 Mar 29
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -34,41 +34,32 @@ not be repeated below, unless there is extra information.
 							*known-bugs*
 -------------------- Known bugs and current work -----------------------
 
+Using free memory. (Dominique, 2016 Mar 27)
+
 +channel:
-- add test for out-cb and err-cb.
-- Move more details from eval.txt to channel.txt.  Add tags in eval.txt.
-- When decoding json, don't read all the typeahead at once, use the reader
-  properly.
 - When a message in the queue but there is no callback, drop it after a while?
   Add timestamp to queued messages and callbacks with ID, remove after a
   minute.  Option to set the droptime.
-- Add more ch_log calls, basically at every branch, before every callback, etc.
 - Add remark about undo sync, is there a way to force it?
 - When starting a job, have an option to open the server socket, so we know
   the port, and pass it to the command with --socket-fd {nr}. (Olaf Dabrunz,
   Feb 9)  How to do this on MS-Windows?
-- Add more unit-testing in json_test.c
-- Add a test where ["eval","getline(123)"] gets a line with special
-  characters (NUL, 0x80, etc.).  Check that it isn't garbled.
-- Make sure errors lead to a useful error msg. ["ex","foobar"]
 - For connection to server, a "keep open" flag would be useful.  Retry
   connecting in the main loop with zero timeout.
 Later
 - job_start(): run job in a newly opened terminal.
     With xterm could use -S{pty}.
 
-Packages: how about "after" directory?
+Partial:
+- Maybe we also need VAR_PARTIAL support in if_mzsch.
 
 Make it so that the window ID can be used where currently a window nr is used
 
-Fix to support --nofork for Windows batch files. (Kevin Cantú, 2016 Feb 23,
-#658, #659)  Also add "setlocal" at top of batch file?
+Patch to add "q" item to guifont. #720, Kim Brouer, 2016 Mar 29
+Better patch from Yasuhiro Matsumoto, 2016 Jan 4.
 
-Patch to add matchstrpos(). (Ozaki Kiichi, 2016 Feb 28)
-
-Why does this: 	echo "a" . 1.1
-result in:	a11
-Should recognize float (so long as it's not ".1.1").
+Patch to make tag jump work on function({expr}). (Hirohito Higashi, 2016 Mar
+25)
 
 Allow for an empty dictionary key?
 
@@ -119,6 +110,10 @@ Regexp problems:
   matches the empty string. (Dominique Pelle, 2015 Oct 2, Nov 24)
 - Search for \\~ causes error E874.
 
+Using freed memory in quickfix code. (Dominique, 2016 Mar 21)
+
+Patch 7.4.1401 caused autochdir not to work on startup. (Rob Hoelz, #704)
+
 Patch to fix that folds close with autocomplete.  #643
 Christian Brabandt, 2016 Feb 18.
 
@@ -137,6 +132,7 @@ Patch to put undo options together in undo window.
 Patch to have better check for {action} argument of setqflist().
 Nikolai Pavlov, Feb 25, #661.  Can be even more strict.
 Also see patch from Hirohito Higash, Feb 25.
+Updated patch, 2016 Mar 25.
 
 Patch to update the GTK icon cache when installing. (Kazunobu Kuriyama, 2016
 Feb 3)
@@ -147,19 +143,28 @@ Cannot delete a file with square brackets with delete(). (#696)
 
 Patch to add 'topbot' to 'belloff' option. (Coot, 2016 Mar 18, #695)
 
+Patch to make matchit work better, respect 'matchpairs'. (Ken Takata, 2016 Mar
+25)
+
 We can use '. to go to the last change in the current buffer, but how about
 the last change in any buffer?  Can we use ', (, is next to .)?
 
 Patch for Python: #622. (Roland Puntaier, 2016 Feb 2)
 What does it change?
 
+It's possible to add ",," to 'wildignore', an empty entry.  Causes problems.
+Reject the value? #710.
+
 Win32: patch to use 64 bit stat() if possible. (Ken Takata, 2014 May 12)
 More tests May 14. Update May 29.  Update Aug 10.
 Now part of large file patches. (Ken Takata, 2016 Feb 1)
-Two patches now?  New update Feb 24.
+Win64: Seek error in swap file for a very big file (3 Gbyte).  Check storing
+pointer in long and seek offset in 64 bit var.
+Patches from Ken Takata might help (2014 Apr 17)
+Update 2016 Mar 28.  Can include all parts into one dist patch.
 
 Patch to support 64 bit ints for Number. (Ken Takata, 2016 Jan 21)
-Also in update of Feb 24?
+Update 2016 Mar 28.
 
 After 7.5 is released:
 - Drop support for older MS-Windows systems, before XP.
@@ -202,6 +207,10 @@ Patch to make "%:h:h" return "." instead of the full path.
 
 Remove SPACE_IN_FILENAME ? What could possibly go wrong?
 
+Patch to change GUI behavior: instead of changing the window size change the
+lines/columns when menu/toolbar/etc. is added/removed. (Ychin, 2016 Mar 20,
+#703)
+
 Installation of .desktop files does not work everywhere.
 It's now fixed, but the target directory probably isn't right.
 Add configure check?
@@ -219,6 +228,8 @@ Patch to avoid redrawing tabline when the popup menu is visible.
 (Christian Brabandt, 2016 Jan 28)
 
 Patch to add {skip} argument to search(). (Christian Brabandt, 2016 Feb 24)
+
+Add value "smart" to 'tagcase': ignore case when tag is all lower case.
 
 7   Add a watchpoint in the debug mode: An expression that breaks execution
     when evaluating to non-zero.  Add the "watchadd expr" command, stop when
@@ -246,6 +257,8 @@ https://gist.github.com/presuku/d3d6b230b9b6dcfc0477
 
 Patch to make the behavior of "w" more straightforward, but not Vi compatible.
 With a 'cpo' flag.  (Christian Brabandt, 2016 Feb 8)
+
+Patch to add optionproperties(). (Anton Lindqvist, 2016 Mar 27)
 
 Patch to add TagNotFound autocommand. (Anton Lindqvist, 2016 Feb 3)
 
@@ -298,7 +311,7 @@ Value returned by virtcol() changes depending on how lines wrap.  This is
 inconsistent with the documentation.
 
 Patch to add filtering of the quickfix list. (Yegappan Lakshmanan, 2016 Mar
-13, last version)
+13, last version)  Update Mar 21.
 
 Can we cache the syntax attributes, so that updates for 'relativenumber' and
 'cursorline'/'cursorcolumn' are a lot faster?
@@ -1903,10 +1916,6 @@ label.  (Tsakiridis, 2007 Feb 18)  Patch from Ian Kelling, 2008 Aug 6.
 Win32: using "gvim --remote-tab-silent fname" sometimes gives an empty screen
 with the more prompt.  Caused by setting the guitablabel?  (Thomas Michael
 Engelke, 2007 Dec 20 - 2008 Jan 17)
-
-Win64: Seek error in swap file for a very big file (3 Gbyte).  Check storing
-pointer in long and seek offset in 64 bit var.
-Patches from Ken Takata might help (2014 Apr 17)
 
 Win32: patch for fullscreen mode. (Liushaolin, 2008 April 17)
 
@@ -4841,7 +4850,7 @@ Searching:
     lines 23 to 45?  Or does this conflict with Ex range syntax?
 8   Allow identical pairs in 'matchpairs'.  Restrict the search to the current
     line.
-7   Allow longer pairs in 'matchpairs'.  Use ~/vim/macros/matchit.vim as an
+7   Allow longer pairs in 'matchpairs'.  Use matchit.vim as an
     example.
 8   Make it possible to define the character that "%" checks for in
     #if/#endif.  For nmake it's !if/!endif.
