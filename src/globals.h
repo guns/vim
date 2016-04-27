@@ -369,6 +369,10 @@ EXTERN char_u	*use_gvimrc INIT(= NULL);	/* "-U" cmdline argument */
 EXTERN int	cterm_normal_fg_color INIT(= 0);
 EXTERN int	cterm_normal_fg_bold INIT(= 0);
 EXTERN int	cterm_normal_bg_color INIT(= 0);
+#ifdef FEAT_TERMTRUECOLOR
+EXTERN long_u	cterm_normal_fg_gui_color INIT(= INVALCOLOR);
+EXTERN long_u	cterm_normal_bg_gui_color INIT(= INVALCOLOR);
+#endif
 
 #ifdef FEAT_AUTOCMD
 EXTERN int	autocmd_busy INIT(= FALSE);	/* Is apply_autocmds() busy? */
@@ -1176,6 +1180,10 @@ EXTERN int	fill_fold INIT(= '-');
 EXTERN int	fill_diff INIT(= '-');
 #endif
 
+#ifdef FEAT_FOLDING
+EXTERN int	disable_fold_update INIT(= 0);
+#endif
+
 /* Whether 'keymodel' contains "stopsel" and "startsel". */
 EXTERN int	km_stopsel INIT(= FALSE);
 EXTERN int	km_startsel INIT(= FALSE);
@@ -1619,6 +1627,8 @@ EXTERN int  alloc_fail_countdown INIT(= -1);
 EXTERN int  alloc_fail_repeat INIT(= 0);
 
 EXTERN int  disable_char_avail_for_testing INIT(= 0);
+
+EXTERN int  in_free_unref_items INIT(= FALSE);
 #endif
 
 /*

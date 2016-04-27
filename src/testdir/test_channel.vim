@@ -183,7 +183,7 @@ func s:communicate(port)
   call assert_equal('got it', s:responseMsg)
 
   " Collect garbage, tests that our handle isn't collected.
-  call garbagecollect()
+  call garbagecollect_for_testing()
 
   " check setting options (without testing the effect)
   call ch_setoptions(handle, {'callback': 's:NotUsed'})
@@ -1048,6 +1048,60 @@ func Test_out_cb()
   endtry
 endfunc
 
+func Test_out_close_cb()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_out_close_cb()')
+
+  let s:counter = 1
+  let s:outmsg = 0
+  let s:closemsg = 0
+  func! OutHandler(chan, msg)
+    let s:outmsg = s:counter
+    let s:counter += 1
+  endfunc
+  func! CloseHandler(chan)
+    let s:closemsg = s:counter
+    let s:counter += 1
+  endfunc
+  let job = job_start(s:python . " test_channel_pipe.py quit now",
+	\ {'out_cb': 'OutHandler',
+	\ 'close_cb': 'CloseHandler'})
+  call assert_equal("run", job_status(job))
+  try
+    call s:waitFor('s:closemsg != 0 && s:outmsg != 0')
+    call assert_equal(1, s:outmsg)
+    call assert_equal(2, s:closemsg)
+  finally
+    call job_stop(job)
+    delfunc OutHandler
+    delfunc CloseHandler
+  endtry
+endfunc
+
+func Test_read_in_close_cb()
+  if !has('job')
+    return
+  endif
+  call ch_log('Test_read_in_close_cb()')
+
+  let s:received = ''
+  func! CloseHandler(chan)
+    let s:received = ch_read(a:chan)
+  endfunc
+  let job = job_start(s:python . " test_channel_pipe.py quit now",
+	\ {'close_cb': 'CloseHandler'})
+  call assert_equal("run", job_status(job))
+  try
+    call s:waitFor('s:received != ""')
+    call assert_equal('quit', s:received)
+  finally
+    call job_stop(job)
+    delfunc CloseHandler
+  endtry
+endfunc
+
 """"""""""
 
 let s:unletResponse = ''
@@ -1230,6 +1284,26 @@ func Test_job_start_invalid()
   call assert_fails('call job_start($x)', 'E474:')
   call assert_fails('call job_start("")', 'E474:')
 endfunc
+
+" This was leaking memory.
+func Test_partial_in_channel_cycle()
+  let d = {}
+  let d.a = function('string', [d])
+  try
+    let d.b = ch_open('nowhere:123', {'close_cb': d.a})
+  catch
+    call assert_exception('E901:')
+  endtry
+  unlet d
+endfunc
+
+func Test_using_freed_memory()
+  let g:a = job_start(['ls'])
+  sleep 10m
+  call garbagecollect_for_testing()
+endfunc
+
+
 
 " Uncomment this to see what happens, output is in src/testdir/channellog.
 " call ch_logfile('channellog', 'w')

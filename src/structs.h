@@ -84,7 +84,9 @@ typedef struct file_buffer	buf_T;  /* forward declaration */
 # ifdef FEAT_XCLIPBOARD
 #  include <X11/Intrinsic.h>
 # endif
-# define guicolor_T int		/* avoid error in prototypes */
+# define guicolor_T long_u		/* avoid error in prototypes and 
+					 * make FEAT_TERMTRUECOLOR work */
+# define INVALCOLOR ((guicolor_T)0x1ffffff)
 #endif
 
 /*
@@ -911,6 +913,10 @@ typedef struct attr_entry
 	    /* These colors need to be > 8 bits to hold 256. */
 	    short_u	    fg_color;	/* foreground color number */
 	    short_u	    bg_color;	/* background color number */
+# ifdef FEAT_TERMTRUECOLOR
+	    long_u	    fg_rgb;	/* foreground color RGB */
+	    long_u	    bg_rgb;	/* background color RGB */
+# endif
 	} cterm;
 # ifdef FEAT_GUI
 	struct
@@ -1290,6 +1296,8 @@ struct jobvar_S
     buf_T	*jv_in_buf;	/* buffer from "in-name" */
 
     int		jv_refcount;	/* reference count */
+    int		jv_copyID;
+
     channel_T	*jv_channel;	/* channel for I/O, reference counted */
 };
 
@@ -1425,11 +1433,12 @@ struct channel_S {
 
     job_T	*ch_job;	/* Job that uses this channel; this does not
 				 * count as a reference to avoid a circular
-				 * reference. */
+				 * reference, the job refers to the channel. */
     int		ch_job_killed;	/* TRUE when there was a job and it was killed
 				 * or we know it died. */
 
     int		ch_refcount;	/* reference count */
+    int		ch_copyID;
 };
 
 #define JO_MODE		    0x0001	/* channel mode */

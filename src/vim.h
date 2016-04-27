@@ -1558,6 +1558,31 @@ typedef UINT32_TYPEDEF UINT32_T;
 #define MSG_PUTS_LONG(s)	    msg_puts_long_attr((char_u *)(s), 0)
 #define MSG_PUTS_LONG_ATTR(s, a)    msg_puts_long_attr((char_u *)(s), (a))
 
+#ifdef FEAT_GUI
+# ifdef FEAT_TERMTRUECOLOR
+#  define GUI_FUNCTION(f)	    (gui.in_use ? gui_##f : termtrue_##f)
+#  define USE_24BIT		    (gui.in_use || p_guicolors)
+# else
+#  define GUI_FUNCTION(f)	    gui_##f
+#  define USE_24BIT		    gui.in_use
+# endif
+#else
+# ifdef FEAT_TERMTRUECOLOR
+#  define GUI_FUNCTION(f)	    termtrue_##f
+#  define USE_24BIT		    p_guicolors
+# endif
+#endif
+#ifdef FEAT_TERMTRUECOLOR
+# define IS_CTERM		    (t_colors > 1 || p_guicolors)
+#else
+# define IS_CTERM		    (t_colors > 1)
+#endif
+#ifdef GUI_FUNCTION
+# define GUI_MCH_GET_RGB	    GUI_FUNCTION(mch_get_rgb)
+# define GUI_MCH_GET_COLOR	    GUI_FUNCTION(mch_get_color)
+# define GUI_GET_COLOR		    GUI_FUNCTION(get_color)
+#endif
+
 /* Prefer using emsg3(), because perror() may send the output to the wrong
  * destination and mess up the screen. */
 #ifdef HAVE_STRERROR
@@ -1868,7 +1893,8 @@ typedef int sock_T;
 #define VV_NULL		65
 #define VV_NONE		66
 #define VV_VIM_DID_ENTER 67
-#define VV_LEN		68	/* number of v: vars */
+#define VV_TESTING	68
+#define VV_LEN		69	/* number of v: vars */
 
 /* used for v_number in VAR_SPECIAL */
 #define VVAL_FALSE	0L
