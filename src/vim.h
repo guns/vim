@@ -1559,26 +1559,36 @@ typedef UINT32_TYPEDEF UINT32_T;
 #define MSG_PUTS_LONG_ATTR(s, a)    msg_puts_long_attr((char_u *)(s), (a))
 
 #ifdef FEAT_GUI
-# ifdef FEAT_TERMTRUECOLOR
-#  define GUI_FUNCTION(f)	    (gui.in_use ? gui_##f : termtrue_##f)
-#  define USE_24BIT		    (gui.in_use || p_guicolors)
+# ifdef FEAT_TERMGUICOLORS
+#  define GUI_FUNCTION(f)	    (gui.in_use ? gui_##f : termgui_##f)
+#  define GUI_FUNCTION2(f, pixel)   (gui.in_use \
+				    ?  ((pixel) != INVALCOLOR \
+					? gui_##f((pixel)) \
+					: (long_u)INVALCOLOR) \
+				    : termgui_##f((pixel)))
+#  define USE_24BIT		    (gui.in_use || p_tgc)
 # else
 #  define GUI_FUNCTION(f)	    gui_##f
+#  define GUI_FUNCTION2(f,pixel)    ((pixel) != INVALCOLOR \
+				     ? gui_##f((pixel)) \
+				     : (long_u)INVALCOLOR)
 #  define USE_24BIT		    gui.in_use
 # endif
 #else
-# ifdef FEAT_TERMTRUECOLOR
-#  define GUI_FUNCTION(f)	    termtrue_##f
-#  define USE_24BIT		    p_guicolors
+# ifdef FEAT_TERMGUICOLORS
+#  define GUI_FUNCTION(f)	    termgui_##f
+#  define GUI_FUNCTION2(f, pixel)   termgui_##f((pixel))
+#  define USE_24BIT		    p_tgc
 # endif
 #endif
-#ifdef FEAT_TERMTRUECOLOR
-# define IS_CTERM		    (t_colors > 1 || p_guicolors)
+#ifdef FEAT_TERMGUICOLORS
+# define IS_CTERM		    (t_colors > 1 || p_tgc)
 #else
 # define IS_CTERM		    (t_colors > 1)
 #endif
 #ifdef GUI_FUNCTION
 # define GUI_MCH_GET_RGB	    GUI_FUNCTION(mch_get_rgb)
+# define GUI_MCH_GET_RGB2(pixel)    GUI_FUNCTION2(mch_get_rgb, (pixel))
 # define GUI_MCH_GET_COLOR	    GUI_FUNCTION(mch_get_color)
 # define GUI_GET_COLOR		    GUI_FUNCTION(get_color)
 #endif

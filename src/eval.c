@@ -3292,9 +3292,14 @@ eval_for_line(
 	if (!skip)
 	{
 	    l = tv.vval.v_list;
-	    if (tv.v_type != VAR_LIST || l == NULL)
+	    if (tv.v_type != VAR_LIST)
 	    {
 		EMSG(_(e_listreq));
+		clear_tv(&tv);
+	    }
+	    else if (l == NULL)
+	    {
+		/* a null list is like an empty list: do nothing */
 		clear_tv(&tv);
 	    }
 	    else
@@ -7024,6 +7029,10 @@ garbage_collect(int testing)
 
 #ifdef FEAT_JOB_CHANNEL
     abort = abort || set_ref_in_channel(copyID);
+    abort = abort || set_ref_in_job(copyID);
+#endif
+#ifdef FEAT_NETBEANS_INTG
+    abort = abort || set_ref_in_nb_channel(copyID);
 #endif
 
     if (!abort)
@@ -14042,14 +14051,14 @@ f_has(typval_T *argvars, typval_T *rettv)
 	"tcl",
 # endif
 #endif
+#ifdef FEAT_TERMGUICOLORS
+	"termguicolors",
+#endif
 #ifdef TERMINFO
 	"terminfo",
 #endif
 #ifdef FEAT_TERMRESPONSE
 	"termresponse",
-#endif
-#ifdef FEAT_TERMTRUECOLOR
-	"termtruecolor",
 #endif
 #ifdef FEAT_TEXTOBJ
 	"textobjects",
@@ -20019,7 +20028,7 @@ f_synIDattr(typval_T *argvars UNUSED, typval_T *rettv)
     }
     else
     {
-#if defined(FEAT_GUI) || defined(FEAT_TERMTRUECOLOR)
+#if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
 	if (USE_24BIT)
 	    modec = 'g';
 	else
