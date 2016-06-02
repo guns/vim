@@ -2149,8 +2149,8 @@ installrtbase: $(HELPSOURCE)/vim.1 $(DEST_VIM) $(DEST_RT) \
 # Generate the help tags with ":helptags" to handle all languages.
 # Move the distributed tags file aside and restore it, to avoid it being
 # different from the repository.
-	cd $(HELPSOURCE); if test -z "$(CROSS_COMPILING)" -a -f tags; then \
-		mv -f tags tags.dist; fi
+	# cd $(HELPSOURCE); if test -z "$(CROSS_COMPILING)" -a -f tags; then \
+	# 	mv -f tags tags.dist; fi
 	@echo generating help tags
 	-@cd $(HELPSOURCE); if test -z "$(CROSS_COMPILING)"; then \
 		$(MAKE) VIMEXE=$(DEST_BIN)/$(VIMTARGET) vimtags; fi
@@ -2162,7 +2162,7 @@ installrtbase: $(HELPSOURCE)/vim.1 $(DEST_VIM) $(DEST_RT) \
 		chmod $(HELPMOD) $$files
 	$(INSTALL_DATA)  $(HELPSOURCE)/*.pl $(DEST_HELP)
 	chmod $(SCRIPTMOD) $(DEST_HELP)/*.pl
-	cd $(HELPSOURCE); if test -f tags.dist; then mv -f tags.dist tags; fi
+	# cd $(HELPSOURCE); if test -f tags.dist; then mv -f tags.dist tags; fi
 # install the menu files
 	$(INSTALL_DATA) $(SCRIPTSOURCE)/menu.vim $(SYS_MENU_FILE)
 	chmod $(VIMSCRIPTMOD) $(SYS_MENU_FILE)
