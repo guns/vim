@@ -574,9 +574,12 @@ buf_freeall(buf_T *buf, int flags)
     int		is_curbuf = (buf == curbuf);
 
     buf->b_closing = TRUE;
-    apply_autocmds(EVENT_BUFUNLOAD, buf->b_fname, buf->b_fname, FALSE, buf);
-    if (!buf_valid(buf))	    /* autocommands may delete the buffer */
-	return;
+    if (buf->b_ml.ml_mfp != NULL)
+    {
+	apply_autocmds(EVENT_BUFUNLOAD, buf->b_fname, buf->b_fname, FALSE, buf);
+	if (!buf_valid(buf))	    /* autocommands may delete the buffer */
+	    return;
+    }
     if ((flags & BFA_DEL) && buf->b_p_bl)
     {
 	apply_autocmds(EVENT_BUFDELETE, buf->b_fname, buf->b_fname, FALSE, buf);
@@ -675,6 +678,9 @@ free_buffer(buf_T *buf)
 #endif
 #ifdef FEAT_RUBY
     ruby_buffer_free(buf);
+#endif
+#ifdef FEAT_JOB_CHANNEL
+    channel_buffer_free(buf);
 #endif
 #ifdef FEAT_AUTOCMD
     aubuflocal_remove(buf);
@@ -1643,6 +1649,7 @@ do_autochdir(void)
  * If (flags & BLN_CURBUF) is TRUE, may use current buffer.
  * If (flags & BLN_LISTED) is TRUE, add new buffer to buffer list.
  * If (flags & BLN_DUMMY) is TRUE, don't count it as a real buffer.
+ * If (flags & BLN_NEW) is TRUE, don't use an existing buffer.
  * This is the ONLY way to create a new buffer.
  */
 static int  top_file_num = 1;		/* highest file number */
@@ -1670,7 +1677,7 @@ buflist_new(
     if (sfname == NULL || mch_stat((char *)sfname, &st) < 0)
 	st.st_dev = (dev_T)-1;
 #endif
-    if (ffname != NULL && !(flags & BLN_DUMMY) && (buf =
+    if (ffname != NULL && !(flags & (BLN_DUMMY | BLN_NEW)) && (buf =
 #ifdef UNIX
 		buflist_findname_stat(ffname, &st)
 #else
