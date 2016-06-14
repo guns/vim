@@ -5819,14 +5819,14 @@ static yankreg_T *y_read_regs = NULL;
  * Prepare for reading viminfo registers when writing viminfo later.
  */
     void
-prepare_viminfo_registers()
+prepare_viminfo_registers(void)
 {
      y_read_regs = (yankreg_T *)alloc_clear(NUM_REGISTERS
 						    * (int)sizeof(yankreg_T));
 }
 
     void
-finish_viminfo_registers()
+finish_viminfo_registers(void)
 {
     int		i;
     int		j;
@@ -6011,7 +6011,7 @@ handle_viminfo_register(garray_T *values, int force)
 	return;
     flags = vp[0].bv_nr;
     name = vp[1].bv_nr;
-    if (name < 0 || name > NUM_REGISTERS)
+    if (name < 0 || name >= NUM_REGISTERS)
 	return;
     type = vp[2].bv_nr;
     if (type != MCHAR && type != MLINE && type != MBLOCK)

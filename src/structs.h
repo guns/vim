@@ -112,6 +112,9 @@ typedef struct xfilemark
 {
     fmark_T	fmark;
     char_u	*fname;		/* file name, used when fnum == 0 */
+#ifdef FEAT_VIMINFO
+    time_t	time_set;
+#endif
 } xfmark_T;
 
 /*
