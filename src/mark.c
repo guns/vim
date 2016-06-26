@@ -1522,6 +1522,7 @@ handle_viminfo_mark(garray_T *values, int force)
 			++idx;
 			break;
 		    }
+		/* idx cannot be zero now */
 		if (idx < 0 && curwin->w_jumplistlen < JUMPLISTSIZE)
 		    /* insert as the oldest entry */
 		    idx = 0;
@@ -1537,6 +1538,7 @@ handle_viminfo_mark(garray_T *values, int force)
 		if (curwin->w_jumplistlen == JUMPLISTSIZE)
 		{
 		    /* Drop the oldest entry. */
+		    --idx;
 		    vim_free(curwin->w_jumplist[0].fname);
 		    for (i = 0; i < idx; ++i)
 			curwin->w_jumplist[i] = curwin->w_jumplist[i + 1];
