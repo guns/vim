@@ -289,10 +289,10 @@ typedef struct
     union {
 	struct
 	{
-	    long	start_col_nr;		/* starting column number */
-	    long	end_col_nr;		/* ending column number */
+	    varnumber_T	start_col_nr;		/* starting column number */
+	    varnumber_T	end_col_nr;		/* ending column number */
 	} line;
-	long	value;		/* value if sorting by integer */
+	varnumber_T	value;		/* value if sorting by integer */
 #ifdef FEAT_FLOAT
 	float_T value_flt;	/* value if sorting by float */
 #endif
@@ -1845,14 +1845,14 @@ write_viminfo(char_u *file, int forceit)
     FILE	*fp_in = NULL;	/* input viminfo file, if any */
     FILE	*fp_out = NULL;	/* output viminfo file */
     char_u	*tempname = NULL;	/* name of temp viminfo file */
-    struct stat	st_new;		/* mch_stat() of potential new file */
+    stat_T	st_new;		/* mch_stat() of potential new file */
     char_u	*wp;
 #if defined(UNIX) || defined(VMS)
     mode_t	umask_save;
 #endif
 #ifdef UNIX
     int		shortname = FALSE;	/* use 8.3 file name */
-    struct stat	st_old;		/* mch_stat() of existing viminfo file */
+    stat_T	st_old;		/* mch_stat() of existing viminfo file */
 #endif
 #ifdef WIN3264
     int		hidden = FALSE;
@@ -2153,10 +2153,11 @@ viminfo_filename(char_u *file)
     static void
 do_viminfo(FILE *fp_in, FILE *fp_out, int flags)
 {
-    int		count = 0;
     int		eof = FALSE;
     vir_T	vir;
     int		merge = FALSE;
+    int		do_copy_marks = FALSE;
+    garray_T	buflist;
 
     if ((vir.vir_line = alloc(LSIZE)) == NULL)
 	return;
@@ -2188,7 +2189,11 @@ do_viminfo(FILE *fp_in, FILE *fp_out, int flags)
 	    while (!(eof = viminfo_readline(&vir))
 		    && vir.vir_line[0] != '>')
 		;
+
+	do_copy_marks = (flags &
+			   (VIF_WANT_MARKS | VIF_GET_OLDFILES | VIF_FORCEIT));
     }
+
     if (fp_out != NULL)
     {
 	/* Write the info: */
@@ -2214,11 +2219,18 @@ do_viminfo(FILE *fp_in, FILE *fp_out, int flags)
 	finish_viminfo_marks();
 	write_viminfo_bufferlist(fp_out);
 	write_viminfo_barlines(&vir, fp_out);
-	count = write_viminfo_marks(fp_out);
+
+	if (do_copy_marks)
+	    ga_init2(&buflist, sizeof(buf_T *), 50);
+	write_viminfo_marks(fp_out, do_copy_marks ? &buflist : NULL);
     }
-    if (fp_in != NULL
-	    && (flags & (VIF_WANT_MARKS | VIF_GET_OLDFILES | VIF_FORCEIT)))
-	copy_viminfo_marks(&vir, fp_out, count, eof, flags);
+
+    if (do_copy_marks)
+    {
+	copy_viminfo_marks(&vir, fp_out, &buflist, eof, flags);
+	if (fp_out != NULL)
+	    ga_clear(&buflist);
+    }
 
     vim_free(vir.vir_line);
 #ifdef FEAT_MBYTE
@@ -2839,13 +2851,23 @@ write_viminfo_barlines(vir_T *virp, FILE *fp_out)
 {
     int		i;
     garray_T	*gap = &virp->vir_barlines;
+    int		seen_useful = FALSE;
+    char	*line;
 
     if (gap->ga_len > 0)
     {
 	fputs(_("\n# Bar lines, copied verbatim:\n"), fp_out);
 
+	/* Skip over continuation lines until seeing a useful line. */
 	for (i = 0; i < gap->ga_len; ++i)
-	    fputs(((char **)(gap->ga_data))[i], fp_out);
+	{
+	    line = ((char **)(gap->ga_data))[i];
+	    if (seen_useful || line[1] != '<')
+	    {
+		fputs(line, fp_out);
+		seen_useful = TRUE;
+	    }
+	}
     }
 }
 #endif /* FEAT_VIMINFO */
@@ -2855,7 +2877,7 @@ write_viminfo_barlines(vir_T *virp, FILE *fp_out)
  * Return the current time in seconds.  Calls time(), unless test_settime()
  * was used.
  */
-    time_t
+    time_T
 vim_time(void)
 {
 # ifdef FEAT_EVAL
@@ -3042,6 +3064,7 @@ do_write(exarg_T *eap)
     char_u	*browse_file = NULL;
 #endif
     buf_T	*alt_buf = NULL;
+    int		name_was_missing;
 
     if (not_writing())		/* check 'write' option */
 	return FAIL;
@@ -3209,6 +3232,8 @@ do_write(exarg_T *eap)
 #endif
 	}
 
+	name_was_missing = curbuf->b_ffname == NULL;
+
 	retval = buf_write(curbuf, ffname, fname, eap->line1, eap->line2,
 				 eap, eap->append, eap->forceit, TRUE, FALSE);
 
@@ -3222,7 +3247,12 @@ do_write(exarg_T *eap)
 		redraw_tabline = TRUE;
 #endif
 	    }
-	    /* Change directories when the 'acd' option is set. */
+	}
+
+	/* Change directories when the 'acd' option is set and the file name
+	 * got changed or set. */
+	if (eap->cmdidx == CMD_saveas || name_was_missing)
+	{
 	    DO_AUTOCHDIR
 	}
     }
@@ -3422,11 +3452,16 @@ do_wqall(exarg_T *eap)
 	    }
 	    else
 	    {
+#ifdef FEAT_AUTOCMD
+		bufref_T bufref;
+
+		set_bufref(&bufref, buf);
+#endif
 		if (buf_write_all(buf, eap->forceit) == FAIL)
 		    ++error;
 #ifdef FEAT_AUTOCMD
 		/* an autocommand may have deleted the buffer */
-		if (!buf_valid(buf))
+		if (!bufref_valid(&bufref))
 		    buf = firstbuf;
 #endif
 	    }
@@ -3462,7 +3497,7 @@ not_writing(void)
     static int
 check_readonly(int *forceit, buf_T *buf)
 {
-    struct stat	st;
+    stat_T	st;
 
     /* Handle a file being readonly when the 'readonly' option is set or when
      * the file exists and permissions are read-only.
@@ -3634,8 +3669,9 @@ do_ecmd(
     int		did_set_swapcommand = FALSE;
 #endif
     buf_T	*buf;
+    bufref_T	bufref;
 #if defined(FEAT_AUTOCMD) || defined(FEAT_GUI_DIALOG) || defined(FEAT_CON_DIALOG)
-    buf_T	*old_curbuf = curbuf;
+    bufref_T	old_curbuf;
 #endif
     char_u	*free_fname = NULL;
 #ifdef FEAT_BROWSE
@@ -3660,6 +3696,9 @@ do_ecmd(
 
     if (eap != NULL)
 	command = eap->do_ecmd_cmd;
+#if defined(FEAT_AUTOCMD) || defined(FEAT_GUI_DIALOG) || defined(FEAT_CON_DIALOG)
+    set_bufref(&old_curbuf, curbuf);
+#endif
 
     if (fnum != 0)
     {
@@ -3826,7 +3865,7 @@ do_ecmd(
 	    /* autocommands may change curwin and curbuf */
 	    if (oldwin != NULL)
 		oldwin = curwin;
-	    old_curbuf = curbuf;
+	    set_bufref(&old_curbuf, curbuf);
 #endif
 	}
 	if (buf == NULL)
@@ -3838,12 +3877,13 @@ do_ecmd(
 	else					/* existing memfile */
 	{
 	    oldbuf = TRUE;
+	    set_bufref(&bufref, buf);
 	    (void)buf_check_timestamp(buf, FALSE);
 	    /* Check if autocommands made buffer invalid or changed the current
 	     * buffer. */
-	    if (!buf_valid(buf)
+	    if (!bufref_valid(&bufref)
 #ifdef FEAT_AUTOCMD
-		    || curbuf != old_curbuf
+		    || curbuf != old_curbuf.br_buf
 #endif
 		    )
 		goto theend;
@@ -3883,10 +3923,11 @@ do_ecmd(
 	     */
 	    if (buf->b_fname != NULL)
 		new_name = vim_strsave(buf->b_fname);
-	    au_new_curbuf = buf;
+	    set_bufref(&au_new_curbuf, buf);
 	    apply_autocmds(EVENT_BUFLEAVE, NULL, NULL, FALSE, curbuf);
-	    if (!buf_valid(buf))	/* new buffer has been deleted */
+	    if (!bufref_valid(&au_new_curbuf))
 	    {
+		/* new buffer has been deleted */
 		delbuf_msg(new_name);	/* frees new_name */
 		goto theend;
 	    }
@@ -3901,7 +3942,7 @@ do_ecmd(
 		auto_buf = TRUE;
 	    else
 	    {
-		if (curbuf == old_curbuf)
+		if (curbuf == old_curbuf.br_buf)
 #endif
 		    buf_copy_options(buf, BCO_ENTER);
 
@@ -3926,8 +3967,9 @@ do_ecmd(
 		}
 # endif
 		/* Be careful again, like above. */
-		if (!buf_valid(buf))	/* new buffer has been deleted */
+		if (!bufref_valid(&au_new_curbuf))
 		{
+		    /* new buffer has been deleted */
 		    delbuf_msg(new_name);	/* frees new_name */
 		    goto theend;
 		}
@@ -3970,7 +4012,7 @@ do_ecmd(
 #ifdef FEAT_AUTOCMD
 	    }
 	    vim_free(new_name);
-	    au_new_curbuf = NULL;
+	    au_new_curbuf.br_buf = NULL;
 #endif
 	}
 
@@ -4046,6 +4088,7 @@ do_ecmd(
 	    new_name = vim_strsave(buf->b_fname);
 	else
 	    new_name = NULL;
+	set_bufref(&bufref, buf);
 #endif
 	if (p_ur < 0 || curbuf->b_ml.ml_line_count <= p_ur)
 	{
@@ -4066,7 +4109,7 @@ do_ecmd(
 #ifdef FEAT_AUTOCMD
 	/* If autocommands deleted the buffer we were going to re-edit, give
 	 * up and jump to the end. */
-	if (!buf_valid(buf))
+	if (!bufref_valid(&bufref))
 	{
 	    delbuf_msg(new_name);	/* frees new_name */
 	    goto theend;
@@ -4161,7 +4204,7 @@ do_ecmd(
 #if defined(HAS_SWAP_EXISTS_ACTION)
 	    if (swap_exists_action == SEA_QUIT)
 		retval = FAIL;
-	    handle_swap_exists(old_curbuf);
+	    handle_swap_exists(&old_curbuf);
 #endif
 	}
 #ifdef FEAT_AUTOCMD
@@ -4282,6 +4325,10 @@ do_ecmd(
 	msg_scrolled_ign = FALSE;
     }
 
+#ifdef FEAT_VIMINFO
+    curbuf->b_last_used = vim_time();
+#endif
+
     if (command != NULL)
 	do_cmdline(command, NULL, NULL, DOCMD_VERBOSE);
 
@@ -4346,7 +4393,7 @@ delbuf_msg(char_u *name)
     EMSG2(_("E143: Autocommands unexpectedly deleted new buffer %s"),
 	    name == NULL ? (char_u *)"" : name);
     vim_free(name);
-    au_new_curbuf = NULL;
+    au_new_curbuf.br_buf = NULL;
 }
 #endif
 
@@ -4377,7 +4424,7 @@ ex_append(exarg_T *eap)
     if (eap->cmdidx != CMD_append)
 	--lnum;
 
-    /* when the buffer is empty append to line 0 and delete the dummy line */
+    /* when the buffer is empty need to delete the dummy line */
     if (empty && lnum == 1)
 	lnum = 0;
 
@@ -4461,7 +4508,7 @@ ex_append(exarg_T *eap)
 
 	did_undo = TRUE;
 	ml_append(lnum, theline, (colnr_T)0, FALSE);
-	appended_lines_mark(lnum, 1L);
+	appended_lines_mark(lnum + (empty ? 1 : 0), 1L);
 
 	vim_free(theline);
 	++lnum;
