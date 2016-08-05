@@ -730,7 +730,7 @@ update_screen(int type)
 #ifdef FEAT_WINDOWS
     /* Reset b_mod_set flags.  Going through all windows is probably faster
      * than going through all buffers (there could be many buffers). */
-    for (wp = firstwin; wp != NULL; wp = wp->w_next)
+    FOR_ALL_WINDOWS(wp)
 	wp->w_buffer->b_mod_set = FALSE;
 #else
 	curbuf->b_mod_set = FALSE;
@@ -962,7 +962,7 @@ update_debug_sign(buf_T *buf, linenr_T lnum)
     update_prepare();
 
 # ifdef FEAT_WINDOWS
-    for (wp = firstwin; wp; wp = wp->w_next)
+    FOR_ALL_WINDOWS(wp)
     {
 	if (wp->w_redr_type != 0)
 	    win_update(wp);
@@ -2018,7 +2018,7 @@ win_update(win_T *wp)
 		    && wp->w_lines[idx].wl_valid
 		    && wp->w_lines[idx].wl_lnum == lnum
 		    && lnum > wp->w_topline
-		    && !(dy_flags & DY_LASTLINE)
+		    && !(dy_flags & (DY_LASTLINE | DY_TRUNCATE))
 		    && srow + wp->w_lines[idx].wl_size > wp->w_height
 #ifdef FEAT_DIFF
 		    && diff_check_fill(wp, lnum) == 0
@@ -2139,6 +2139,21 @@ win_update(win_T *wp)
 	    wp->w_filler_rows = wp->w_height - srow;
 	}
 #endif
+	else if (dy_flags & DY_TRUNCATE)	/* 'display' has "truncate" */
+	{
+	    int scr_row = W_WINROW(wp) + wp->w_height - 1;
+
+	    /*
+	     * Last line isn't finished: Display "@@@" in the last screen line.
+	     */
+	    screen_puts_len((char_u *)"@@", 2, scr_row, W_WINCOL(wp),
+							      hl_attr(HLF_AT));
+	    screen_fill(scr_row, scr_row + 1,
+		    (int)W_WINCOL(wp) + 2, (int)W_ENDCOL(wp),
+		    '@', ' ', hl_attr(HLF_AT));
+	    set_empty_rows(wp, srow);
+	    wp->w_botline = lnum;
+	}
 	else if (dy_flags & DY_LASTLINE)	/* 'display' has "lastline" */
 	{
 	    /*
@@ -2409,7 +2424,7 @@ fold_line(
     linenr_T	lnum,
     int		row)
 {
-    char_u	buf[51];
+    char_u	buf[FOLD_TEXT_LEN];
     pos_T	*top, *bot;
     linenr_T	lnume = lnum + fold_count - 1;
     int		len;
@@ -6271,7 +6286,7 @@ status_redraw_all(void)
 {
     win_T	*wp;
 
-    for (wp = firstwin; wp; wp = wp->w_next)
+    FOR_ALL_WINDOWS(wp)
 	if (wp->w_status_height)
 	{
 	    wp->w_redr_status = TRUE;
@@ -6287,7 +6302,7 @@ status_redraw_curbuf(void)
 {
     win_T	*wp;
 
-    for (wp = firstwin; wp; wp = wp->w_next)
+    FOR_ALL_WINDOWS(wp)
 	if (wp->w_status_height != 0 && wp->w_buffer == curbuf)
 	{
 	    wp->w_redr_status = TRUE;
@@ -6303,7 +6318,7 @@ redraw_statuslines(void)
 {
     win_T	*wp;
 
-    for (wp = firstwin; wp; wp = wp->w_next)
+    FOR_ALL_WINDOWS(wp)
 	if (wp->w_redr_status)
 	    win_redr_status(wp);
     if (redraw_tabline)
@@ -10360,7 +10375,7 @@ draw_tabline(void)
     else
 #endif
     {
-	for (tp = first_tabpage; tp != NULL; tp = tp->tp_next)
+	FOR_ALL_TABPAGES(tp)
 	    ++tabcount;
 
 	tabwidth = (Columns - 1 + tabcount / 2) / tabcount;

@@ -1916,7 +1916,7 @@ get_window_count(void *data UNUSED, int argc UNUSED, Scheme_Object **argv UNUSED
 #ifdef FEAT_WINDOWS
     win_T   *w;
 
-    for (w = firstwin; w != NULL; w = w->w_next)
+    FOR_ALL_WINDOWS(w)
 #endif
 	++n;
     return scheme_make_integer(n);
@@ -2197,7 +2197,7 @@ get_buffer_by_num(void *data, int argc, Scheme_Object **argv)
 
     fnum = SCHEME_INT_VAL(GUARANTEE_INTEGER(prim->name, 0));
 
-    for (buf = firstbuf; buf; buf = buf->b_next)
+    FOR_ALL_BUFFERS(buf)
 	if (buf->b_fnum == fnum)
 	    return buffer_new(buf);
 
@@ -2220,7 +2220,7 @@ get_buffer_by_name(void *data, int argc, Scheme_Object **argv)
     fname = GUARANTEED_STRING_ARG(prim->name, 0);
     buffer = scheme_false;
 
-    for (buf = firstbuf; buf; buf = buf->b_next)
+    FOR_ALL_BUFFERS(buf)
     {
 	if (buf->b_ffname == NULL || buf->b_sfname == NULL)
 	    /* empty string */
@@ -2283,7 +2283,7 @@ get_buffer_count(void *data UNUSED, int argc UNUSED, Scheme_Object **argv UNUSED
     buf_T   *b;
     int	    n = 0;
 
-    for (b = firstbuf; b; b = b->b_next) ++n;
+    FOR_ALL_BUFFERS(b) ++n;
     return scheme_make_integer(n);
 }
 
@@ -3134,7 +3134,7 @@ vim_to_mzscheme_impl(typval_T *vim_value, int depth, Scheme_Hash_Table *visited)
 	    /* FIXME: func_ref() and func_unref() are needed. */
 	    /* TODO: Support pt_dict and pt_argv. */
 	    funcname = scheme_make_byte_string(
-		    (char *)vim_value->vval.v_partial->pt_name);
+			      (char *)partial_name(vim_value->vval.v_partial));
 	    MZ_GC_CHECK();
 	    result = scheme_make_closed_prim_w_arity(vim_funcref, funcname,
 		    (const char *)BYTE_STRING_VALUE(funcname), 0, -1);

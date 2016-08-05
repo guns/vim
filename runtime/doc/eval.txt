@@ -1,4 +1,4 @@
-*eval.txt*	For Vim version 7.4.  Last change: 2016 Jul 24
+*eval.txt*	For Vim version 7.4.  Last change: 2016 Aug 02
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -40,7 +40,7 @@ done, the features in this document are not available.	See |+eval| and
 There are nine types of variables:
 
 Number		A 32 or 64 bit signed number.  |expr-number| *Number*
-		64-bit Number is available only when compiled with the
+		64-bit Numbers are available only when compiled with the
 		|+num64| feature.
 		Examples:  -123  0x10  0177
 
@@ -262,7 +262,7 @@ it.  To change a list in-place see |list-modification| below.
 
 
 Sublist ~
-
+							*sublist*
 A part of the List can be obtained by specifying the first and last index,
 separated by a colon in square brackets: >
 	:let shortlist = mylist[2:-1]	" get List [3, "four"]
@@ -990,10 +990,10 @@ Examples: >
 	:let s = line(".")[4:]		" from the fifth byte to the end
 	:let s = s[:-3]			" remove last two bytes
 <
-							*sublist* *slice*
+							*slice*
 If expr8 is a |List| this results in a new |List| with the items indicated by
 the indexes expr1a and expr1b.	This works like with a String, as explained
-just above, except that indexes out of range cause an error.  Examples: >
+just above. Also see |sublist| below.  Examples: >
 	:let l = mylist[:3]		" first four items
 	:let l = mylist[4:4]		" List with one item
 	:let l = mylist[:]		" shallow copy of a List
@@ -1219,7 +1219,7 @@ the following ways:
 
 1. The body of the lambda expression is an |expr1| and not a sequence of |Ex|
    commands.
-2. The prefix "a:" is optional for arguments.  E.g.: >
+2. The prefix "a:" should not be used for arguments.  E.g.: >
 	:let F = {arg1, arg2 -> arg1 - arg2}
 	:echo F(5, 2)
 <	3
@@ -1228,6 +1228,21 @@ The arguments are optional.  Example: >
 	:let F = {-> 'error function'}
 	:echo F()
 <	error function
+							*closure*
+Lambda expressions can access outer scope variables and arguments.  This is
+often called a closure.  Example where "i" a and "a:arg" are used in a lambda
+while they exists in the function scope.  They remain valid even after the
+function returns: >
+	:function Foo(arg)
+	:  let i = 3
+	:  return {x -> x + i - a:arg}
+	:endfunction
+	:let Bar = Foo(4)
+	:echo Bar(6)
+<	5
+
+See also |:func-closure|.  Lambda and closure support can be checked with: >
+	if has('lambda')
 
 Examples for using a lambda expression with |sort()|, |map()| and |filter()|: >
 	:echo map([1, 2, 3], {idx, val -> val + 1})
@@ -1244,6 +1259,12 @@ The lambda expression is also useful for Channel, Job and timer: >
 	Handler called
 
 Note how execute() is used to execute an Ex command.  That's ugly though.
+
+
+Lambda expressions have internal names like '<lambda>42'.  If you get an error
+for a lambda expression, you can find what it is with the following command: >
+	:function {'<lambda>42'}
+See also: |numbered-function|
 
 ==============================================================================
 3. Internal variable				*internal-variables* *E461*
@@ -2052,8 +2073,10 @@ foldlevel({lnum})		Number	fold level at {lnum}
 foldtext()			String	line displayed for closed fold
 foldtextresult({lnum})		String	text for closed fold at {lnum}
 foreground()			Number	bring the Vim window to the foreground
-function({name} [, {arglist}] [, {dict}])
+funcref({name} [, {arglist}] [, {dict}])
 				Funcref	reference to function {name}
+function({name} [, {arglist}] [, {dict}])
+				Funcref	named reference to function {name}
 garbagecollect([{atexit}])	none	free memory, breaking cyclic references
 get({list}, {idx} [, {def}])	any	get item {idx} from {list} or {def}
 get({dict}, {key} [, {def}])	any	get item {key} from {dict} or {def}
@@ -3831,6 +3854,15 @@ foreground()	Move the Vim window to the foreground.	Useful when sent from
 		{only in the Win32, Athena, Motif and GTK GUI versions and the
 		Win32 console version}
 
+						*funcref()*
+funcref({name} [, {arglist}] [, {dict}])
+		Just like |function()|, but the returned Funcref will lookup
+		the function by reference, not by name.  This matters when the
+		function {name} is redefined later.
+
+		Unlike |function()|, {name} must be an existing user function.
+		Also for autoloaded functions. {name} cannot be a builtin
+		function.
 
 					*function()* *E700* *E922* *E923*
 function({name} [, {arglist}] [, {dict}])
@@ -3838,12 +3870,16 @@ function({name} [, {arglist}] [, {dict}])
 		{name} can be the name of a user defined function or an
 		internal function.
 
-		{name} can also be a Funcref, also a partial.  When it is a
+		{name} can also be a Funcref or a partial.  When it is a
 		partial the dict stored in it will be used and the {dict}
 		argument is not allowed. E.g.: >
 			let FuncWithArg = function(dict.Func, [arg])
 			let Broken = function(dict.Func, [arg], dict)
 <
+		When using the Funcref the function will be found by {name},
+		also when it was redefined later.  Use |funcref()| to keep the
+		same function.
+
 		When {arglist} or {dict} is present this creates a partial.
 		That means the argument list and/or the dictionary is stored in
 		the Funcref and will be used when the Funcref is called.
@@ -6172,6 +6208,7 @@ screenrow()							*screenrow()*
 		The result is a Number, which is the current screen row of the
 		cursor.  The top line has number one.
 		This function is mainly used for testing.
+		Alternatively you can use |winline()|.
 
 		Note: Same restrictions as with |screencol()|.
 
@@ -7494,7 +7531,8 @@ test_null_string()					*test_null_string()*
 
 test_settime({expr})					*test_settime()*
 		Set the time Vim uses internally.  Currently only used for
-		timestamps in the history, as they are used in viminfo.
+		timestamps in the history, as they are used in viminfo, and
+		for undo.
 		{expr} must evaluate to a number.  When the value is zero the
 		normal behavior is restored.
 
@@ -8019,6 +8057,7 @@ insert_expand		Compiled with support for CTRL-X expansion commands in
 			Insert mode.
 jumplist		Compiled with |jumplist| support.
 keymap			Compiled with 'keymap' support.
+lambda			Compiled with |lambda| support.
 langmap			Compiled with 'langmap' support.
 libcall			Compiled with |libcall()| support.
 linebreak		Compiled with 'linebreak', 'breakat', 'showbreak' and
@@ -8198,7 +8237,7 @@ last defined. Example: >
 See |:verbose-cmd| for more information.
 
 						*E124* *E125* *E853* *E884*
-:fu[nction][!] {name}([arguments]) [range] [abort] [dict]
+:fu[nction][!] {name}([arguments]) [range] [abort] [dict] [closure]
 			Define a new function by the name {name}.  The name
 			must be made of alphanumeric characters and '_', and
 			must start with a capital or "s:" (see above).  Note
@@ -8241,6 +8280,28 @@ See |:verbose-cmd| for more information.
 			be invoked through an entry in a |Dictionary|.	The
 			local variable "self" will then be set to the
 			dictionary.  See |Dictionary-function|.
+						*:func-closure* *E932*
+			When the [closure] argument is added, the function
+			can access variables and arguments from the outer
+			scope.  This is usually called a closure.  In this
+			example Bar() uses "x" from the scope of Foo().  It
+			remains referenced even after Foo() returns: >
+				:function! Foo()
+				:  let x = 0
+				:  function! Bar() closure
+				:    let x += 1
+				:    return x
+				:  endfunction
+				:  return funcref('Bar')
+				:endfunction
+
+				:let F = Foo()
+				:echo F()
+<				1 >
+				:echo F()
+<				2 >
+				:echo F()
+<				3
 
 						*function-search-undo*
 			The last used search pattern and the redo command "."
@@ -8252,7 +8313,7 @@ See |:verbose-cmd| for more information.
 :endf[unction]		The end of a function definition.  Must be on a line
 			by its own, without other commands.
 
-					*:delf* *:delfunction* *E130* *E131*
+				*:delf* *:delfunction* *E130* *E131* *E933*
 :delf[unction] {name}	Delete function {name}.
 			{name} can also be a |Dictionary| entry that is a
 			|Funcref|: >
