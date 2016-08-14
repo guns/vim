@@ -51,7 +51,6 @@ SCRIPTS_ALL = \
 	test57.out \
 	test60.out \
 	test62.out \
-	test63.out \
 	test64.out \
 	test65.out \
 	test66.out \
@@ -99,12 +98,9 @@ SCRIPTS_ALL = \
 	test_insertcount.out \
 	test_listchars.out \
 	test_listlbr.out \
-	test_mapping.out \
 	test_marks.out \
 	test_nested_function.out \
-	test_options.out \
 	test_search_mbyte.out \
-	test_signs.out \
 	test_tagcase.out \
 	test_utf8.out \
 	test_wordcount.out \
@@ -163,6 +159,7 @@ NEW_TESTS = test_arglist.res \
 	    test_assert.res \
 	    test_autochdir \
 	    test_backspace_opt.res \
+	    test_bufwintabinfo.res \
 	    test_cdo.res \
 	    test_channel.res \
 	    test_cmdline.res \
@@ -186,7 +183,9 @@ NEW_TESTS = test_arglist.res \
 	    test_perl.res \
 	    test_quickfix.res \
 	    test_ruby.res \
+	    test_signs.res \
 	    test_startup.res \
+	    test_startup_utf8.res \
 	    test_stat.res \
 	    test_syntax.res \
 	    test_textobjects.res \

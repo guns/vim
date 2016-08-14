@@ -980,7 +980,8 @@ extern char *(*dyn_libintl_textdomain)(const char *domainname);
 #define READ_STDIN	0x04	/* read from stdin */
 #define READ_BUFFER	0x08	/* read from curbuf (converting stdin) */
 #define READ_DUMMY	0x10	/* reading into a dummy buffer */
-#define READ_KEEP_UNDO	0x20	/* keep undo info*/
+#define READ_KEEP_UNDO	0x20	/* keep undo info */
+#define READ_FIFO	0x40	/* read from fifo or socket */
 
 /* Values for change_indent() */
 #define INDENT_SET	1	/* set indent */
@@ -1362,7 +1363,8 @@ typedef enum
 {
     HLF_8 = 0	    /* Meta & special keys listed with ":map", text that is
 		       displayed different from what it is */
-    , HLF_AT	    /* @ and ~ characters at end of screen, characters that
+    , HLF_EOB	    /* after the last line in the buffer */
+    , HLF_AT	    /* @ characters at end of screen, characters that
 		       don't really exist in the text */
     , HLF_D	    /* directories in CTRL-D listing */
     , HLF_E	    /* error messages */
@@ -1409,7 +1411,7 @@ typedef enum
 
 /* The HL_FLAGS must be in the same order as the HLF_ enums!
  * When changing this also adjust the default for 'highlight'. */
-#define HL_FLAGS {'8', '@', 'd', 'e', 'h', 'i', 'l', 'm', 'M', \
+#define HL_FLAGS {'8', '~', '@', 'd', 'e', 'h', 'i', 'l', 'm', 'M', \
 		  'n', 'N', 'r', 's', 'S', 'c', 't', 'v', 'V', 'w', 'W', \
 		  'f', 'F', 'A', 'C', 'D', 'T', '-', '>', \
 		  'B', 'P', 'R', 'L', \
@@ -2108,7 +2110,7 @@ typedef enum
  * been seen at that stage.  But it must be before globals.h, where error_ga
  * is declared. */
 #if !defined(FEAT_GUI_W32) && !defined(FEAT_GUI_X11) \
-	&& !defined(FEAT_GUI_GTK) && !defined(FEAT_GUI_MAC)
+	&& !defined(FEAT_GUI_GTK) && !defined(FEAT_GUI_MAC) && !defined(PROTO)
 # define mch_errmsg(str)	fprintf(stderr, "%s", (str))
 # define display_errors()	fflush(stderr)
 # define mch_msg(str)		printf("%s", (str))
@@ -2439,11 +2441,6 @@ typedef enum
 #define JSON_JS		1   /* use JS instead of JSON */
 #define JSON_NO_NONE	2   /* v:none item not allowed */
 
-#ifdef FEAT_MZSCHEME
-/* this is in main.c, cproto can't handle it. */
-int vim_main2(int argc, char **argv);
-#endif
-
 /* Used for flags of do_in_path() */
 #define DIP_ALL	    0x01	/* all matches, not just the first one */
 #define DIP_DIR	    0x02	/* find directories instead of files. */
@@ -2451,6 +2448,8 @@ int vim_main2(int argc, char **argv);
 #define DIP_START   0x08	/* also use "start" directory in 'packpath' */
 #define DIP_OPT	    0x10	/* also use "opt" directory in 'packpath' */
 #define DIP_NORTP   0x20	/* do not use 'runtimepath' */
+#define DIP_NOAFTER 0x40	/* skip "after" directories */
+#define DIP_AFTER   0x80	/* only use "after" directories */
 
 /* Lowest number used for window ID. Cannot have this many windows. */
 #define LOWEST_WIN_ID 1000

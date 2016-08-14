@@ -263,6 +263,10 @@ typedef struct
     int		wo_crb_save;	/* 'cursorbind' state saved for diff mode*/
 # define w_p_crb_save w_onebuf_opt.wo_crb_save
 #endif
+#ifdef FEAT_SIGNS
+    char_u	*wo_scl;
+# define w_p_scl w_onebuf_opt.wo_scl	/* 'signcolumn' */
+#endif
 
 #ifdef FEAT_EVAL
     int		wo_scriptID[WV_COUNT];	/* SIDs for window-local options */
@@ -3160,8 +3164,9 @@ struct timer_S
     timer_T	*tr_next;
     timer_T	*tr_prev;
     proftime_T	tr_due;		    /* when the callback is to be invoked */
+    int		tr_paused;	    /* when TRUE callback is not invoked */
     int		tr_repeat;	    /* number of times to repeat, -1 forever */
-    long	tr_interval;	    /* only set when it repeats */
+    long	tr_interval;	    /* msec */
     char_u	*tr_callback;	    /* allocated */
     partial_T	*tr_partial;
 #endif
@@ -3180,6 +3185,8 @@ typedef struct
 {
     int		argc;
     char	**argv;
+
+    char_u	*fname;			/* first file to edit */
 
     int		evim_mode;		/* started as "evim" */
     char_u	*use_vimrc;		/* vimrc from -u argument */
