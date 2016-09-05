@@ -84,4 +84,3 @@ src/message_test
 # makepkg
 /pkg
 /*.tar.xz*
-=======
