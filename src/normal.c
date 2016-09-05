@@ -1,4 +1,4 @@
-/* vi:set ts=8 sts=4 sw=4:
+/* vi:set ts=8 sts=4 sw=4 noet:
  *
  * VIM - Vi IMproved	by Bram Moolenaar
  *
@@ -6228,6 +6228,7 @@ nv_dollar(cmdarg_T *cap)
 nv_search(cmdarg_T *cap)
 {
     oparg_T	*oap = cap->oap;
+    pos_T	save_cursor = curwin->w_cursor;
 
     if (cap->cmdchar == '?' && cap->oap->op_type == OP_ROT13)
     {
@@ -6238,6 +6239,8 @@ nv_search(cmdarg_T *cap)
 	return;
     }
 
+    /* When using 'incsearch' the cursor may be moved to set a different search
+     * start position. */
     cap->searchbuf = getcmdline(cap->cmdchar, cap->count1, 0);
 
     if (cap->searchbuf == NULL)
@@ -6247,7 +6250,8 @@ nv_search(cmdarg_T *cap)
     }
 
     (void)normal_search(cap, cap->cmdchar, cap->searchbuf,
-						(cap->arg ? 0 : SEARCH_MARK));
+			(cap->arg || !equalpos(save_cursor, curwin->w_cursor))
+							   ? 0 : SEARCH_MARK);
 }
 
 /*
@@ -9447,7 +9451,10 @@ get_op_vcol(
 #ifdef FEAT_MBYTE
     /* prevent from moving onto a trail byte */
     if (has_mbyte)
+    {
+	check_pos(curwin->w_buffer, &oap->end);
 	mb_adjustpos(curwin->w_buffer, &oap->end);
+    }
 #endif
 
     getvvcol(curwin, &(oap->start), &oap->start_vcol, NULL, &oap->end_vcol);

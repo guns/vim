@@ -1,4 +1,4 @@
-/* vi:set ts=8 sts=4 sw=4:
+/* vi:set ts=8 sts=4 sw=4 noet:
  *
  * VIM - Vi IMproved	by Bram Moolenaar
  *
@@ -1078,6 +1078,9 @@ end_do_tag:
 	curwin->w_tagstackidx = tagstackidx;
 #ifdef FEAT_WINDOWS
     postponed_split = 0;	/* don't split next time */
+# ifdef FEAT_QUICKFIX
+    g_do_tagpreview = 0;	/* don't do tag preview next time */
+# endif
 #endif
 
 #ifdef FEAT_CSCOPE
@@ -1385,9 +1388,11 @@ find_tags(
      */
     switch (curbuf->b_tc_flags ? curbuf->b_tc_flags : tc_flags)
     {
-	case TC_FOLLOWIC:               break;
-	case TC_IGNORE:   p_ic = TRUE;  break;
-	case TC_MATCH:    p_ic = FALSE; break;
+	case TC_FOLLOWIC:                break;
+	case TC_IGNORE:    p_ic = TRUE;  break;
+	case TC_MATCH:     p_ic = FALSE; break;
+	case TC_FOLLOWSCS: p_ic = ignorecase(pat); break;
+	case TC_SMART:     p_ic = ignorecase_opt(pat, TRUE, TRUE); break;
     }
 
     help_save = curbuf->b_help;

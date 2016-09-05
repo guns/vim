@@ -1,4 +1,4 @@
-/* vi:set ts=8 sts=4 sw=4:
+/* vi:set ts=8 sts=4 sw=4 noet:
  *
  * VIM - Vi IMproved	by Bram Moolenaar
  *
@@ -702,7 +702,7 @@ channel_open(
     if ((host = gethostbyname(hostname)) == NULL)
     {
 	ch_error(channel, "in gethostbyname() in channel_open()");
-	PERROR("E901: gethostbyname() in channel_open()");
+	PERROR(_("E901: gethostbyname() in channel_open()"));
 	channel_free(channel);
 	return NULL;
     }
@@ -729,7 +729,7 @@ channel_open(
 	if (sd == -1)
 	{
 	    ch_error(channel, "in socket() in channel_open().");
-	    PERROR("E898: socket() in channel_open()");
+	    PERROR(_("E898: socket() in channel_open()"));
 	    channel_free(channel);
 	    return NULL;
 	}
@@ -1424,11 +1424,14 @@ channel_write_in(channel_T *channel)
 	ch_logn(channel, "written %d lines to channel", written);
 
     in_part->ch_buf_top = lnum;
-    if (lnum > buf->b_ml.ml_line_count)
+    if (lnum > buf->b_ml.ml_line_count || lnum > in_part->ch_buf_bot)
     {
 	/* Writing is done, no longer need the buffer. */
 	in_part->ch_bufref.br_buf = NULL;
 	ch_log(channel, "Finished writing all lines to channel");
+
+	/* Close the pipe/socket, so that the other side gets EOF. */
+	may_close_part(&channel->CH_IN_FD);
     }
     else
 	ch_logn(channel, "Still %d more lines to write",
@@ -2070,7 +2073,7 @@ channel_exe_cmd(channel_T *channel, int part, typval_T *argv)
     {
 	ch_error(channel, "received command with non-string argument");
 	if (p_verbose > 2)
-	    EMSG("E903: received command with non-string argument");
+	    EMSG(_("E903: received command with non-string argument"));
 	return;
     }
     arg = argv[1].vval.v_string;
@@ -2129,17 +2132,17 @@ channel_exe_cmd(channel_T *channel, int part, typval_T *argv)
 	{
 	    ch_error(channel, "last argument for expr/call must be a number");
 	    if (p_verbose > 2)
-		EMSG("E904: last argument for expr/call must be a number");
+		EMSG(_("E904: last argument for expr/call must be a number"));
 	}
 	else if (is_call && argv[2].v_type != VAR_LIST)
 	{
 	    ch_error(channel, "third argument for call must be a list");
 	    if (p_verbose > 2)
-		EMSG("E904: third argument for call must be a list");
+		EMSG(_("E904: third argument for call must be a list"));
 	}
 	else
 	{
-	    typval_T	*tv;
+	    typval_T	*tv = NULL;
 	    typval_T	res_tv;
 	    typval_T	err_tv;
 	    char_u	*json = NULL;
@@ -2156,8 +2159,6 @@ channel_exe_cmd(channel_T *channel, int part, typval_T *argv)
 		ch_logs(channel, "Calling '%s'", (char *)arg);
 		if (func_call(arg, &argv[2], NULL, NULL, &res_tv) == OK)
 		    tv = &res_tv;
-		else
-		    tv = NULL;
 	    }
 
 	    if (argv[id_idx].v_type == VAR_NUMBER)
@@ -2165,17 +2166,15 @@ channel_exe_cmd(channel_T *channel, int part, typval_T *argv)
 		int id = argv[id_idx].vval.v_number;
 
 		if (tv != NULL)
-		    json = json_encode_nr_expr(id, tv, options);
+		    json = json_encode_nr_expr(id, tv, options | JSON_NL);
 		if (tv == NULL || (json != NULL && *json == NUL))
 		{
 		    /* If evaluation failed or the result can't be encoded
 		     * then return the string "ERROR". */
 		    vim_free(json);
-		    free_tv(tv);
 		    err_tv.v_type = VAR_STRING;
 		    err_tv.vval.v_string = (char_u *)"ERROR";
-		    tv = &err_tv;
-		    json = json_encode_nr_expr(id, tv, options);
+		    json = json_encode_nr_expr(id, &err_tv, options | JSON_NL);
 		}
 		if (json != NULL)
 		{
@@ -2188,14 +2187,14 @@ channel_exe_cmd(channel_T *channel, int part, typval_T *argv)
 	    --emsg_skip;
 	    if (tv == &res_tv)
 		clear_tv(tv);
-	    else if (tv != &err_tv)
+	    else
 		free_tv(tv);
 	}
     }
     else if (p_verbose > 2)
     {
 	ch_errors(channel, "Received unknown command: %s", (char *)cmd);
-	EMSG2("E905: received unknown command: %s", cmd);
+	EMSG2(_("E905: received unknown command: %s"), cmd);
     }
 }
 
@@ -2730,6 +2729,15 @@ channel_close(channel_T *channel, int invoke_close_cb)
     }
 
     channel->ch_nb_close_cb = NULL;
+}
+
+/*
+ * Close the "in" part channel "channel".
+ */
+    void
+channel_close_in(channel_T *channel)
+{
+    may_close_part(&channel->CH_IN_FD);
 }
 
 /*
@@ -3382,7 +3390,7 @@ channel_send(channel_T *channel, int part, char_u *buf, int len, char *fun)
 	if (!channel->ch_error && fun != NULL)
 	{
 	    ch_errors(channel, "%s(): write while not connected", fun);
-	    EMSG2("E630: %s(): write while not connected", fun);
+	    EMSG2(_("E630: %s(): write while not connected"), fun);
 	}
 	channel->ch_error = TRUE;
 	return FAIL;
@@ -3407,7 +3415,7 @@ channel_send(channel_T *channel, int part, char_u *buf, int len, char *fun)
 	if (!channel->ch_error && fun != NULL)
 	{
 	    ch_errors(channel, "%s(): write failed", fun);
-	    EMSG2("E631: %s(): write failed", fun);
+	    EMSG2(_("E631: %s(): write failed"), fun);
 	}
 	channel->ch_error = TRUE;
 	return FAIL;
@@ -3456,7 +3464,7 @@ send_common(
 	    EMSG2(_("E917: Cannot use a callback with %s()"), fun);
 	    return NULL;
 	}
-	channel_set_req_callback(channel, part_send,
+	channel_set_req_callback(channel, *part_read,
 				       opt->jo_callback, opt->jo_partial, id);
     }
 
@@ -3500,7 +3508,7 @@ ch_expr_common(typval_T *argvars, typval_T *rettv, int eval)
 
     id = ++channel->ch_last_msg_id;
     text = json_encode_nr_expr(id, &argvars[1],
-					    ch_mode == MODE_JS ? JSON_JS : 0);
+				 (ch_mode == MODE_JS ? JSON_JS : 0) | JSON_NL);
     if (text == NULL)
 	return;
 

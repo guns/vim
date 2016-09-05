@@ -1,4 +1,4 @@
-/* vi:set ts=8 sts=4 sw=4:
+/* vi:set ts=8 sts=4 sw=4 noet:
  *
  * VIM - Vi IMproved	by Bram Moolenaar
  *
@@ -1932,11 +1932,7 @@ write_viminfo(char_u *file, int forceit)
 #ifdef UNIX
 				    shortname,
 #else
-# ifdef FEAT_GUI_W32
-				    gui_is_win32s(),
-# else
 				    FALSE,
-# endif
 #endif
 				    fname,
 #ifdef VMS
@@ -2535,7 +2531,7 @@ barline_writestring(FILE *fd, char_u *s, int remaining_start)
 	else
 	    ++len;
     }
-    if (len > remaining)
+    if (len > remaining - 2)
     {
 	fprintf(fd, ">%d\n|<", len);
 	remaining = LSIZE - 20;
@@ -2926,6 +2922,10 @@ print_line_no_prefix(
 print_line(linenr_T lnum, int use_number, int list)
 {
     int		save_silent = silent_mode;
+
+    /* apply :filter /pat/ */
+    if (message_filtered(ml_get(lnum)))
+	return;
 
     msg_start();
     silent_mode = FALSE;
@@ -3877,8 +3877,8 @@ do_ecmd(
 	    oldbuf = TRUE;
 	    set_bufref(&bufref, buf);
 	    (void)buf_check_timestamp(buf, FALSE);
-	    /* Check if autocommands made buffer invalid or changed the current
-	     * buffer. */
+	    /* Check if autocommands made the buffer invalid or changed the
+	     * current buffer. */
 	    if (!bufref_valid(&bufref)
 #ifdef FEAT_AUTOCMD
 		    || curbuf != old_curbuf.br_buf
@@ -3940,25 +3940,30 @@ do_ecmd(
 		auto_buf = TRUE;
 	    else
 	    {
+		win_T	    *the_curwin = curwin;
+
+		/* Set the w_closing flag to avoid that autocommands close the
+		 * window.  And set b_locked for the same reason. */
+		the_curwin->w_closing = TRUE;
+		++buf->b_locked;
+
 		if (curbuf == old_curbuf.br_buf)
 #endif
 		    buf_copy_options(buf, BCO_ENTER);
 
-		/* close the link to the current buffer */
+		/* Close the link to the current buffer. This will set
+		 * curwin->w_buffer to NULL. */
 		u_sync(FALSE);
 		close_buffer(oldwin, curbuf,
 			       (flags & ECMD_HIDE) ? 0 : DOBUF_UNLOAD, FALSE);
 
 #ifdef FEAT_AUTOCMD
-		/* Autocommands may open a new window and leave oldwin open
-		 * which leads to crashes since the above call sets
-		 * oldwin->w_buffer to NULL. */
-		if (curwin != oldwin && oldwin != aucmd_win
-			     && win_valid(oldwin) && oldwin->w_buffer == NULL)
-		    win_close(oldwin, FALSE);
+		the_curwin->w_closing = FALSE;
+		--buf->b_locked;
 
 # ifdef FEAT_EVAL
-		if (aborting())	    /* autocmds may abort script processing */
+		/* autocmds may abort script processing */
+		if (aborting() && curwin->w_buffer != NULL)
 		{
 		    vim_free(new_name);
 		    goto theend;
@@ -4140,11 +4145,6 @@ do_ecmd(
  */
     /* Assume success now */
     retval = OK;
-
-    /*
-     * Reset cursor position, could be used by autocommands.
-     */
-    check_cursor();
 
     /*
      * Check if we are editing the w_arg_idx file in the argument list.
@@ -4752,6 +4752,20 @@ check_secure(void)
 static char_u	*old_sub = NULL;	/* previous substitute pattern */
 static int	global_need_beginline;	/* call beginline() after ":g" */
 
+/*
+ * Flags that are kept between calls to :substitute.
+ */
+typedef struct {
+    int	do_all;		/* do multiple substitutions per line */
+    int	do_ask;		/* ask for confirmation */
+    int	do_count;	/* count only */
+    int	do_error;	/* if false, ignore errors */
+    int	do_print;	/* print last line with subs. */
+    int	do_list;	/* list last line with subs. */
+    int	do_number;	/* list last line with line nr*/
+    int	do_ic;		/* ignore case flag */
+} subflags_T;
+
 /* do_sub()
  *
  * Perform a substitution from line eap->line1 to line eap->line2 using the
@@ -4767,14 +4781,11 @@ do_sub(exarg_T *eap)
     linenr_T	lnum;
     long	i = 0;
     regmmatch_T regmatch;
-    static int	do_all = FALSE;		/* do multiple substitutions per line */
-    static int	do_ask = FALSE;		/* ask for confirmation */
-    static int	do_count = FALSE;	/* count only */
-    static int	do_error = TRUE;	/* if false, ignore errors */
-    static int	do_print = FALSE;	/* print last line with subs. */
-    static int	do_list = FALSE;	/* list last line with subs. */
-    static int	do_number = FALSE;	/* list last line with line nr*/
-    static int	do_ic = 0;		/* ignore case flag */
+    static subflags_T subflags = {FALSE, FALSE, FALSE, TRUE, FALSE,
+							      FALSE, FALSE, 0};
+#ifdef FEAT_EVAL
+    subflags_T	subflags_save;
+#endif
     int		save_do_all;		/* remember user specified 'g' flag */
     int		save_do_ask;		/* remember user specified 'c' flag */
     char_u	*pat = NULL, *sub = NULL;	/* init for GCC */
@@ -4962,16 +4973,16 @@ do_sub(exarg_T *eap)
 	if (!p_ed)
 	{
 	    if (p_gd)		/* default is global on */
-		do_all = TRUE;
+		subflags.do_all = TRUE;
 	    else
-		do_all = FALSE;
-	    do_ask = FALSE;
+		subflags.do_all = FALSE;
+	    subflags.do_ask = FALSE;
 	}
-	do_error = TRUE;
-	do_print = FALSE;
-	do_count = FALSE;
-	do_number = FALSE;
-	do_ic = 0;
+	subflags.do_error = TRUE;
+	subflags.do_print = FALSE;
+	subflags.do_count = FALSE;
+	subflags.do_number = FALSE;
+	subflags.do_ic = 0;
     }
     while (*cmd)
     {
@@ -4980,40 +4991,40 @@ do_sub(exarg_T *eap)
 	 * 'r' is never inverted.
 	 */
 	if (*cmd == 'g')
-	    do_all = !do_all;
+	    subflags.do_all = !subflags.do_all;
 	else if (*cmd == 'c')
-	    do_ask = !do_ask;
+	    subflags.do_ask = !subflags.do_ask;
 	else if (*cmd == 'n')
-	    do_count = TRUE;
+	    subflags.do_count = TRUE;
 	else if (*cmd == 'e')
-	    do_error = !do_error;
+	    subflags.do_error = !subflags.do_error;
 	else if (*cmd == 'r')	    /* use last used regexp */
 	    which_pat = RE_LAST;
 	else if (*cmd == 'p')
-	    do_print = TRUE;
+	    subflags.do_print = TRUE;
 	else if (*cmd == '#')
 	{
-	    do_print = TRUE;
-	    do_number = TRUE;
+	    subflags.do_print = TRUE;
+	    subflags.do_number = TRUE;
 	}
 	else if (*cmd == 'l')
 	{
-	    do_print = TRUE;
-	    do_list = TRUE;
+	    subflags.do_print = TRUE;
+	    subflags.do_list = TRUE;
 	}
 	else if (*cmd == 'i')	    /* ignore case */
-	    do_ic = 'i';
+	    subflags.do_ic = 'i';
 	else if (*cmd == 'I')	    /* don't ignore case */
-	    do_ic = 'I';
+	    subflags.do_ic = 'I';
 	else
 	    break;
 	++cmd;
     }
-    if (do_count)
-	do_ask = FALSE;
+    if (subflags.do_count)
+	subflags.do_ask = FALSE;
 
-    save_do_all = do_all;
-    save_do_ask = do_ask;
+    save_do_all = subflags.do_all;
+    save_do_ask = subflags.do_ask;
 
     /*
      * check for a trailing count
@@ -5022,7 +5033,7 @@ do_sub(exarg_T *eap)
     if (VIM_ISDIGIT(*cmd))
     {
 	i = getdigits(&cmd);
-	if (i <= 0 && !eap->skip && do_error)
+	if (i <= 0 && !eap->skip && subflags.do_error)
 	{
 	    EMSG(_(e_zerocount));
 	    return;
@@ -5050,7 +5061,7 @@ do_sub(exarg_T *eap)
     if (eap->skip)	    /* not executing commands, only parsing */
 	return;
 
-    if (!do_count && !curbuf->b_p_ma)
+    if (!subflags.do_count && !curbuf->b_p_ma)
     {
 	/* Substitution is not allowed in non-'modifiable' buffer */
 	EMSG(_(e_modifiable));
@@ -5059,15 +5070,15 @@ do_sub(exarg_T *eap)
 
     if (search_regcomp(pat, RE_SUBST, which_pat, SEARCH_HIS, &regmatch) == FAIL)
     {
-	if (do_error)
+	if (subflags.do_error)
 	    EMSG(_(e_invcmd));
 	return;
     }
 
     /* the 'i' or 'I' flag overrules 'ignorecase' and 'smartcase' */
-    if (do_ic == 'i')
+    if (subflags.do_ic == 'i')
 	regmatch.rmm_ic = TRUE;
-    else if (do_ic == 'I')
+    else if (subflags.do_ic == 'I')
 	regmatch.rmm_ic = FALSE;
 
     sub_firstline = NULL;
@@ -5236,7 +5247,7 @@ do_sub(exarg_T *eap)
 		 * 2. If do_count is set only increase the counter.
 		 *    If do_ask is set, ask for confirmation.
 		 */
-		if (do_count)
+		if (subflags.do_count)
 		{
 		    /* For a multi-line match, put matchcol at the NUL at
 		     * the end of the line and set nmatch to one, so that
@@ -5258,7 +5269,7 @@ do_sub(exarg_T *eap)
 			goto skip;
 		}
 
-		if (do_ask)
+		if (subflags.do_ask)
 		{
 		    int typed = 0;
 
@@ -5279,19 +5290,20 @@ do_sub(exarg_T *eap)
 		    /*
 		     * Loop until 'y', 'n', 'q', CTRL-E or CTRL-Y typed.
 		     */
-		    while (do_ask)
+		    while (subflags.do_ask)
 		    {
 			if (exmode_active)
 			{
 			    char_u	*resp;
 			    colnr_T	sc, ec;
 
-			    print_line_no_prefix(lnum, do_number, do_list);
+			    print_line_no_prefix(lnum,
+					 subflags.do_number, subflags.do_list);
 
 			    getvcol(curwin, &curwin->w_cursor, &sc, NULL, NULL);
 			    curwin->w_cursor.col = regmatch.endpos[0].col - 1;
 			    getvcol(curwin, &curwin->w_cursor, NULL, NULL, &ec);
-			    if (do_number || curwin->w_p_nu)
+			    if (subflags.do_number || curwin->w_p_nu)
 			    {
 				int numw = number_width(curwin) + 1;
 				sc += numw;
@@ -5425,13 +5437,13 @@ do_sub(exarg_T *eap)
 			if (typed == 'l')
 			{
 			    /* last: replace and then stop */
-			    do_all = FALSE;
+			    subflags.do_all = FALSE;
 			    line2 = lnum;
 			    break;
 			}
 			if (typed == 'a')
 			{
-			    do_ask = FALSE;
+			    subflags.do_ask = FALSE;
 			    break;
 			}
 #ifdef FEAT_INS_EXPAND
@@ -5474,23 +5486,29 @@ do_sub(exarg_T *eap)
 		 * 3. substitute the string.
 		 */
 #ifdef FEAT_EVAL
-		if (do_count)
+		if (subflags.do_count)
 		{
 		    /* prevent accidentally changing the buffer by a function */
 		    save_ma = curbuf->b_p_ma;
 		    curbuf->b_p_ma = FALSE;
 		    sandbox++;
 		}
+		/* Save flags for recursion.  They can change for e.g.
+		 * :s/^/\=execute("s#^##gn") */
+		subflags_save = subflags;
 #endif
 		/* get length of substitution part */
 		sublen = vim_regsub_multi(&regmatch,
 				    sub_firstlnum - regmatch.startpos[0].lnum,
 				    sub, sub_firstline, FALSE, p_magic, TRUE);
 #ifdef FEAT_EVAL
-		if (do_count)
+		/* Don't keep flags set by a recursive call. */
+		subflags = subflags_save;
+		if (subflags.do_count)
 		{
 		    curbuf->b_p_ma = save_ma;
-		    sandbox--;
+		    if (sandbox > 0)
+			sandbox--;
 		    goto skip;
 		}
 #endif
@@ -5583,7 +5601,7 @@ do_sub(exarg_T *eap)
 		    if (sub_firstlnum <= line2)
 			do_again = TRUE;
 		    else
-			do_all = FALSE;
+			subflags.do_all = FALSE;
 		}
 
 		/* Remember next character to be copied. */
@@ -5618,7 +5636,7 @@ do_sub(exarg_T *eap)
 			    ml_append(lnum - 1, new_start,
 					(colnr_T)(p1 - new_start + 1), FALSE);
 			    mark_adjust(lnum + 1, (linenr_T)MAXLNUM, 1L, 0L);
-			    if (do_ask)
+			    if (subflags.do_ask)
 				appended_lines(lnum - 1, 1L);
 			    else
 			    {
@@ -5659,7 +5677,7 @@ skip:
 			|| got_int
 			|| got_quit
 			|| lnum > line2
-			|| !(do_all || do_again)
+			|| !(subflags.do_all || do_again)
 			|| (sub_firstline[matchcol] == NUL && nmatch <= 1
 					 && !re_multiline(regmatch.regprog)));
 		nmatch = -1;
@@ -5713,7 +5731,7 @@ skip:
 				ml_delete(lnum, (int)FALSE);
 			    mark_adjust(lnum, lnum + nmatch_tl - 1,
 						   (long)MAXLNUM, -nmatch_tl);
-			    if (do_ask)
+			    if (subflags.do_ask)
 				deleted_lines(lnum, nmatch_tl);
 			    --lnum;
 			    line2 -= nmatch_tl; /* nr of lines decreases */
@@ -5722,7 +5740,7 @@ skip:
 
 			/* When asking, undo is saved each time, must also set
 			 * changed flag each time. */
-			if (do_ask)
+			if (subflags.do_ask)
 			    changed_bytes(lnum, 0);
 			else
 			{
@@ -5784,7 +5802,7 @@ outofmem:
     vim_free(sub_firstline); /* may have to free allocated copy of the line */
 
     /* ":s/pat//n" doesn't move the cursor */
-    if (do_count)
+    if (subflags.do_count)
 	curwin->w_cursor = old_cursor;
 
     if (sub_nsubs > start_nsubs)
@@ -5796,20 +5814,22 @@ outofmem:
 
 	if (!global_busy)
 	{
-	    if (!do_ask)  /* when interactive leave cursor on the match */
+	    /* when interactive leave cursor on the match */
+	    if (!subflags.do_ask)
 	    {
 		if (endcolumn)
 		    coladvance((colnr_T)MAXCOL);
 		else
 		    beginline(BL_WHITE | BL_FIX);
 	    }
-	    if (!do_sub_msg(do_count) && do_ask)
+	    if (!do_sub_msg(subflags.do_count) && subflags.do_ask)
 		MSG("");
 	}
 	else
 	    global_need_beginline = TRUE;
-	if (do_print)
-	    print_line(curwin->w_cursor.lnum, do_number, do_list);
+	if (subflags.do_print)
+	    print_line(curwin->w_cursor.lnum,
+					 subflags.do_number, subflags.do_list);
     }
     else if (!global_busy)
     {
@@ -5817,12 +5837,12 @@ outofmem:
 	    EMSG(_(e_interr));
 	else if (got_match)	/* did find something but nothing substituted */
 	    MSG("");
-	else if (do_error)	/* nothing found */
+	else if (subflags.do_error)	/* nothing found */
 	    EMSG2(_(e_patnotf2), get_search_pat());
     }
 
 #ifdef FEAT_FOLDING
-    if (do_ask && hasAnyFolding(curwin))
+    if (subflags.do_ask && hasAnyFolding(curwin))
 	/* Cursor position may require updating */
 	changed_window_setting();
 #endif
@@ -5830,8 +5850,8 @@ outofmem:
     vim_regfree(regmatch.regprog);
 
     /* Restore the flag values, they can be used for ":&&". */
-    do_all = save_do_all;
-    do_ask = save_do_ask;
+    subflags.do_all = save_do_all;
+    subflags.do_ask = save_do_ask;
 }
 
 /*
@@ -7073,7 +7093,7 @@ helptags_one(
 	    || filecount == 0)
     {
 	if (!got_int)
-	    EMSG2("E151: No match: %s", NameBuff);
+	    EMSG2(_("E151: No match: %s"), NameBuff);
 	return;
     }
 
@@ -7316,7 +7336,7 @@ do_helptags(char_u *dirname, int add_help_tags)
 						    EW_FILE|EW_SILENT) == FAIL
 	    || filecount == 0)
     {
-	EMSG2("E151: No match: %s", NameBuff);
+	EMSG2(_("E151: No match: %s"), NameBuff);
 	return;
     }
 
@@ -7846,6 +7866,11 @@ ex_sign(exarg_T *eap)
 		{			/* ... not currently in a window */
 		    char_u	*cmd;
 
+		    if (buf->b_fname == NULL)
+		    {
+			EMSG(_("E934: Cannot jump to a buffer that does not have a name"));
+			return;
+		    }
 		    cmd = alloc((unsigned)STRLEN(buf->b_fname) + 25);
 		    if (cmd == NULL)
 			return;
@@ -8371,3 +8396,120 @@ ex_drop(exarg_T *eap)
     }
 }
 #endif
+
+/*
+ * Skip over the pattern argument of ":vimgrep /pat/[g][j]".
+ * Put the start of the pattern in "*s", unless "s" is NULL.
+ * If "flags" is not NULL put the flags in it: VGR_GLOBAL, VGR_NOJUMP.
+ * If "s" is not NULL terminate the pattern with a NUL.
+ * Return a pointer to the char just past the pattern plus flags.
+ */
+    char_u *
+skip_vimgrep_pat(char_u *p, char_u **s, int *flags)
+{
+    int		c;
+
+    if (vim_isIDc(*p))
+    {
+	/* ":vimgrep pattern fname" */
+	if (s != NULL)
+	    *s = p;
+	p = skiptowhite(p);
+	if (s != NULL && *p != NUL)
+	    *p++ = NUL;
+    }
+    else
+    {
+	/* ":vimgrep /pattern/[g][j] fname" */
+	if (s != NULL)
+	    *s = p + 1;
+	c = *p;
+	p = skip_regexp(p + 1, c, TRUE, NULL);
+	if (*p != c)
+	    return NULL;
+
+	/* Truncate the pattern. */
+	if (s != NULL)
+	    *p = NUL;
+	++p;
+
+	/* Find the flags */
+	while (*p == 'g' || *p == 'j')
+	{
+	    if (flags != NULL)
+	    {
+		if (*p == 'g')
+		    *flags |= VGR_GLOBAL;
+		else
+		    *flags |= VGR_NOJUMP;
+	    }
+	    ++p;
+	}
+    }
+    return p;
+}
+
+#if defined(FEAT_EVAL) || defined(PROTO)
+/*
+ * List v:oldfiles in a nice way.
+ */
+    void
+ex_oldfiles(exarg_T *eap UNUSED)
+{
+    list_T	*l = get_vim_var_list(VV_OLDFILES);
+    listitem_T	*li;
+    int		nr = 0;
+    char_u	*fname;
+
+    if (l == NULL)
+	msg((char_u *)_("No old files"));
+    else
+    {
+	msg_start();
+	msg_scroll = TRUE;
+	for (li = l->lv_first; li != NULL && !got_int; li = li->li_next)
+	{
+	    ++nr;
+	    fname = get_tv_string(&li->li_tv);
+	    if (!message_filtered(fname))
+	    {
+		msg_outnum((long)nr);
+		MSG_PUTS(": ");
+		msg_outtrans(fname);
+		msg_clr_eos();
+		msg_putchar('\n');
+		out_flush();	    /* output one line at a time */
+		ui_breakcheck();
+	    }
+	}
+
+	/* Assume "got_int" was set to truncate the listing. */
+	got_int = FALSE;
+
+# ifdef FEAT_BROWSE_CMD
+	if (cmdmod.browse)
+	{
+	    quit_more = FALSE;
+	    nr = prompt_for_number(FALSE);
+	    msg_starthere();
+	    if (nr > 0)
+	    {
+		char_u *p = list_find_str(get_vim_var_list(VV_OLDFILES),
+								    (long)nr);
+
+		if (p != NULL)
+		{
+		    p = expand_env_save(p);
+		    eap->arg = p;
+		    eap->cmdidx = CMD_edit;
+		    cmdmod.browse = FALSE;
+		    do_exedit(eap, NULL);
+		    vim_free(p);
+		}
+	    }
+	}
+# endif
+    }
+}
+#endif
+

@@ -1,4 +1,4 @@
-/* vi:set ts=8 sts=4 sw=4:
+/* vi:set ts=8 sts=4 sw=4 noet:
  *
  * VIM - Vi IMproved	by Bram Moolenaar
  *
@@ -92,8 +92,7 @@ typedef struct {
 # ifdef FEAT_XCLIPBOARD
 #  include <X11/Intrinsic.h>
 # endif
-# define guicolor_T long_u		/* avoid error in prototypes and 
-					 * make FEAT_TERMGUICOLORS work */
+# define guicolor_T long
 # define INVALCOLOR ((guicolor_T)0x1ffffff)
 #endif
 
@@ -572,6 +571,8 @@ typedef struct
 # ifdef FEAT_AUTOCMD
     char_u	*save_ei;		/* saved value of 'eventignore' */
 # endif
+    regmatch_T	filter_regmatch;	/* set by :filter /pat/ */
+    int		filter_force;		/* set for :filter! */
 } cmdmod_T;
 
 #define MF_SEED_LEN	8
@@ -929,8 +930,8 @@ typedef struct attr_entry
 	    short_u	    fg_color;	/* foreground color number */
 	    short_u	    bg_color;	/* background color number */
 # ifdef FEAT_TERMGUICOLORS
-	    long_u	    fg_rgb;	/* foreground color RGB */
-	    long_u	    bg_rgb;	/* background color RGB */
+	    guicolor_T	    fg_rgb;	/* foreground color RGB */
+	    guicolor_T	    bg_rgb;	/* background color RGB */
 # endif
 	} cterm;
 # ifdef FEAT_GUI
@@ -1126,8 +1127,13 @@ typedef long_u hash_T;		/* Type for hi_hash */
 #ifdef FEAT_NUM64
 /* Use 64-bit Number. */
 # ifdef WIN3264
+#  ifdef PROTO
+typedef long		    varnumber_T;
+typedef unsigned long	    uvarnumber_T;
+#  else
 typedef __int64		    varnumber_T;
 typedef unsigned __int64    uvarnumber_T;
+#  endif
 # elif defined(HAVE_STDINT_H)
 typedef int64_t		    varnumber_T;
 typedef uint64_t	    uvarnumber_T;
@@ -1839,8 +1845,8 @@ struct file_buffer
 
     int		b_flags;	/* various BF_ flags */
 #ifdef FEAT_AUTOCMD
-    int		b_closing;	/* buffer is being closed, don't let
-				   autocommands close it too. */
+    int		b_locked;	/* Buffer is being closed or referenced, don't
+				   let autocommands wipe it out. */
 #endif
 
     /*
@@ -2297,7 +2303,7 @@ struct file_buffer
 /*
  * Stuff for diff mode.
  */
-# define DB_COUNT 4	/* up to four buffers can be diff'ed */
+# define DB_COUNT 8	/* up to eight buffers can be diff'ed */
 
 /*
  * Each diffblock defines where a block of lines starts in each of the buffers
@@ -2440,6 +2446,8 @@ typedef struct
     linenr_T	first_lnum;	/* first lnum to search for multi-line pat */
     colnr_T	startcol; /* in win_line() points to char where HL starts */
     colnr_T	endcol;	 /* in win_line() points to char where HL ends */
+    int		is_addpos;	/* position specified directly by
+				   matchaddpos(). TRUE/FALSE */
 #ifdef FEAT_RELTIME
     proftime_T	tm;	/* for a time limit */
 #endif
