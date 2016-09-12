@@ -1609,6 +1609,8 @@ do_pending_operator(cmdarg_T *cap, int old_col, int gui_yank)
 	    oap->start = curwin->w_cursor;
 	}
 
+	/* Just in case lines were deleted that make the position invalid. */
+	check_pos(curwin->w_buffer, &oap->end);
 	oap->line_count = oap->end.lnum - oap->start.lnum + 1;
 
 #ifdef FEAT_VIRTUALEDIT
@@ -6097,8 +6099,7 @@ nv_up(cmdarg_T *cap)
  * cap->arg is TRUE for CR and "+": Move cursor to first non-blank.
  */
     static void
-nv_down(
-    cmdarg_T	*cap)
+nv_down(cmdarg_T *cap)
 {
     if (mod_mask & MOD_MASK_SHIFT)
     {
@@ -9451,10 +9452,7 @@ get_op_vcol(
 #ifdef FEAT_MBYTE
     /* prevent from moving onto a trail byte */
     if (has_mbyte)
-    {
-	check_pos(curwin->w_buffer, &oap->end);
 	mb_adjustpos(curwin->w_buffer, &oap->end);
-    }
 #endif
 
     getvvcol(curwin, &(oap->start), &oap->start_vcol, NULL, &oap->end_vcol);
