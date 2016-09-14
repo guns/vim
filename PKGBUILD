@@ -2,7 +2,7 @@
 pkgname=('vim-nerv'
          # 'vim-nox-nerv'
          )
-pkgver=7.4.1490.98.g4457f16
+pkgver=0
 pkgrel=1
 pkgdesc="Custom vim build"
 arch=('x86_64')
