@@ -53,7 +53,6 @@ SCRIPTS_ALL = \
 	test68.out \
 	test69.out \
 	test70.out \
-	test71.out \
 	test73.out \
 	test75.out \
 	test76.out \
@@ -149,6 +148,7 @@ NEW_TESTS = test_arglist.res \
 	    test_channel.res \
 	    test_charsearch.res \
 	    test_cmdline.res \
+	    test_crypt.res \
 	    test_cscope.res \
 	    test_diffmode.res \
 	    test_digraph.res \
