@@ -24,13 +24,13 @@ __build__() {
 }
 
 package_vim-nerv() {
-    depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm' 'libx11' 'libsm' 'libice' 'libxt')
+    depends=('ncurses' 'ruby' 'python2' 'lua' 'libx11' 'libsm' 'libice' 'libxt')
     PREFIX=/usr PYTHON=python2 rake configure
     __build__
 }
 
 # package_vim-nox-nerv() {
-#     depends=('ncurses' 'ruby' 'python2' 'lua' 'gpm')
+#     depends=('ncurses' 'ruby' 'python2' 'lua')
 #     PREFIX=/usr PYTHON=python2 NOX=1 rake configure
 #     __build__
 # }
