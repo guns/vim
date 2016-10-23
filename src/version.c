@@ -765,6 +765,54 @@ static char *(features[]) =
 static int included_patches[] =
 {   /* Add new patch number below this line */
 /**/
+    46,
+/**/
+    45,
+/**/
+    44,
+/**/
+    43,
+/**/
+    42,
+/**/
+    41,
+/**/
+    40,
+/**/
+    39,
+/**/
+    38,
+/**/
+    37,
+/**/
+    36,
+/**/
+    35,
+/**/
+    34,
+/**/
+    33,
+/**/
+    32,
+/**/
+    31,
+/**/
+    30,
+/**/
+    29,
+/**/
+    28,
+/**/
+    27,
+/**/
+    26,
+/**/
+    25,
+/**/
+    24,
+/**/
+    23,
+/**/
     22,
 /**/
     21,
@@ -950,15 +998,10 @@ list_version(void)
     MSG(longVersion);
 #ifdef WIN3264
 # ifdef FEAT_GUI_W32
-#  if defined(_MSC_VER) && (_MSC_VER <= 1010)
-    /* Only MS VC 4.1 and earlier can do Win32s */
-    MSG_PUTS(_("\nMS-Windows 16/32-bit GUI version"));
-#  else
-#   ifdef _WIN64
+#  ifdef _WIN64
     MSG_PUTS(_("\nMS-Windows 64-bit GUI version"));
-#   else
+#  else
     MSG_PUTS(_("\nMS-Windows 32-bit GUI version"));
-#   endif
 #  endif
 # ifdef FEAT_OLE
     MSG_PUTS(_(" with OLE support"));
@@ -1320,10 +1363,6 @@ intro_message(
     blanklines = (int)Rows - ((sizeof(lines) / sizeof(char *)) - 1);
     if (!p_cp)
 	blanklines += 4;  /* add 4 for not showing "Vi compatible" message */
-#if defined(WIN3264) && !defined(FEAT_GUI_W32)
-    if (mch_windows95())
-	blanklines -= 3;  /* subtract 3 for showing "Windows 95" message */
-#endif
 
 #ifdef FEAT_WINDOWS
     /* Don't overwrite a statusline.  Depends on 'cmdheight'. */
@@ -1372,17 +1411,6 @@ intro_message(
 		do_intro_line(row, (char_u *)_(p), i == 2, 0);
 	    ++row;
 	}
-#if defined(WIN3264) && !defined(FEAT_GUI_W32)
-	if (mch_windows95())
-	{
-	    do_intro_line(++row,
-		    (char_u *)_("WARNING: Windows 95/98/ME detected"),
-							FALSE, hl_attr(HLF_E));
-	    do_intro_line(++row,
-		(char_u *)_("type  :help windows95<Enter>  for info on this"),
-								    FALSE, 0);
-	}
-#endif
     }
 
     /* Make the wait-return message appear just below the text. */

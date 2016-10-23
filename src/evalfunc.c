@@ -2175,7 +2175,7 @@ f_complete_check(typval_T *argvars UNUSED, typval_T *rettv)
     int		saved = RedrawingDisabled;
 
     RedrawingDisabled = 0;
-    ins_compl_check_keys(0);
+    ins_compl_check_keys(0, TRUE);
     rettv->vval.v_number = compl_interrupted;
     RedrawingDisabled = saved;
 }
@@ -6017,7 +6017,7 @@ f_has(typval_T *argvars, typval_T *rettv)
 #endif
 #if defined(WIN3264)
 	else if (STRICMP(name, "win95") == 0)
-	    n = mch_windows95();
+	    n = FALSE;		/* Win9x is no more supported. */
 #endif
 #ifdef FEAT_NETBEANS_INTG
 	else if (STRICMP(name, "netbeans_enabled") == 0)
