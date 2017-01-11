@@ -12,15 +12,13 @@ task :configure do
     ENV['CFLAGS'] = '-g -DDEBUG'
   end
 
-  pydir = %x(#{ENV['PYTHON'] || 'python'} -c "import sysconfig; print sysconfig.get_config_var('LIBPL')").chomp
-
   cmd = %W[
     ./configure
     --prefix=#{ENV['PREFIX'] || '/opt/vim'}
     --enable-rubyinterp=dynamic
     --enable-luainterp=dynamic
     --enable-pythoninterp=dynamic
-    --with-python-config-dir=#{pydir}
+    --enable-python3interp=dynamic
     --with-features=#{ENV['FEATURES'] || 'huge'}
   ]
 
