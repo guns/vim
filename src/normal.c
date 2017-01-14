@@ -1984,7 +1984,7 @@ do_pending_operator(cmdarg_T *cap, int old_col, int gui_yank)
 		op_formatexpr(oap);	/* use expression */
 	    else
 #endif
-		if (*get_formatprg() != NUL)
+		if (*p_fp != NUL || *curbuf->b_p_fp != NUL)
 		op_colon(oap);		/* use external command */
 	    else
 		op_format(oap, FALSE);	/* use internal function */
@@ -2197,10 +2197,12 @@ op_colon(oparg_T *oap)
     }
     else if (oap->op_type == OP_FORMAT)
     {
-	if (*get_formatprg() == NUL)
-	    stuffReadbuff((char_u *)"fmt");
+	if (*curbuf->b_p_fp != NUL)
+	    stuffReadbuff(curbuf->b_p_fp);
+	else if (*p_fp != NUL)
+	    stuffReadbuff(p_fp);
 	else
-	    stuffReadbuff(get_formatprg());
+	    stuffReadbuff((char_u *)"fmt");
 	stuffReadbuff((char_u *)"\n']");
     }
 
