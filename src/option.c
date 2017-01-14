@@ -114,7 +114,6 @@
 #define PV_FF		OPT_BUF(BV_FF)
 #define PV_FLP		OPT_BUF(BV_FLP)
 #define PV_FO		OPT_BUF(BV_FO)
-#define PV_FP		OPT_BOTH(OPT_BUF(BV_FP))
 #ifdef FEAT_AUTOCMD
 # define PV_FT		OPT_BUF(BV_FT)
 #endif
@@ -5544,7 +5543,6 @@ check_buf_options(buf_T *buf)
     check_string_option(&buf->b_p_efm);
 #endif
     check_string_option(&buf->b_p_ep);
-    check_string_option(&buf->b_p_fp);
     check_string_option(&buf->b_p_path);
     check_string_option(&buf->b_p_tags);
     check_string_option(&buf->b_p_tc);
@@ -10242,7 +10240,6 @@ get_varp_scope(struct vimoption *p, int opt_flags)
 	    case PV_MP:   return (char_u *)&(curbuf->b_p_mp);
 #endif
 	    case PV_EP:   return (char_u *)&(curbuf->b_p_ep);
-	    case PV_FP:   return (char_u *)&(curbuf->b_p_fp);
 	    case PV_KP:   return (char_u *)&(curbuf->b_p_kp);
 	    case PV_PATH: return (char_u *)&(curbuf->b_p_path);
 	    case PV_AR:   return (char_u *)&(curbuf->b_p_ar);
@@ -10293,8 +10290,6 @@ get_varp(struct vimoption *p)
 	/* global option with local value: use local value if it's been set */
 	case PV_EP:	return *curbuf->b_p_ep != NUL
 				    ? (char_u *)&curbuf->b_p_ep : p->var;
-	case PV_FP:	return *curbuf->b_p_fp != NUL
-				    ? (char_u *)&curbuf->b_p_fp : p->var;
 	case PV_KP:	return *curbuf->b_p_kp != NUL
 				    ? (char_u *)&curbuf->b_p_kp : p->var;
 	case PV_PATH:	return *curbuf->b_p_path != NUL
@@ -10534,17 +10529,6 @@ get_equalprg(void)
     if (*curbuf->b_p_ep == NUL)
 	return p_ep;
     return curbuf->b_p_ep;
-}
-
-/*
- * Get the value of 'formatprg', buffer-local or global.
- */
-    char_u *
-get_formatprg()
-{
-    if (*curbuf->b_p_fp == NUL)
-	return p_fp;
-    return curbuf->b_p_fp;
 }
 
 #if defined(FEAT_WINDOWS) || defined(PROTO)
@@ -10928,7 +10912,6 @@ buf_copy_options(buf_T *buf, int flags)
 	    buf->b_p_efm = empty_option;
 #endif
 	    buf->b_p_ep = empty_option;
-	    buf->b_p_fp = empty_option;
 	    buf->b_p_kp = empty_option;
 	    buf->b_p_path = empty_option;
 	    buf->b_p_tags = empty_option;

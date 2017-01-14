@@ -37,7 +37,6 @@ void set_term_defaults(void);
 void comp_col(void);
 void unset_global_local_option(char_u *name, void *from);
 char_u *get_equalprg(void);
-char_u *get_formatprg(void);
 void win_copy_options(win_T *wp_from, win_T *wp_to);
 void copy_winopt(winopt_T *from, winopt_T *to);
 void check_win_options(win_T *win);

@@ -343,7 +343,7 @@ EXTERN unsigned	bo_flags;
 static char *(p_bo_values[]) = {"all", "backspace", "cursor", "complete",
 				 "copy", "ctrlg", "error", "esc", "ex",
 				 "hangul", "insertmode", "lang", "mess",
-				 "showmatch", "operator", "register", "shell", 
+				 "showmatch", "operator", "register", "shell",
 				 "spell", "wildmode", NULL};
 # endif
 
@@ -1037,7 +1037,6 @@ enum
     , BV_FF
     , BV_FLP
     , BV_FO
-    , BV_FP
 #ifdef FEAT_AUTOCMD
     , BV_FT
 #endif
