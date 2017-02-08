@@ -594,6 +594,7 @@ extern int (*dyn_libintl_putenv)(const char *envstring);
 #  endif
 #  define textdomain(domain) (*dyn_libintl_textdomain)(domain)
 #  define libintl_putenv(envstring) (*dyn_libintl_putenv)(envstring)
+#  define libintl_wputenv(envstring) (*dyn_libintl_wputenv)(envstring)
 # else
 #  include <libintl.h>
 #  define _(x) gettext((char *)(x))
@@ -1714,15 +1715,8 @@ typedef unsigned short disptick_T;	/* display tick type */
 
 typedef void	    *vim_acl_T;		/* dummy to pass an ACL to a function */
 
-/*
- * Include a prototype for mch_memmove(), it may not be in alloc.pro.
- */
-#ifdef VIM_MEMMOVE
-void mch_memmove(void *, void *, size_t);
-#else
-# ifndef mch_memmove
-#  define mch_memmove(to, from, len) memmove(to, from, len)
-# endif
+#ifndef mch_memmove
+# define mch_memmove(to, from, len) memmove((char*)(to), (char*)(from), (size_t)(len))
 #endif
 
 /*
