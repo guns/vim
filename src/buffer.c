@@ -873,6 +873,25 @@ free_buffer(buf_T *buf)
 }
 
 /*
+ * Initializes b:changedtick.
+ */
+    static void
+init_changedtick(buf_T *buf)
+{
+    dictitem_T *di = (dictitem_T *)&buf->b_ct_di;
+
+    di->di_flags = DI_FLAGS_FIX | DI_FLAGS_RO;
+    di->di_tv.v_type = VAR_NUMBER;
+    di->di_tv.v_lock = VAR_FIXED;
+    di->di_tv.vval.v_number = 0;
+
+#ifdef FEAT_EVAL
+    STRCPY(buf->b_ct_di.di_key, "changedtick");
+    (void)dict_add(buf->b_vars, di);
+#endif
+}
+
+/*
  * Free stuff in the buffer for ":bdel" and when wiping out the buffer.
  */
     static void
@@ -889,8 +908,14 @@ free_buffer_stuff(
 #endif
     }
 #ifdef FEAT_EVAL
-    vars_clear(&buf->b_vars->dv_hashtab); /* free all internal variables */
-    hash_init(&buf->b_vars->dv_hashtab);
+    {
+	varnumber_T tick = CHANGEDTICK(buf);
+
+	vars_clear(&buf->b_vars->dv_hashtab); /* free all buffer variables */
+	hash_init(&buf->b_vars->dv_hashtab);
+	init_changedtick(buf);
+	CHANGEDTICK(buf) = tick;
+    }
 #endif
 #ifdef FEAT_USR_CMDS
     uc_clear(&buf->b_ucmds);		/* clear local user commands */
@@ -1979,6 +2004,7 @@ buflist_new(
 	}
 	init_var_dict(buf->b_vars, &buf->b_bufvar, VAR_SCOPE);
 #endif
+	init_changedtick(buf);
     }
 
     if (ffname != NULL)
@@ -2229,6 +2255,9 @@ free_buf_options(
     clear_string_option(&buf->b_p_lw);
 #endif
     clear_string_option(&buf->b_p_bkc);
+#ifdef FEAT_MBYTE
+    clear_string_option(&buf->b_p_menc);
+#endif
 }
 
 /*

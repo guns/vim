@@ -58,6 +58,9 @@ static void f_asin(typval_T *argvars, typval_T *rettv);
 static void f_atan(typval_T *argvars, typval_T *rettv);
 static void f_atan2(typval_T *argvars, typval_T *rettv);
 #endif
+#ifdef FEAT_BEVAL
+static void f_balloon_show(typval_T *argvars, typval_T *rettv);
+#endif
 static void f_browse(typval_T *argvars, typval_T *rettv);
 static void f_browsedir(typval_T *argvars, typval_T *rettv);
 static void f_bufexists(typval_T *argvars, typval_T *rettv);
@@ -387,8 +390,9 @@ static void f_tagfiles(typval_T *argvars, typval_T *rettv);
 static void f_tempname(typval_T *argvars, typval_T *rettv);
 static void f_test_alloc_fail(typval_T *argvars, typval_T *rettv);
 static void f_test_autochdir(typval_T *argvars, typval_T *rettv);
-static void f_test_disable_char_avail(typval_T *argvars, typval_T *rettv);
+static void f_test_override(typval_T *argvars, typval_T *rettv);
 static void f_test_garbagecollect_now(typval_T *argvars, typval_T *rettv);
+static void f_test_ignore_error(typval_T *argvars, typval_T *rettv);
 #ifdef FEAT_JOB_CHANNEL
 static void f_test_null_channel(typval_T *argvars, typval_T *rettv);
 #endif
@@ -482,6 +486,9 @@ static struct fst
 #ifdef FEAT_FLOAT
     {"atan",		1, 1, f_atan},
     {"atan2",		2, 2, f_atan2},
+#endif
+#ifdef FEAT_BEVAL
+    {"balloon_show",	1, 1, f_balloon_show},
 #endif
     {"browse",		4, 4, f_browse},
     {"browsedir",	2, 2, f_browsedir},
@@ -821,8 +828,8 @@ static struct fst
     {"tempname",	0, 0, f_tempname},
     {"test_alloc_fail",	3, 3, f_test_alloc_fail},
     {"test_autochdir",	0, 0, f_test_autochdir},
-    {"test_disable_char_avail", 1, 1, f_test_disable_char_avail},
     {"test_garbagecollect_now",	0, 0, f_test_garbagecollect_now},
+    {"test_ignore_error",	1, 1, f_test_ignore_error},
 #ifdef FEAT_JOB_CHANNEL
     {"test_null_channel", 0, 0, f_test_null_channel},
 #endif
@@ -833,6 +840,7 @@ static struct fst
     {"test_null_list",	0, 0, f_test_null_list},
     {"test_null_partial", 0, 0, f_test_null_partial},
     {"test_null_string", 0, 0, f_test_null_string},
+    {"test_override",    2, 2, f_test_override},
     {"test_settime",	1, 1, f_test_settime},
 #ifdef FEAT_TIMERS
     {"timer_info",	0, 1, f_timer_info},
@@ -1357,6 +1365,18 @@ f_atan2(typval_T *argvars, typval_T *rettv)
 	rettv->vval.v_float = atan2(fx, fy);
     else
 	rettv->vval.v_float = 0.0;
+}
+#endif
+
+/*
+ * "balloon_show()" function
+ */
+#ifdef FEAT_BEVAL
+    static void
+f_balloon_show(typval_T *argvars, typval_T *rettv UNUSED)
+{
+    if (balloonEval != NULL)
+	gui_mch_post_balloon(balloonEval, get_tv_string_chk(&argvars[0]));
 }
 #endif
 
@@ -2539,7 +2559,7 @@ f_diff_hlID(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 #ifdef FEAT_DIFF
     linenr_T		lnum = get_tv_lnum(argvars);
     static linenr_T	prev_lnum = 0;
-    static int		changedtick = 0;
+    static varnumber_T	changedtick = 0;
     static int		fnum = 0;
     static int		change_start = 0;
     static int		change_end = 0;
@@ -2550,7 +2570,7 @@ f_diff_hlID(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
     if (lnum < 0)	/* ignore type error in {lnum} arg */
 	lnum = 0;
     if (lnum != prev_lnum
-	    || changedtick != curbuf->b_changedtick
+	    || changedtick != CHANGEDTICK(curbuf)
 	    || fnum != curbuf->b_fnum)
     {
 	/* New line, buffer, change: need to get the values. */
@@ -2572,7 +2592,7 @@ f_diff_hlID(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 	else
 	    hlID = (hlf_T)0;
 	prev_lnum = lnum;
-	changedtick = curbuf->b_changedtick;
+	changedtick = CHANGEDTICK(curbuf);
 	fnum = curbuf->b_fnum;
     }
 
@@ -3957,7 +3977,7 @@ get_buffer_info(buf_T *buf)
     dict_add_nr_str(dict, "loaded", buf->b_ml.ml_mfp != NULL, NULL);
     dict_add_nr_str(dict, "listed", buf->b_p_bl, NULL);
     dict_add_nr_str(dict, "changed", bufIsChanged(buf), NULL);
-    dict_add_nr_str(dict, "changedtick", buf->b_changedtick, NULL);
+    dict_add_nr_str(dict, "changedtick", CHANGEDTICK(buf), NULL);
     dict_add_nr_str(dict, "hidden",
 		    buf->b_ml.ml_mfp != NULL && buf->b_nwindows == 0,
 		    NULL);
@@ -4189,12 +4209,6 @@ f_getbufvar(typval_T *argvars, typval_T *rettv)
 	    else if (get_option_tv(&varname, rettv, TRUE) == OK)
 		/* buffer-local-option */
 		done = TRUE;
-	}
-	else if (STRCMP(varname, "changedtick") == 0)
-	{
-	    rettv->v_type = VAR_NUMBER;
-	    rettv->vval.v_number = curbuf->b_changedtick;
-	    done = TRUE;
 	}
 	else
 	{
@@ -6567,7 +6581,7 @@ f_islocked(typval_T *argvars, typval_T *rettv)
 
     rettv->vval.v_number = -1;
     end = get_lval(get_tv_string(&argvars[0]), NULL, &lv, FALSE, FALSE,
-					GLV_NO_AUTOLOAD, FNE_CHECK_START);
+			     GLV_NO_AUTOLOAD | GLV_READ_ONLY, FNE_CHECK_START);
     if (end != NULL && lv.ll_name != NULL)
     {
 	if (*end != NUL)
@@ -6576,21 +6590,16 @@ f_islocked(typval_T *argvars, typval_T *rettv)
 	{
 	    if (lv.ll_tv == NULL)
 	    {
-		if (check_changedtick(lv.ll_name))
-		    rettv->vval.v_number = 1;	    /* always locked */
-		else
+		di = find_var(lv.ll_name, NULL, TRUE);
+		if (di != NULL)
 		{
-		    di = find_var(lv.ll_name, NULL, TRUE);
-		    if (di != NULL)
-		    {
-			/* Consider a variable locked when:
-			 * 1. the variable itself is locked
-			 * 2. the value of the variable is locked.
-			 * 3. the List or Dict value is locked.
-			 */
-			rettv->vval.v_number = ((di->di_flags & DI_FLAGS_LOCK)
-						  || tv_islocked(&di->di_tv));
-		    }
+		    /* Consider a variable locked when:
+		     * 1. the variable itself is locked
+		     * 2. the value of the variable is locked.
+		     * 3. the List or Dict value is locked.
+		     */
+		    rettv->vval.v_number = ((di->di_flags & DI_FLAGS_LOCK)
+						   || tv_islocked(&di->di_tv));
 		}
 	    }
 	    else if (lv.ll_range)
@@ -11551,8 +11560,8 @@ f_submatch(typval_T *argvars, typval_T *rettv)
 	return;
     if (no < 0 || no >= NSUBEXP)
     {
-        EMSGN(_("E935: invalid submatch number: %d"), no);
-        return;
+	EMSGN(_("E935: invalid submatch number: %d"), no);
+	return;
     }
     if (argvars[1].v_type != VAR_UNKNOWN)
 	retList = (int)get_tv_number_chk(&argvars[1], &error);
@@ -12317,12 +12326,34 @@ f_test_autochdir(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 }
 
 /*
- * "test_disable_char_avail({expr})" function
+ * "test_disable({name}, {val})" function
  */
     static void
-f_test_disable_char_avail(typval_T *argvars, typval_T *rettv UNUSED)
+f_test_override(typval_T *argvars, typval_T *rettv UNUSED)
 {
-    disable_char_avail_for_testing = (int)get_tv_number(&argvars[0]);
+    char_u *name = (char_u *)"";
+    int     val;
+
+    if (argvars[0].v_type != VAR_STRING
+	    || (argvars[1].v_type) != VAR_NUMBER)
+	EMSG(_(e_invarg));
+    else
+    {
+	name = get_tv_string_chk(&argvars[0]);
+	val = (int)get_tv_number(&argvars[1]);
+
+	if (STRCMP(name, (char_u *)"redraw") == 0)
+	    disable_redraw_for_testing = val;
+	else if (STRCMP(name, (char_u *)"char_avail") == 0)
+	    disable_char_avail_for_testing = val;
+	else if (STRCMP(name, (char_u *)"ALL") == 0)
+	{
+	    disable_char_avail_for_testing = FALSE;
+	    disable_redraw_for_testing = FALSE;
+	}
+	else
+	    EMSG2(_(e_invarg2), name);
+    }
 }
 
 /*
@@ -12334,6 +12365,15 @@ f_test_garbagecollect_now(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
     /* This is dangerous, any Lists and Dicts used internally may be freed
      * while still in use. */
     garbage_collect(TRUE);
+}
+
+/*
+ * "test_ignore_error()" function
+ */
+    static void
+f_test_ignore_error(typval_T *argvars, typval_T *rettv UNUSED)
+{
+     ignore_error_for_testing(get_tv_string(&argvars[0]));
 }
 
 #ifdef FEAT_JOB_CHANNEL

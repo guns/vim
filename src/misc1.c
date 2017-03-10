@@ -492,7 +492,7 @@ get_breakindent_win(
     static int	    prev_indent = 0;  /* cached indent value */
     static long	    prev_ts     = 0L; /* cached tabstop value */
     static char_u   *prev_line = NULL; /* cached pointer to line */
-    static int	    prev_tick = 0;   /* changedtick of cached value */
+    static varnumber_T prev_tick = 0;   /* changedtick of cached value */
     int		    bri = 0;
     /* window width minus window margin space, i.e. what rests for text */
     const int	    eff_wwidth = W_WIDTH(wp)
@@ -502,11 +502,11 @@ get_breakindent_win(
 
     /* used cached indent, unless pointer or 'tabstop' changed */
     if (prev_line != line || prev_ts != wp->w_buffer->b_p_ts
-				  || prev_tick != wp->w_buffer->b_changedtick)
+				  || prev_tick != CHANGEDTICK(wp->w_buffer))
     {
 	prev_line = line;
 	prev_ts = wp->w_buffer->b_p_ts;
-	prev_tick = wp->w_buffer->b_changedtick;
+	prev_tick = CHANGEDTICK(wp->w_buffer);
 	prev_indent = get_indent_str(line,
 				     (int)wp->w_buffer->b_p_ts, wp->w_p_list);
     }
@@ -1427,8 +1427,12 @@ open_line(
 	/* Postpone calling changed_lines(), because it would mess up folding
 	 * with markers.
 	 * Skip mark_adjust when adding a line after the last one, there can't
-	 * be marks there. */
-	if (curwin->w_cursor.lnum + 1 < curbuf->b_ml.ml_line_count)
+	 * be marks there. But still needed in diff mode. */
+	if (curwin->w_cursor.lnum + 1 < curbuf->b_ml.ml_line_count
+#ifdef FEAT_DIFF
+		|| curwin->w_p_diff
+#endif
+	    )
 	    mark_adjust(curwin->w_cursor.lnum + 1, (linenr_T)MAXLNUM, 1L, 0L);
 	did_append = TRUE;
     }
@@ -2768,7 +2772,7 @@ changed(void)
 	}
 	changed_int();
     }
-    ++curbuf->b_changedtick;
+    ++CHANGEDTICK(curbuf);
 }
 
 /*
@@ -2863,8 +2867,12 @@ appended_lines(linenr_T lnum, long count)
 appended_lines_mark(linenr_T lnum, long count)
 {
     /* Skip mark_adjust when adding a line after the last one, there can't
-     * be marks there. */
-    if (lnum + count < curbuf->b_ml.ml_line_count)
+     * be marks there. But it's still needed in diff mode. */
+    if (lnum + count < curbuf->b_ml.ml_line_count
+#ifdef FEAT_DIFF
+	    || curwin->w_p_diff
+#endif
+	)
 	mark_adjust(lnum + 1, (linenr_T)MAXLNUM, count, 0L);
     changed_lines(lnum + 1, 0, lnum + 1, count);
 }
@@ -3195,7 +3203,7 @@ unchanged(
 	need_maketitle = TRUE;	    /* set window title later */
 #endif
     }
-    ++buf->b_changedtick;
+    ++CHANGEDTICK(buf);
 #ifdef FEAT_NETBEANS_INTG
     netbeans_unmodified(buf);
 #endif
@@ -4028,15 +4036,12 @@ expand_env_esc(
 		 */
 #  if defined(HAVE_GETPWNAM) && defined(HAVE_PWD_H)
 		{
-		    struct passwd *pw;
-
 		    /* Note: memory allocated by getpwnam() is never freed.
 		     * Calling endpwent() apparently doesn't help. */
-		    pw = getpwnam((char *)dst + 1);
-		    if (pw != NULL)
-			var = (char_u *)pw->pw_dir;
-		    else
-			var = NULL;
+		    struct passwd *pw = (*dst == NUL)
+					? NULL : getpwnam((char *)dst + 1);
+
+		    var = (pw == NULL) ? NULL : (char_u *)pw->pw_dir;
 		}
 		if (var == NULL)
 #  endif
@@ -5805,6 +5810,54 @@ cin_is_cpp_namespace(char_u *s)
 }
 
 /*
+ * Recognize a `extern "C"` or `extern "C++"` linkage specifications.
+ */
+    static int
+cin_is_cpp_extern_c(char_u *s)
+{
+    char_u	*p;
+    int		has_string_literal = FALSE;
+
+    s = cin_skipcomment(s);
+    if (STRNCMP(s, "extern", 6) == 0 && (s[6] == NUL || !vim_iswordc(s[6])))
+    {
+	p = cin_skipcomment(skipwhite(s + 6));
+	while (*p != NUL)
+	{
+	    if (vim_iswhite(*p))
+	    {
+		p = cin_skipcomment(skipwhite(p));
+	    }
+	    else if (*p == '{')
+	    {
+		break;
+	    }
+	    else if (p[0] == '"' && p[1] == 'C' && p[2] == '"')
+	    {
+		if (has_string_literal)
+		    return FALSE;
+		has_string_literal = TRUE;
+		p += 3;
+	    }
+	    else if (p[0] == '"' && p[1] == 'C' && p[2] == '+' && p[3] == '+'
+		    && p[4] == '"')
+	    {
+		if (has_string_literal)
+		    return FALSE;
+		has_string_literal = TRUE;
+		p += 5;
+	    }
+	    else
+	    {
+		return FALSE;
+	    }
+	}
+	return has_string_literal ? TRUE : FALSE;
+    }
+    return FALSE;
+}
+
+/*
  * Return a pointer to the first non-empty non-comment character after a ':'.
  * Return NULL if not found.
  *	  case 234:    a = b;
@@ -6647,6 +6700,7 @@ cin_skip2pos(pos_T *trypos)
 {
     char_u	*line;
     char_u	*p;
+    char_u	*new_p;
 
     p = line = ml_get(trypos->lnum);
     while (*p && (colnr_T)(p - line) < trypos->col)
@@ -6655,8 +6709,11 @@ cin_skip2pos(pos_T *trypos)
 	    p = cin_skipcomment(p);
 	else
 	{
-	    p = skip_string(p);
-	    ++p;
+	    new_p = skip_string(p);
+	    if (new_p == p)
+		++p;
+	    else
+		p = new_p;
 	}
     }
     return (int)(p - line);
@@ -6969,6 +7026,12 @@ parse_cino(buf_T *buf)
      * while(). */
     buf->b_ind_if_for_while = 0;
 
+    /* indentation for # comments */
+    buf->b_ind_hash_comment = 0;
+
+    /* Handle C++ extern "C" or "C++" */
+    buf->b_ind_cpp_extern_c = 0;
+
     for (p = buf->b_p_cino; *p; )
     {
 	l = p++;
@@ -7043,6 +7106,7 @@ parse_cino(buf_T *buf)
 	    case '#': buf->b_ind_hash_comment = n; break;
 	    case 'N': buf->b_ind_cpp_namespace = n; break;
 	    case 'k': buf->b_ind_if_for_while = n; break;
+	    case 'E': buf->b_ind_cpp_extern_c = n; break;
 	}
 	if (*p == ',')
 	    ++p;
@@ -7756,6 +7820,8 @@ get_c_indent(void)
 		    l = skipwhite(ml_get_curline());
 		    if (cin_is_cpp_namespace(l))
 			amount += curbuf->b_ind_cpp_namespace;
+		    else if (cin_is_cpp_extern_c(l))
+			amount += curbuf->b_ind_cpp_extern_c;
 		}
 		else
 		{
@@ -7979,6 +8045,12 @@ get_c_indent(void)
 			    if (cin_is_cpp_namespace(l))
 			    {
 				amount += curbuf->b_ind_cpp_namespace
+							    - added_to_amount;
+				break;
+			    }
+			    else if (cin_is_cpp_extern_c(l))
+			    {
+				amount += curbuf->b_ind_cpp_extern_c
 							    - added_to_amount;
 				break;
 			    }
@@ -9656,7 +9728,7 @@ expand_wildcards(
 # endif
 	    if (match_file_list(p_wig, (*files)[i], ffname))
 	    {
-		/* remove this matching files from the list */
+		/* remove this matching file from the list */
 		vim_free((*files)[i]);
 		for (j = i; j + 1 < *num_files; ++j)
 		    (*files)[j] = (*files)[j + 1];
@@ -10740,14 +10812,15 @@ has_env_var(char_u *p)
 static int has_special_wildchar(char_u *p);
 
 /*
- * Return TRUE if "p" contains a special wildcard character.
- * Allowing for escaping.
+ * Return TRUE if "p" contains a special wildcard character, one that Vim
+ * cannot expand, requires using a shell.
  */
     static int
 has_special_wildchar(char_u *p)
 {
     for ( ; *p; mb_ptr_adv(p))
     {
+	/* Allow for escaping. */
 	if (*p == '\\' && p[1] != NUL)
 	    ++p;
 	else if (vim_strchr((char_u *)SPECIAL_WILDCHAR, *p) != NULL)

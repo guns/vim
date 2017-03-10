@@ -1088,7 +1088,7 @@ EXTERN pos_T	last_cursormoved	      /* for CursorMoved event */
 			= INIT_POS_T(0, 0, 0)
 # endif
 			;
-EXTERN int	last_changedtick INIT(= 0);   /* for TextChanged event */
+EXTERN varnumber_T last_changedtick INIT(= 0);   /* for TextChanged event */
 EXTERN buf_T	*last_changedtick_buf INIT(= NULL);
 #endif
 
@@ -1648,7 +1648,9 @@ EXTERN int  alloc_fail_countdown INIT(= -1);
 /* set by alloc_fail(), number of times alloc() returns NULL */
 EXTERN int  alloc_fail_repeat INIT(= 0);
 
+/* flags set by test_override() */
 EXTERN int  disable_char_avail_for_testing INIT(= 0);
+EXTERN int  disable_redraw_for_testing INIT(= 0);
 
 EXTERN int  in_free_unref_items INIT(= FALSE);
 #endif
