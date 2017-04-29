@@ -11,12 +11,12 @@ AC_DEFINE(UNIX)
 AC_PROG_MAKE_SET
 
 dnl Checks for programs.
-AC_PROG_CC	dnl required by almost everything
-AC_PROG_CPP	dnl required by header file checks
-AC_PROGRAM_EGREP dnl required by AC_EGREP_CPP
-AC_PROG_FGREP	dnl finds working grep -F
-AC_ISC_POSIX	dnl required by AC_C_CROSS
-AC_PROG_AWK	dnl required for "make html" in ../doc
+AC_PROG_CC		dnl required by almost everything
+AC_PROG_CPP		dnl required by header file checks
+AC_PROGRAM_EGREP	dnl required by AC_EGREP_CPP
+AC_PROG_FGREP		dnl finds working grep -F
+AC_ISC_POSIX		dnl required by AC_C_CROSS
+AC_PROG_AWK		dnl required for "make html" in ../doc
 
 dnl Don't strip if we don't have it
 AC_CHECK_PROG(STRIP, strip, strip, :)
@@ -3020,12 +3020,21 @@ dnl ---------------------------------------------------------------------------
 dnl end of GUI-checking
 dnl ---------------------------------------------------------------------------
 
-AC_MSG_CHECKING([for /proc/self/exe])
+AC_MSG_CHECKING([for /proc link to executable])
 if test -L "/proc/self/exe"; then
-    AC_MSG_RESULT(yes)
-    AC_DEFINE(HAVE_PROC_SELF_EXE)
+  dnl Linux
+  AC_MSG_RESULT([/proc/self/exe])
+  AC_DEFINE(PROC_EXE_LINK, "/proc/self/exe")
+elif test -L "/proc/self/path/a.out"; then
+  dnl Solaris
+  AC_MSG_RESULT([/proc/self/path/a.out])
+  AC_DEFINE(PROC_EXE_LINK, "/proc/self/path/a.out")
+elif test -L "/proc/curproc/file"; then
+  dnl FreeBSD
+  AC_MSG_RESULT([/proc/curproc/file])
+  AC_DEFINE(PROC_EXE_LINK, "/proc/curproc/file")
 else
-    AC_MSG_RESULT(no)
+  AC_MSG_RESULT(no)
 fi
 
 dnl Check for Cygwin, which needs an extra source file if not using X11
@@ -3346,10 +3355,9 @@ if test "x$vim_cv_terminfo" = "xyes" ; then
   AC_DEFINE(TERMINFO)
 fi
 
-if test "x$olibs" != "x$LIBS"; then
-  AC_CACHE_CHECK([what tgetent() returns for an unknown terminal], [vim_cv_tgent],
-    [
-      AC_RUN_IFELSE([AC_LANG_SOURCE([[
+AC_CACHE_CHECK([what tgetent() returns for an unknown terminal], [vim_cv_tgent],
+  [
+    AC_RUN_IFELSE([AC_LANG_SOURCE([[
 #include "confdefs.h"
 #ifdef HAVE_TERMCAP_H
 # include <termcap.h>
@@ -3360,18 +3368,17 @@ if test "x$olibs" != "x$LIBS"; then
 #endif
 main()
 {char s[10000]; int res = tgetent(s, "thisterminaldoesnotexist"); exit(res != 0); }
-      ]])],[
-	vim_cv_tgent=zero
-      ],[
-	vim_cv_tgent=non-zero
-      ],[
-	AC_MSG_ERROR(failed to compile test program.)
-      ])
+    ]])],[
+      vim_cv_tgent=zero
+    ],[
+      vim_cv_tgent=non-zero
+    ],[
+      AC_MSG_ERROR(failed to compile test program.)
     ])
-  
-  if test "x$vim_cv_tgent" = "xzero" ; then
-    AC_DEFINE(TGETENT_ZERO_ERR, 0)
-  fi
+  ])
+
+if test "x$vim_cv_tgent" = "xzero" ; then
+  AC_DEFINE(TGETENT_ZERO_ERR, 0)
 fi
 
 AC_MSG_CHECKING(whether termcap.h contains ospeed)
@@ -3609,7 +3616,7 @@ dnl Can only be used for functions that do not require any include.
 AC_CHECK_FUNCS(fchdir fchown fsync getcwd getpseudotty \
 	getpwent getpwnam getpwuid getrlimit gettimeofday getwd lstat \
 	memset mkdtemp nanosleep opendir putenv qsort readlink select setenv \
-	setpgid setsid sigaltstack sigstack sigset sigsetjmp sigaction \
+	getpgid setpgid setsid sigaltstack sigstack sigset sigsetjmp sigaction \
 	sigprocmask sigvec strcasecmp strerror strftime stricmp strncasecmp \
 	strnicmp strpbrk strtol tgetent towlower towupper iswupper \
 	usleep utime utimes)

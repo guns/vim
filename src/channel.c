@@ -2571,9 +2571,14 @@ may_invoke_callback(channel_T *channel, ch_part_T part)
 	    if (nl == NULL)
 	    {
 		/* Flush remaining message that is missing a NL. */
-		buf = vim_realloc(buf, node->rq_buflen + 1);
-		if (buf == NULL)
+		char_u	*new_buf;
+
+		new_buf = vim_realloc(buf, node->rq_buflen + 1);
+		if (new_buf == NULL)
+		    /* This might fail over and over again, should the message
+		     * be dropped? */
 		    return FALSE;
+		buf = new_buf;
 		node->rq_buffer = buf;
 		nl = buf + node->rq_buflen++;
 		*nl = NUL;
@@ -5143,12 +5148,17 @@ job_stop(job_T *job, typval_T *argvars)
 	    return 0;
 	}
     }
+    if (job->jv_status == JOB_ENDED)
+    {
+	ch_log(job->jv_channel, "Job has already ended, job_stop() skipped");
+	return 0;
+    }
     ch_logs(job->jv_channel, "Stopping job with '%s'", (char *)arg);
     if (mch_stop_job(job, arg) == FAIL)
 	return 0;
 
-    /* Assume that "hup" does not kill the job. */
-    if (job->jv_channel != NULL && STRCMP(arg, "hup") != 0)
+    /* Assume that only "kill" will kill the job. */
+    if (job->jv_channel != NULL && STRCMP(arg, "kill") == 0)
 	job->jv_channel->ch_job_killed = TRUE;
 
     /* We don't try freeing the job, obviously the caller still has a

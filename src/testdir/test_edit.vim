@@ -506,8 +506,8 @@ func! Test_edit_CTRL_I()
   let path=expand("%:p:h")
   new
   call setline(1, [path."/", ''])
-  call feedkeys("Ate\<c-x>\<c-f>\<tab>\<cr>\<esc>", 'tnix')
-  call assert_match('test1\.in', getline(1))
+  call feedkeys("Arunt\<c-x>\<c-f>\<tab>\<cr>\<esc>", 'tnix')
+  call assert_match('runtest\.vim', getline(1))
   %d
   call writefile(['one', 'two', 'three'], 'Xinclude.txt')
   let include='#include Xinclude.txt'
@@ -1321,4 +1321,45 @@ func! Test_edit_rightleft()
   call assert_equal(join(expect, "\n"), join(lines, "\n"))
   set norightleft
   bw!
+endfunc
+
+func Test_edit_complete_very_long_name()
+  if !has('unix')
+    " Long directory names only work on Unix.
+    return
+  endif
+
+  let dirname = getcwd() . "/Xdir"
+  let longdirname = dirname . repeat('/' . repeat('d', 255), 4)
+  try
+    call mkdir(longdirname, 'p')
+  catch /E739:/
+    " Long directory name probably not supported.
+    call delete(dirname, 'rf')
+    return
+  endtry
+
+  " Try to get the Vim window position before setting 'columns'.
+  let winposx = getwinposx()
+  let winposy = getwinposy()
+  let save_columns = &columns
+  " Need at least about 1100 columns to reproduce the problem.
+  set columns=2000
+  call assert_equal(2000, &columns)
+  set noswapfile
+
+  let longfilename = longdirname . '/' . repeat('a', 255)
+  call writefile(['Totum', 'Table'], longfilename)
+  new
+  exe "next Xfile " . longfilename
+  exe "normal iT\<C-N>"
+
+  bwipe!
+  exe 'bwipe! ' . longfilename
+  call delete(dirname, 'rf')
+  let &columns = save_columns
+  if winposx >= 0 && winposy >= 0
+    exe 'winpos ' . winposx . ' ' . winposy
+  endif
+  set swapfile&
 endfunc

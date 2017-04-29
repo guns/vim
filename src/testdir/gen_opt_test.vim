@@ -96,6 +96,7 @@ let test_values = {
       \ 'guifontwide': [['', 'fixedsys'], []],
       \ 'helplang': [['', 'de', 'de,it'], ['xxx']],
       \ 'highlight': [['', 'e:Error'], ['xxx']],
+      \ 'imactivatekey': [['', 'S-space'], ['xxx']],
       \ 'isfname': [['', '@', '@,48-52'], ['xxx', '@48']],
       \ 'isident': [['', '@', '@,48-52'], ['xxx', '@48']],
       \ 'iskeyword': [['', '@', '@,48-52'], ['xxx', '@48']],
@@ -175,10 +176,6 @@ while 1
       for val in a[0]
 	call add(script, 'set ' . name . '=' . val)
 	call add(script, 'set ' . shortname . '=' . val)
-
-	if name == 'verbosefile' && !empty(val)
-	  call add(script, 'call delete("'. val. '")')
-	endif
       endfor
 
       " setting an option can only fail when it's implemented.
@@ -192,6 +189,9 @@ while 1
 
     call add(script, 'set ' . name . '&')
     call add(script, 'set ' . shortname . '&')
+    if name == 'verbosefile'
+      call add(script, 'call delete("xxx")')
+    endif
 
     if name == 'more'
       call add(script, 'set nomore')

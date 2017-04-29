@@ -511,7 +511,7 @@ mch_inchar(
 		|| interrupted
 #endif
 		|| wait_time > 0
-		|| !did_start_blocking)
+		|| (wtime < 0 && !did_start_blocking))
 	    continue;
 
 	/* no character available or interrupted */
@@ -3081,7 +3081,7 @@ executable_file(char_u *name)
 }
 
 /*
- * Return 1 if "name" can be found in $PATH and executed, 0 if not.
+ * Return TRUE if "name" can be found in $PATH and executed, FALSE if not.
  * If "use_path" is FALSE only check if "name" is executable.
  * Return -1 if unknown.
  */
@@ -5429,8 +5429,10 @@ mch_stop_job(job_T *job, char_u *how)
 
     /* TODO: have an option to only kill the process, not the group? */
     job_pid = job->jv_pid;
+#ifdef HAVE_GETPGID
     if (job_pid == getpgid(job_pid))
 	job_pid = -job_pid;
+#endif
 
     kill(job_pid, sig);
 
@@ -6004,6 +6006,7 @@ mch_expand_wildcards(
 {
     int		i;
     size_t	len;
+    long	llen;
     char_u	*p;
     int		dir;
 
@@ -6137,7 +6140,7 @@ mch_expand_wildcards(
 	STRCAT(command, pat[0] + 1);		/* exclude first backtick */
 	p = command + STRLEN(command) - 1;
 	*p-- = ')';				/* remove last backtick */
-	while (p > command && vim_iswhite(*p))
+	while (p > command && VIM_ISWHITE(*p))
 	    --p;
 	if (*p == '&')				/* remove trailing '&' */
 	{
@@ -6290,9 +6293,13 @@ mch_expand_wildcards(
 	goto notfound;
     }
     fseek(fd, 0L, SEEK_END);
-    len = ftell(fd);			/* get size of temp file */
+    llen = ftell(fd);			/* get size of temp file */
     fseek(fd, 0L, SEEK_SET);
-    buffer = alloc(len + 1);
+    if (llen < 0)
+	/* just in case ftell() would fail */
+	buffer = NULL;
+    else
+	buffer = alloc(llen + 1);
     if (buffer == NULL)
     {
 	/* out of memory */
@@ -6301,6 +6308,7 @@ mch_expand_wildcards(
 	fclose(fd);
 	return FAIL;
     }
+    len = llen;
     i = fread((char *)buffer, 1, len, fd);
     fclose(fd);
     mch_remove(tempname);
@@ -6520,7 +6528,7 @@ save_patterns(
     int
 mch_has_exp_wildcard(char_u *p)
 {
-    for ( ; *p; mb_ptr_adv(p))
+    for ( ; *p; MB_PTR_ADV(p))
     {
 	if (*p == '\\' && p[1] != NUL)
 	    ++p;
@@ -6544,7 +6552,7 @@ mch_has_exp_wildcard(char_u *p)
     int
 mch_has_wildcard(char_u *p)
 {
-    for ( ; *p; mb_ptr_adv(p))
+    for ( ; *p; MB_PTR_ADV(p))
     {
 	if (*p == '\\' && p[1] != NUL)
 	    ++p;
