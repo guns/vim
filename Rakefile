@@ -19,6 +19,7 @@ task :configure do
     --enable-luainterp=dynamic
     --enable-pythoninterp=dynamic
     --enable-python3interp=dynamic
+    --enable-terminal
     --with-features=#{ENV['FEATURES'] || 'huge'}
   ]
 
