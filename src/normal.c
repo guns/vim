@@ -4358,7 +4358,7 @@ find_decl(
     {
 	valid = FALSE;
 	t = searchit(curwin, curbuf, &curwin->w_cursor, FORWARD,
-			    pat, 1L, searchflags, RE_LAST, (linenr_T)0, NULL);
+		       pat, 1L, searchflags, RE_LAST, (linenr_T)0, NULL, NULL);
 	if (curwin->w_cursor.lnum >= old_pos.lnum)
 	    t = FAIL;	/* match after start is failure too */
 
@@ -5477,6 +5477,14 @@ nv_clear(cmdarg_T *cap)
 #ifdef FEAT_SYN_HL
 	/* Clear all syntax states to force resyncing. */
 	syn_stack_free_all(curwin->w_s);
+# ifdef FEAT_RELTIME
+	{
+	    win_T *wp;
+
+	    FOR_ALL_WINDOWS(wp)
+		wp->w_s->b_syn_slow = FALSE;
+	}
+# endif
 #endif
 	redraw_later(CLEAR);
     }
@@ -6380,7 +6388,7 @@ normal_search(
     curwin->w_set_curswant = TRUE;
 
     i = do_search(cap->oap, dir, pat, cap->count1,
-			   opt | SEARCH_OPT | SEARCH_ECHO | SEARCH_MSG, NULL);
+		      opt | SEARCH_OPT | SEARCH_ECHO | SEARCH_MSG, NULL, NULL);
     if (i == 0)
 	clearop(cap->oap);
     else
@@ -7838,7 +7846,10 @@ n_start_visual_mode(int c)
 nv_window(cmdarg_T *cap)
 {
 #ifdef FEAT_WINDOWS
-    if (!checkclearop(cap->oap))
+    if (cap->nchar == ':')
+	/* "CTRL-W :" is the same as typing ":"; useful in a terminal window */
+	nv_colon(cap);
+    else if (!checkclearop(cap->oap))
 	do_window(cap->nchar, cap->count0, NUL); /* everything is in window.c */
 #else
     (void)checkclearop(cap->oap);
@@ -9044,6 +9055,14 @@ nv_edit(cmdarg_T *cap)
 	clearopbeep(cap->oap);
 #endif
     }
+#ifdef FEAT_TERMINAL
+    else if (term_in_terminal_mode())
+    {
+	clearop(cap->oap);
+	term_leave_terminal_mode();
+	return;
+    }
+#endif
     else if (!curbuf->b_p_ma && !p_im)
     {
 	/* Only give this error when 'insertmode' is off. */

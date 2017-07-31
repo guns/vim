@@ -112,6 +112,10 @@ static foldinfo_T win_foldinfo;	/* info for 'foldcolumn' */
 static int compute_foldcolumn(win_T *wp, int col);
 #endif
 
+/* Flag that is set when drawing for a callback, not from the main command
+ * loop. */
+static int redrawing_for_callback = 0;
+
 /*
  * Buffer for one screen line (characters and attributes).
  */
@@ -124,15 +128,8 @@ static void fold_line(win_T *wp, long fold_count, foldinfo_T *foldinfo, linenr_T
 static void fill_foldcolumn(char_u *p, win_T *wp, int closed, linenr_T lnum);
 static void copy_text_attr(int off, char_u *buf, int len, int attr);
 #endif
-static int win_line(win_T *, linenr_T, int, int, int nochange);
+static int win_line(win_T *, linenr_T, int, int, int nochange, proftime_T *syntax_tm);
 static int char_needs_redraw(int off_from, int off_to, int cols);
-#ifdef FEAT_RIGHTLEFT
-static void screen_line(int row, int coloff, int endcol, int clear_width, int rlflag);
-# define SCREEN_LINE(r, o, e, c, rl)    screen_line((r), (o), (e), (c), (rl))
-#else
-static void screen_line(int row, int coloff, int endcol, int clear_width);
-# define SCREEN_LINE(r, o, e, c, rl)    screen_line((r), (o), (e), (c))
-#endif
 #ifdef FEAT_WINDOWS
 static void draw_vsep_win(win_T *wp, int row);
 #endif
@@ -168,7 +165,7 @@ static void recording_mode(int attr);
 static void draw_tabline(void);
 #endif
 #if defined(FEAT_WINDOWS) || defined(FEAT_WILDMENU) || defined(FEAT_STL_OPT)
-static int fillchar_status(int *attr, int is_curwin);
+static int fillchar_status(int *attr, win_T *wp);
 #endif
 #ifdef FEAT_WINDOWS
 static int fillchar_vsep(int *attr);
@@ -183,6 +180,17 @@ static void win_redr_ruler(win_T *wp, int always);
 #if defined(FEAT_CLIPBOARD) || defined(FEAT_WINDOWS)
 /* Ugly global: overrule attribute used by screen_char() */
 static int screen_char_attr = 0;
+#endif
+
+#if defined(FEAT_SYN_HL) && defined(FEAT_RELTIME)
+/* Can limit syntax highlight time to 'redrawtime'. */
+# define SYN_TIME_LIMIT 1
+#endif
+
+#ifdef FEAT_RIGHTLEFT
+# define HAS_RIGHTLEFT(x) x
+#else
+# define HAS_RIGHTLEFT(x) FALSE
 #endif
 
 /*
@@ -270,6 +278,12 @@ redraw_buf_and_status_later(buf_T *buf, int type)
 {
     win_T	*wp;
 
+#ifdef FEAT_WILDMENU
+    if (wild_menu_showing != 0)
+	/* Don't redraw while the command line completion is displayed, it
+	 * would disappear. */
+	return;
+#endif
     FOR_ALL_WINDOWS(wp)
     {
 	if (wp->w_buffer == buf)
@@ -400,7 +414,7 @@ redraw_asap(int type)
 				screenline2 + r * cols,
 				(size_t)cols * sizeof(schar_T));
 #endif
-		SCREEN_LINE(cmdline_row + r, 0, cols, cols, FALSE);
+		screen_line(cmdline_row + r, 0, cols, cols, FALSE);
 	    }
 	    ret = 4;
 	}
@@ -435,26 +449,22 @@ redraw_asap(int type)
     void
 redraw_after_callback(void)
 {
+    ++redrawing_for_callback;
+
     if (State == HITRETURN || State == ASKMORE)
 	; /* do nothing */
     else if (State & CMDLINE)
     {
-	/* Redrawing only works when the screen didn't scroll. */
-	if (msg_scrolled == 0)
-	{
+	/* Redrawing only works when the screen didn't scroll. Don't clear
+	 * wildmenu entries. */
+	if (msg_scrolled == 0
+#ifdef FEAT_WILDMENU
+		&& wild_menu_showing == 0
+#endif
+		)
 	    update_screen(0);
-	    compute_cmdrow();
-	}
-	else
-	{
-	    /* Redraw in the same position, so that the user can continue
-	     * editing the command. */
-	    compute_cmdrow();
-	    if (cmdline_row > msg_scrolled)
-		cmdline_row -= msg_scrolled;
-	    else
-		cmdline_row = 0;
-	}
+	/* Redraw in the same position, so that the user can continue
+	 * editing the command. */
 	redrawcmdline_ex(FALSE);
     }
     else if (State & (NORMAL | INSERT))
@@ -475,6 +485,8 @@ redraw_after_callback(void)
 	gui_mch_flush();
     }
 #endif
+
+    --redrawing_for_callback;
 }
 
 /*
@@ -643,6 +655,8 @@ update_screen(int type_arg)
     {
 	screenclear();		/* will reset clear_cmdline */
 	type = NOT_VALID;
+	/* must_redraw may be set indirectly, avoid another redraw later */
+	must_redraw = 0;
     }
 
     if (clear_cmdline)		/* going to clear cmdline (done below) */
@@ -923,6 +937,9 @@ update_single_line(win_T *wp, linenr_T lnum)
 {
     int		row;
     int		j;
+#ifdef SYN_TIME_LIMIT
+    proftime_T	syntax_tm;
+#endif
 
     /* Don't do anything if the screen structures are (not yet) valid. */
     if (!screen_valid(TRUE) || updating_screen)
@@ -931,6 +948,10 @@ update_single_line(win_T *wp, linenr_T lnum)
     if (lnum >= wp->w_topline && lnum < wp->w_botline
 				 && foldedCount(wp, lnum, &win_foldinfo) == 0)
     {
+#ifdef SYN_TIME_LIMIT
+	/* Set the time limit to 'redrawtime'. */
+	profile_setlimit(p_rdt, &syntax_tm);
+#endif
 	update_prepare();
 
 	row = 0;
@@ -944,7 +965,13 @@ update_single_line(win_T *wp, linenr_T lnum)
 		start_search_hl();
 		prepare_search_hl(wp, lnum);
 # endif
-		win_line(wp, lnum, row, row + wp->w_lines[j].wl_size, FALSE);
+		win_line(wp, lnum, row, row + wp->w_lines[j].wl_size, FALSE,
+#ifdef SYN_TIME_LIMIT
+			&syntax_tm
+#else
+			NULL
+#endif
+			);
 # if defined(FEAT_SEARCH_EXTRA)
 		end_search_hl();
 # endif
@@ -1140,6 +1167,9 @@ win_update(win_T *wp)
 #if defined(FEAT_SYN_HL) || defined(FEAT_SEARCH_EXTRA)
     int		save_got_int;
 #endif
+#ifdef SYN_TIME_LIMIT
+    proftime_T	syntax_tm;
+#endif
 
     type = wp->w_redr_type;
 
@@ -1164,6 +1194,16 @@ win_update(win_T *wp)
     {
 	/* draw the vertical separator right of this window */
 	draw_vsep_win(wp, 0);
+	wp->w_redr_type = 0;
+	return;
+    }
+#endif
+
+#ifdef FEAT_TERMINAL
+    /* If this window contains a terminal, redraw works completely differently.
+     */
+    if (term_update_window(wp) == OK)
+    {
 	wp->w_redr_type = 0;
 	return;
     }
@@ -1792,6 +1832,10 @@ win_update(win_T *wp)
     save_got_int = got_int;
     got_int = 0;
 #endif
+#ifdef SYN_TIME_LIMIT
+    /* Set the time limit to 'redrawtime'. */
+    profile_setlimit(p_rdt, &syntax_tm);
+#endif
 #ifdef FEAT_FOLDING
     win_foldinfo.fi_level = 0;
 #endif
@@ -2086,7 +2130,13 @@ win_update(win_T *wp)
 		/*
 		 * Display one line.
 		 */
-		row = win_line(wp, lnum, srow, wp->w_height, mod_top == 0);
+		row = win_line(wp, lnum, srow, wp->w_height, mod_top == 0,
+#ifdef SYN_TIME_LIMIT
+			&syntax_tm
+#else
+			NULL
+#endif
+			);
 
 #ifdef FEAT_FOLDING
 		wp->w_lines[idx].wl_folded = FALSE;
@@ -2853,7 +2903,7 @@ fold_line(
     }
 #endif
 
-    SCREEN_LINE(row + W_WINROW(wp), W_WINCOL(wp), (int)W_WIDTH(wp),
+    screen_line(row + W_WINROW(wp), W_WINCOL(wp), (int)W_WIDTH(wp),
 						     (int)W_WIDTH(wp), FALSE);
 
     /*
@@ -2957,7 +3007,8 @@ win_line(
     linenr_T	lnum,
     int		startrow,
     int		endrow,
-    int		nochange UNUSED)	/* not updating for changed text */
+    int		nochange UNUSED,	/* not updating for changed text */
+    proftime_T	*syntax_tm)
 {
     int		col = 0;		/* visual column on screen */
     unsigned	off;			/* offset in ScreenLines/ScreenAttrs */
@@ -3079,6 +3130,9 @@ win_line(
 #if defined(LINE_ATTR)
     int		did_line_attr = 0;
 #endif
+#ifdef FEAT_TERMINAL
+    int		get_term_attr = FALSE;
+#endif
 
     /* draw_state: items that are drawn in sequence: */
 #define WL_START	0		/* nothing done yet */
@@ -3158,20 +3212,29 @@ win_line(
     extra_check = 0;
 #endif
 #ifdef FEAT_SYN_HL
-    if (syntax_present(wp) && !wp->w_s->b_syn_error)
+    if (syntax_present(wp) && !wp->w_s->b_syn_error
+# ifdef SYN_TIME_LIMIT
+	    && !wp->w_s->b_syn_slow
+# endif
+       )
     {
 	/* Prepare for syntax highlighting in this line.  When there is an
 	 * error, stop syntax highlighting. */
 	save_did_emsg = did_emsg;
 	did_emsg = FALSE;
-	syntax_start(wp, lnum);
+	syntax_start(wp, lnum, syntax_tm);
 	if (did_emsg)
 	    wp->w_s->b_syn_error = TRUE;
 	else
 	{
 	    did_emsg = save_did_emsg;
-	    has_syntax = TRUE;
-	    extra_check = TRUE;
+#ifdef SYN_TIME_LIMIT
+	    if (!wp->w_s->b_syn_slow)
+#endif
+	    {
+		has_syntax = TRUE;
+		extra_check = TRUE;
+	    }
 	}
     }
 
@@ -3179,6 +3242,14 @@ win_line(
     color_cols = wp->w_p_cc_cols;
     if (color_cols != NULL)
 	draw_color_col = advance_color_col(VCOL_HLC, &color_cols);
+#endif
+
+#ifdef FEAT_TERMINAL
+    if (term_show_buffer(wp->w_buffer))
+    {
+	extra_check = TRUE;
+	get_term_attr = TRUE;
+    }
 #endif
 
 #ifdef FEAT_SPELL
@@ -3371,7 +3442,7 @@ win_line(
 # if defined(FEAT_QUICKFIX) && defined(FEAT_WINDOWS)
     /* Highlight the current line in the quickfix window. */
     if (bt_quickfix(wp->w_buffer) && qf_current_entry(wp) == lnum)
-	line_attr = HL_ATTR(HLF_L);
+	line_attr = HL_ATTR(HLF_QFL);
 # endif
     if (line_attr != 0)
 	area_highlighting = TRUE;
@@ -3548,7 +3619,7 @@ win_line(
 # ifdef FEAT_SYN_HL
 	    /* Need to restart syntax highlighting for this line. */
 	    if (has_syntax)
-		syntax_start(wp, lnum);
+		syntax_start(wp, lnum, syntax_tm);
 # endif
 	}
 #endif
@@ -3953,8 +4024,8 @@ win_line(
 #endif
 		)
 	{
-	    SCREEN_LINE(screen_row, W_WINCOL(wp), col, -(int)W_WIDTH(wp),
-								  wp->w_p_rl);
+	    screen_line(screen_row, W_WINCOL(wp), col, -(int)W_WIDTH(wp),
+						    HAS_RIGHTLEFT(wp->w_p_rl));
 	    /* Pretend we have finished updating the window.  Except when
 	     * 'cursorcolumn' is set. */
 #ifdef FEAT_SYN_HL
@@ -4467,6 +4538,18 @@ win_line(
 		int	can_spell = TRUE;
 #endif
 
+#ifdef FEAT_TERMINAL
+		if (get_term_attr)
+		{
+		    syntax_attr = term_get_attr(wp->w_buffer, lnum, vcol);
+
+		    if (!attr_pri)
+			char_attr = syntax_attr;
+		    else
+			char_attr = hl_combine_attr(syntax_attr, char_attr);
+		}
+#endif
+
 #ifdef FEAT_SYN_HL
 		/* Get syntax attribute, unless still at the start of the line
 		 * (double-wide char that doesn't fit). */
@@ -4491,6 +4574,10 @@ win_line(
 		    }
 		    else
 			did_emsg = save_did_emsg;
+#ifdef SYN_TIME_LIMIT
+		    if (wp->w_s->b_syn_slow)
+			has_syntax = FALSE;
+#endif
 
 		    /* Need to get the line again, a multi-line regexp may
 		     * have made it invalid. */
@@ -5396,8 +5483,8 @@ win_line(
 	    }
 #endif
 
-	    SCREEN_LINE(screen_row, W_WINCOL(wp), col,
-						(int)W_WIDTH(wp), wp->w_p_rl);
+	    screen_line(screen_row, W_WINCOL(wp), col,
+				  (int)W_WIDTH(wp), HAS_RIGHTLEFT(wp->w_p_rl));
 	    row++;
 
 	    /*
@@ -5457,7 +5544,8 @@ win_line(
 	 * Also highlight the 'colorcolumn' if it is different than
 	 * 'cursorcolumn' */
 	vcol_save_attr = -1;
-	if (draw_state == WL_LINE && !lnum_in_visual_area)
+	if (draw_state == WL_LINE && !lnum_in_visual_area
+		&& search_attr == 0 && area_attr == 0)
 	{
 	    if (wp->w_p_cuc && VCOL_HLC == (long)wp->w_virtcol
 						 && lnum != wp->w_cursor.lnum)
@@ -5701,12 +5789,12 @@ win_line(
 		)
 	{
 #ifdef FEAT_CONCEAL
-	    SCREEN_LINE(screen_row, W_WINCOL(wp), col - boguscols,
-						(int)W_WIDTH(wp), wp->w_p_rl);
+	    screen_line(screen_row, W_WINCOL(wp), col - boguscols,
+				  (int)W_WIDTH(wp), HAS_RIGHTLEFT(wp->w_p_rl));
 	    boguscols = 0;
 #else
-	    SCREEN_LINE(screen_row, W_WINCOL(wp), col,
-						(int)W_WIDTH(wp), wp->w_p_rl);
+	    screen_line(screen_row, W_WINCOL(wp), col,
+				  (int)W_WIDTH(wp), HAS_RIGHTLEFT(wp->w_p_rl));
 #endif
 	    ++row;
 	    ++screen_row;
@@ -5911,6 +5999,17 @@ char_needs_redraw(int off_from, int off_to, int cols)
     return FALSE;
 }
 
+#if defined(FEAT_TERMINAL) || defined(PROTO)
+/*
+ * Return the index in ScreenLines[] for the current screen line.
+ */
+    int
+screen_get_current_line_off()
+{
+    return (int)(current_ScreenLine - ScreenLines);
+}
+#endif
+
 /*
  * Move one "cooked" screen line to the screen, but only the characters that
  * have actually changed.  Handle insert/delete character.
@@ -5922,16 +6021,13 @@ char_needs_redraw(int off_from, int off_to, int cols)
  *    When TRUE and "clear_width" > 0, clear columns 0 to "endcol"
  *    When FALSE and "clear_width" > 0, clear columns "endcol" to "clear_width"
  */
-    static void
+    void
 screen_line(
     int	    row,
     int	    coloff,
     int	    endcol,
-    int	    clear_width
-#ifdef FEAT_RIGHTLEFT
-    , int   rlflag
-#endif
-    )
+    int	    clear_width,
+    int	    rlflag UNUSED)
 {
     unsigned	    off_from;
     unsigned	    off_to;
@@ -6590,7 +6686,7 @@ win_redr_status_matches(
 	    --first_match;
 	}
 
-    fillchar = fillchar_status(&attr, TRUE);
+    fillchar = fillchar_status(&attr, curwin);
 
     if (first_match == 0)
     {
@@ -6769,20 +6865,20 @@ win_redr_status(win_T *wp)
 #endif
     else
     {
-	fillchar = fillchar_status(&attr, wp == curwin);
+	fillchar = fillchar_status(&attr, wp);
 
 	get_trans_bufname(wp->w_buffer);
 	p = NameBuff;
 	len = (int)STRLEN(p);
 
-	if (wp->w_buffer->b_help
+	if (bt_help(wp->w_buffer)
 #ifdef FEAT_QUICKFIX
 		|| wp->w_p_pvw
 #endif
 		|| bufIsChanged(wp->w_buffer)
 		|| wp->w_buffer->b_p_ro)
 	    *(p + len++) = ' ';
-	if (wp->w_buffer->b_help)
+	if (bt_help(wp->w_buffer))
 	{
 	    STRCPY(p + len, _("[Help]"));
 	    len += (int)STRLEN(p + len);
@@ -6866,7 +6962,7 @@ win_redr_status(win_T *wp)
     if (wp->w_vsep_width != 0 && wp->w_status_height != 0 && redrawing())
     {
 	if (stl_connected(wp))
-	    fillchar = fillchar_status(&attr, wp == curwin);
+	    fillchar = fillchar_status(&attr, wp);
 	else
 	    fillchar = fillchar_vsep(&attr);
 	screen_putchar(fillchar, W_WINROW(wp) + wp->w_height, W_ENDCOL(wp),
@@ -7040,7 +7136,7 @@ win_redr_custom(
     else
     {
 	row = W_WINROW(wp) + wp->w_height;
-	fillchar = fillchar_status(&attr, wp == curwin);
+	fillchar = fillchar_status(&attr, wp);
 	maxwidth = W_WIDTH(wp);
 
 	if (draw_ruler)
@@ -7800,20 +7896,21 @@ next_search_hl(
 	    int regprog_is_copy = (shl != &search_hl && cur != NULL
 				&& shl == &cur->hl
 				&& cur->match.regprog == cur->hl.rm.regprog);
+	    int timed_out = FALSE;
 
 	    nmatched = vim_regexec_multi(&shl->rm, win, shl->buf, lnum,
 		    matchcol,
 #ifdef FEAT_RELTIME
-		    &(shl->tm)
+		    &(shl->tm), &timed_out
 #else
-		    NULL
+		    NULL, NULL
 #endif
 		    );
 	    /* Copy the regprog, in case it got freed and recompiled. */
 	    if (regprog_is_copy)
 		cur->match.regprog = cur->hl.rm.regprog;
 
-	    if (called_emsg || got_int)
+	    if (called_emsg || got_int || timed_out)
 	    {
 		/* Error while handling regexp: stop using this regexp. */
 		if (shl == &search_hl)
@@ -9368,9 +9465,9 @@ setcursor(void)
 
 
 /*
- * insert 'line_count' lines at 'row' in window 'wp'
- * if 'invalid' is TRUE the wp->w_lines[].wl_lnum is invalidated.
- * if 'mayclear' is TRUE the screen will be cleared if it is faster than
+ * Insert 'line_count' lines at 'row' in window 'wp'.
+ * If 'invalid' is TRUE the wp->w_lines[].wl_lnum is invalidated.
+ * If 'mayclear' is TRUE the screen will be cleared if it is faster than
  * scrolling.
  * Returns FAIL if the lines are not inserted, OK for success.
  */
@@ -9453,7 +9550,7 @@ win_ins_lines(
 }
 
 /*
- * delete "line_count" window lines at "row" in window "wp"
+ * Delete "line_count" window lines at "row" in window "wp".
  * If "invalid" is TRUE curwin->w_lines[] is invalidated.
  * If "mayclear" is TRUE the screen will be cleared if it is faster than
  * scrolling
@@ -9675,8 +9772,14 @@ screen_ins_lines(
      * - the screen has to be redrawn completely
      * - the line count is less than one
      * - the line count is more than 'ttyscroll'
+     * - redrawing for a callback and there is a modeless selection
      */
-    if (!screen_valid(TRUE) || line_count <= 0 || line_count > p_ttyscroll)
+     if (!screen_valid(TRUE) || line_count <= 0 || line_count > p_ttyscroll
+#ifdef FEAT_CLIPBOARD
+	     || (clip_star.state != SELECT_CLEARED
+						 && redrawing_for_callback > 0)
+#endif
+	     )
 	return FAIL;
 
     /*
@@ -9892,9 +9995,15 @@ screen_del_lines(
      * - the screen has to be redrawn completely
      * - the line count is less than one
      * - the line count is more than 'ttyscroll'
+     * - redrawing for a callback and there is a modeless selection
      */
-    if (!screen_valid(TRUE) || line_count <= 0 ||
-					 (!force && line_count > p_ttyscroll))
+    if (!screen_valid(TRUE) || line_count <= 0
+					|| (!force && line_count > p_ttyscroll)
+#ifdef FEAT_CLIPBOARD
+	     || (clip_star.state != SELECT_CLEARED
+						 && redrawing_for_callback > 0)
+#endif
+       )
 	return FAIL;
 
     /*
@@ -10596,10 +10705,22 @@ get_trans_bufname(buf_T *buf)
  * Get the character to use in a status line.  Get its attributes in "*attr".
  */
     static int
-fillchar_status(int *attr, int is_curwin)
+fillchar_status(int *attr, win_T *wp)
 {
     int fill;
-    if (is_curwin)
+
+#ifdef FEAT_TERMINAL
+    if (bt_terminal(wp->w_buffer))
+    {
+	*attr = HL_ATTR(HLF_ST);
+	if (wp == curwin)
+	    fill = fill_stl;
+	else
+	    fill = fill_stlnc;
+    }
+    else
+#endif
+    if (wp == curwin)
     {
 	*attr = HL_ATTR(HLF_S);
 	fill = fill_stl;
@@ -10613,10 +10734,10 @@ fillchar_status(int *attr, int is_curwin)
      * window differs, or the fillchars differ, or this is not the
      * current window */
     if (*attr != 0 && ((HL_ATTR(HLF_S) != HL_ATTR(HLF_SNC)
-			|| !is_curwin || ONE_WINDOW)
+			|| wp != curwin || ONE_WINDOW)
 		    || (fill_stl != fill_stlnc)))
 	return fill;
-    if (is_curwin)
+    if (wp == curwin)
 	return '^';
     return '=';
 }
@@ -10804,7 +10925,7 @@ win_redr_ruler(win_T *wp, int always)
 	if (wp->w_status_height)
 	{
 	    row = W_WINROW(wp) + wp->w_height;
-	    fillchar = fillchar_status(&attr, wp == curwin);
+	    fillchar = fillchar_status(&attr, wp);
 	    off = W_WINCOL(wp);
 	    width = W_WIDTH(wp);
 	}

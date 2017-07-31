@@ -1036,7 +1036,6 @@ EXTERN int	skip_redraw INIT(= FALSE);  /* skip redraw once */
 EXTERN int	do_redraw INIT(= FALSE);    /* extra redraw once */
 
 EXTERN int	need_highlight_changed INIT(= TRUE);
-EXTERN char_u	*use_viminfo INIT(= NULL);  /* name of viminfo file to use */
 
 #define NSCRIPT 15
 EXTERN FILE	*scriptin[NSCRIPT];	    /* streams to read script from */
@@ -1659,6 +1658,7 @@ EXTERN int  in_free_unref_items INIT(= FALSE);
 
 #ifdef FEAT_TIMERS
 EXTERN int  did_add_timer INIT(= FALSE);
+EXTERN int  timer_busy INIT(= 0);   /* when timer is inside vgetc() then > 0 */
 #endif
 
 #ifdef FEAT_EVAL
