@@ -6,7 +6,9 @@ endif
 
 source shared.vim
 
-func Test_terminal_basic()
+" Open a terminal with a shell, assign the job to g:job and return the buffer
+" number.
+func Run_shell_in_terminal()
   let buf = term_start(&shell)
 
   let termlist = term_list()
@@ -16,16 +18,102 @@ func Test_terminal_basic()
   let g:job = term_getjob(buf)
   call assert_equal(v:t_job, type(g:job))
 
-  call term_sendkeys(buf, "exit\r")
+  let string = string({'job': term_getjob(buf)})
+  call assert_match("{'job': 'process \\d\\+ run'}", string)
+
+  return buf
+endfunc
+
+" Stops the shell started by Run_shell_in_terminal().
+func Stop_shell_in_terminal(buf)
+  call term_sendkeys(a:buf, "exit\r")
   call WaitFor('job_status(g:job) == "dead"')
   call assert_equal('dead', job_status(g:job))
+endfunc
+
+func Test_terminal_basic()
+  let buf = Run_shell_in_terminal()
+  if has("unix")
+    call assert_match("^/dev/", job_info(g:job).tty)
+    call assert_match("^/dev/", term_gettty(''))
+  else
+    call assert_match("^winpty://", job_info(g:job).tty)
+    call assert_match("^winpty://", term_gettty(''))
+  endif
+  call Stop_shell_in_terminal(buf)
+  call term_wait(buf)
+
+  " closing window wipes out the terminal buffer a with finished job
+  close
+  call assert_equal("", bufname(buf))
+
+  unlet g:job
+endfunc
+
+func Test_terminal_make_change()
+  let buf = Run_shell_in_terminal()
+  call Stop_shell_in_terminal(buf)
+  call term_wait(buf)
+
+  setlocal modifiable
+  exe "normal Axxx\<Esc>"
+  call assert_fails(buf . 'bwipe', 'E517')
+  undo
 
   exe buf . 'bwipe'
   unlet g:job
 endfunc
 
+func Test_terminal_wipe_buffer()
+  let buf = Run_shell_in_terminal()
+  call assert_fails(buf . 'bwipe', 'E517')
+  exe buf . 'bwipe!'
+  call WaitFor('job_status(g:job) == "dead"')
+  call assert_equal('dead', job_status(g:job))
+  call assert_equal("", bufname(buf))
+
+  unlet g:job
+endfunc
+
+func Test_terminal_hide_buffer()
+  let buf = Run_shell_in_terminal()
+  quit
+  for nr in range(1, winnr('$'))
+    call assert_notequal(winbufnr(nr), buf)
+  endfor
+  call assert_true(bufloaded(buf))
+  call assert_true(buflisted(buf))
+
+  exe 'split ' . buf . 'buf'
+  call Stop_shell_in_terminal(buf)
+  exe buf . 'bwipe'
+
+  unlet g:job
+endfunc
+
+func! s:Nasty_exit_cb(job, st)
+  exe g:buf . 'bwipe!'
+  let g:buf = 0
+endfunc
+
+func Test_terminal_nasty_cb()
+  let cmd = Get_cat_cmd()
+  let g:buf = term_start(cmd, {'exit_cb': function('s:Nasty_exit_cb')})
+  let g:job = term_getjob(g:buf)
+
+  call WaitFor('job_status(g:job) == "dead"')
+  call WaitFor('g:buf == 0')
+  unlet g:buf
+  unlet g:job
+  call delete('Xtext')
+endfunc
+
 func Check_123(buf)
   let l = term_scrape(a:buf, 0)
+  call assert_true(len(l) == 0)
+  let l = term_scrape(a:buf, 999)
+  call assert_true(len(l) == 0)
+  let l = term_scrape(a:buf, 1)
   call assert_true(len(l) > 0)
   call assert_equal('1', l[0].chars)
   call assert_equal('2', l[1].chars)
@@ -37,17 +125,27 @@ func Check_123(buf)
     call assert_equal('#000000', l[0].bg)
   endif
 
+  let l = term_getline(a:buf, -1)
+  call assert_equal('', l)
   let l = term_getline(a:buf, 0)
+  call assert_equal('', l)
+  let l = term_getline(a:buf, 999)
+  call assert_equal('', l)
+  let l = term_getline(a:buf, 1)
   call assert_equal('123', l)
 endfunc
 
-func Test_terminal_scrape()
+func Get_cat_cmd()
   if has('win32')
-    let cmd = 'cmd /c "cls && color 2 && echo 123"'
+    return 'cmd /c "cls && color 2 && echo 123"'
   else
     call writefile(["\<Esc>[32m123"], 'Xtext')
-    let cmd = "cat Xtext"
+    return "cat Xtext"
   endif
+endfunc
+
+func Test_terminal_scrape()
+  let cmd = Get_cat_cmd()
   let buf = term_start(cmd)
 
   let termlist = term_list()
@@ -58,6 +156,10 @@ func Test_terminal_scrape()
   call term_wait(1234)
 
   call term_wait(buf)
+  if has('win32')
+    " TODO: this should not be needed
+    sleep 100m
+  endif
   call Check_123(buf)
 
   " Must still work after the job ended.
@@ -68,4 +170,30 @@ func Test_terminal_scrape()
 
   exe buf . 'bwipe'
   call delete('Xtext')
+endfunc
+
+func Test_terminal_size()
+  let cmd = Get_cat_cmd()
+
+  exe '5terminal ' . cmd
+  let size = term_getsize('')
+  bwipe!
+  call assert_equal(5, size[0])
+
+  vsplit
+  exe '5,33terminal ' . cmd
+  let size = term_getsize('')
+  bwipe!
+  call assert_equal([5, 33], size)
+
+  exe 'vertical 20terminal ' . cmd
+  let size = term_getsize('')
+  bwipe!
+  call assert_equal(20, size[1])
+
+  split
+  exe 'vertical 6,20terminal ' . cmd
+  let size = term_getsize('')
+  bwipe!
+  call assert_equal([6, 20], size)
 endfunc
