@@ -38,7 +38,6 @@ SCRIPTS_ALL = \
 	test44.out \
 	test45.out \
 	test48.out \
-	test51.out \
 	test53.out \
 	test55.out \
 	test56.out \
@@ -51,14 +50,10 @@ SCRIPTS_ALL = \
 	test70.out \
 	test73.out \
 	test79.out \
-	test80.out \
 	test88.out \
-	test91.out \
 	test94.out \
 	test95.out \
 	test99.out \
-	test103.out \
-	test107.out \
 	test108.out \
 	test_autoformat_join.out \
 	test_changelist.out \
@@ -140,6 +135,7 @@ NEW_TESTS = test_arabic.res \
 	    test_file_size.res \
 	    test_fnameescape.res \
 	    test_fold.res \
+	    test_getvar.res \
 	    test_gf.res \
 	    test_gn.res \
 	    test_gui.res \
@@ -147,6 +143,7 @@ NEW_TESTS = test_arabic.res \
 	    test_hardcopy.res \
 	    test_help.res \
 	    test_hide.res \
+	    test_highlight.res \
 	    test_history.res \
 	    test_hlsearch.res \
 	    test_increment.res \
@@ -207,7 +204,8 @@ NEW_TESTS = test_arabic.res \
 	    test_writefile.res \
 	    test_alot_latin.res \
 	    test_alot_utf8.res \
-	    test_alot.res
+	    test_alot.res \
+	    test_windows_home.res
 
 
 # Explicit dependencies.

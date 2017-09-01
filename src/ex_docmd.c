@@ -4223,6 +4223,19 @@ set_one_cmd_context(
 	case CMD_xunmap:
 	    return set_context_in_map_cmd(xp, cmd, arg, forceit,
 						      FALSE, TRUE, ea.cmdidx);
+	case CMD_mapclear:
+	case CMD_nmapclear:
+	case CMD_vmapclear:
+	case CMD_omapclear:
+	case CMD_imapclear:
+	case CMD_cmapclear:
+	case CMD_lmapclear:
+	case CMD_smapclear:
+	case CMD_xmapclear:
+	    xp->xp_context = EXPAND_MAPCLEAR;
+	    xp->xp_pattern = arg;
+	    break;
+
 	case CMD_abbreviate:	case CMD_noreabbrev:
 	case CMD_cabbrev:	case CMD_cnoreabbrev:
 	case CMD_iabbrev:	case CMD_inoreabbrev:
@@ -5964,6 +5977,7 @@ static struct
 	&& (defined(FEAT_GETTEXT) || defined(FEAT_MBYTE))
     {EXPAND_LOCALES, "locale"},
 #endif
+    {EXPAND_MAPCLEAR, "mapclear"},
     {EXPAND_MAPPINGS, "mapping"},
     {EXPAND_MENUS, "menu"},
     {EXPAND_MESSAGES, "messages"},
@@ -7454,7 +7468,7 @@ ex_win_close(
 	else
 # endif
 	{
-	    EMSG(_(e_nowrtmsg));
+	    no_write_message();
 	    return;
 	}
     }
@@ -11085,7 +11099,7 @@ static int ses_do_frame(frame_T *fr);
 static int ses_do_win(win_T *wp);
 static int ses_arglist(FILE *fd, char *cmd, garray_T *gap, int fullname, unsigned *flagp);
 static int ses_put_fname(FILE *fd, char_u *name, unsigned *flagp);
-static int ses_fname(FILE *fd, buf_T *buf, unsigned *flagp);
+static int ses_fname(FILE *fd, buf_T *buf, unsigned *flagp, int add_eol);
 
 /*
  * Write openfile commands for the current buffers to an .exrc file.
@@ -11181,7 +11195,7 @@ makeopens(
 	{
 	    if (fprintf(fd, "badd +%ld ", buf->b_wininfo == NULL ? 1L
 					   : buf->b_wininfo->wi_fpos.lnum) < 0
-		    || ses_fname(fd, buf, &ssop_flags) == FAIL)
+		    || ses_fname(fd, buf, &ssop_flags, TRUE) == FAIL)
 		return FAIL;
 	}
     }
@@ -11275,7 +11289,8 @@ makeopens(
 		    )
 	    {
 		if (fputs(need_tabnew ? "tabedit " : "edit ", fd) < 0
-			|| ses_fname(fd, wp->w_buffer, &ssop_flags) == FAIL)
+			      || ses_fname(fd, wp->w_buffer, &ssop_flags, TRUE)
+								       == FAIL)
 		    return FAIL;
 		need_tabnew = FALSE;
 		if (!wp->w_arg_idx_invalid)
@@ -11622,9 +11637,20 @@ put_view(
 	    /*
 	     * Editing a file in this buffer: use ":edit file".
 	     * This may have side effects! (e.g., compressed or network file).
+	     *
+	     * Note, if a buffer for that file already exists, use :badd to
+	     * edit that buffer, to not lose folding information (:edit resets
+	     * folds in other buffers)
 	     */
-	    if (fputs("edit ", fd) < 0
-		    || ses_fname(fd, wp->w_buffer, flagp) == FAIL)
+	    if (fputs("if bufexists('", fd) < 0
+		    || ses_fname(fd, wp->w_buffer, flagp, FALSE) == FAIL
+		    || fputs("') | buffer ", fd) < 0
+		    || ses_fname(fd, wp->w_buffer, flagp, FALSE) == FAIL
+		    || fputs(" | else | edit ", fd) < 0
+		    || ses_fname(fd, wp->w_buffer, flagp, FALSE) == FAIL
+		    || fputs(" | endif", fd) < 0
+		    ||
+		put_eol(fd) == FAIL)
 		return FAIL;
 	}
 	else
@@ -11637,7 +11663,7 @@ put_view(
 	    {
 		/* The buffer does have a name, but it's not a file name. */
 		if (fputs("file ", fd) < 0
-			|| ses_fname(fd, wp->w_buffer, flagp) == FAIL)
+			|| ses_fname(fd, wp->w_buffer, flagp, TRUE) == FAIL)
 		    return FAIL;
 	    }
 #endif
@@ -11809,11 +11835,11 @@ ses_arglist(
 
 /*
  * Write a buffer name to the session file.
- * Also ends the line.
+ * Also ends the line, if "add_eol" is TRUE.
  * Returns FAIL if writing fails.
  */
     static int
-ses_fname(FILE *fd, buf_T *buf, unsigned *flagp)
+ses_fname(FILE *fd, buf_T *buf, unsigned *flagp, int add_eol)
 {
     char_u	*name;
 
@@ -11832,7 +11858,8 @@ ses_fname(FILE *fd, buf_T *buf, unsigned *flagp)
 	name = buf->b_sfname;
     else
 	name = buf->b_ffname;
-    if (ses_put_fname(fd, name, flagp) == FAIL || put_eol(fd) == FAIL)
+    if (ses_put_fname(fd, name, flagp) == FAIL
+	    || (add_eol && put_eol(fd) == FAIL))
 	return FAIL;
     return OK;
 }
@@ -12082,6 +12109,14 @@ get_messages_arg(expand_T *xp UNUSED, int idx)
     return NULL;
 }
 #endif
+
+    char_u *
+get_mapclear_arg(expand_T *xp UNUSED, int idx)
+{
+    if (idx == 0)
+	return (char_u *)"<buffer>";
+    return NULL;
+}
 
 #ifdef FEAT_AUTOCMD
 static int filetype_detect = FALSE;

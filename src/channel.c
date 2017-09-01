@@ -503,6 +503,10 @@ channel_gui_register_one(channel_T *channel, ch_part_T part)
     if (!CH_HAS_GUI)
 	return;
 
+    /* gets stuck in handling events for a not connected channel */
+    if (channel->ch_keep_open)
+	return;
+
 # ifdef FEAT_GUI_X11
     /* Tell notifier we are interested in being called
      * when there is input on the editor connection socket. */
@@ -548,9 +552,12 @@ channel_gui_register(channel_T *channel)
 {
     if (channel->CH_SOCK_FD != INVALID_FD)
 	channel_gui_register_one(channel, PART_SOCK);
-    if (channel->CH_OUT_FD != INVALID_FD)
+    if (channel->CH_OUT_FD != INVALID_FD
+	    && channel->CH_OUT_FD != channel->CH_SOCK_FD)
 	channel_gui_register_one(channel, PART_OUT);
-    if (channel->CH_ERR_FD != INVALID_FD)
+    if (channel->CH_ERR_FD != INVALID_FD
+	    && channel->CH_ERR_FD != channel->CH_SOCK_FD
+	    && channel->CH_ERR_FD != channel->CH_OUT_FD)
 	channel_gui_register_one(channel, PART_ERR);
 }
 
@@ -927,7 +934,7 @@ channel_open_func(typval_T *argvars)
     opt.jo_mode = MODE_JSON;
     opt.jo_timeout = 2000;
     if (get_job_options(&argvars[1], &opt,
-	      JO_MODE_ALL + JO_CB_ALL + JO_WAITTIME + JO_TIMEOUT_ALL) == FAIL)
+	    JO_MODE_ALL + JO_CB_ALL + JO_WAITTIME + JO_TIMEOUT_ALL, 0) == FAIL)
 	goto theend;
     if (opt.jo_timeout < 0)
     {
@@ -1373,7 +1380,7 @@ can_write_buf_line(channel_T *channel)
 }
 
 /*
- * Write any lines to the input channel.
+ * Write any buffer lines to the input channel.
  */
     static void
 channel_write_in(channel_T *channel)
@@ -1446,6 +1453,25 @@ channel_buffer_free(buf_T *buf)
 }
 
 /*
+ * Write any lines waiting to be written to "channel".
+ */
+    static void
+channel_write_input(channel_T *channel)
+{
+    chanpart_T	*in_part = &channel->ch_part[PART_IN];
+
+    if (in_part->ch_writeque.wq_next != NULL)
+	channel_send(channel, PART_IN, (char_u *)"", 0, "channel_write_input");
+    else if (in_part->ch_bufref.br_buf != NULL)
+    {
+	if (in_part->ch_buf_append)
+	    channel_write_new_lines(in_part->ch_bufref.br_buf);
+	else
+	    channel_write_in(channel);
+    }
+}
+
+/*
  * Write any lines waiting to be written to a channel.
  */
     void
@@ -1454,17 +1480,7 @@ channel_write_any_lines(void)
     channel_T	*channel;
 
     for (channel = first_channel; channel != NULL; channel = channel->ch_next)
-    {
-	chanpart_T  *in_part = &channel->ch_part[PART_IN];
-
-	if (in_part->ch_bufref.br_buf != NULL)
-	{
-	    if (in_part->ch_buf_append)
-		channel_write_new_lines(in_part->ch_bufref.br_buf);
-	    else
-		channel_write_in(channel);
-	}
-    }
+	channel_write_input(channel);
 }
 
 /*
@@ -2871,7 +2887,7 @@ channel_close(channel_T *channel, int invoke_close_cb)
 	      if (channel_need_redraw)
 	      {
 		  channel_need_redraw = FALSE;
-		  redraw_after_callback();
+		  redraw_after_callback(TRUE);
 	      }
 
 	      if (!channel->ch_drop_never)
@@ -2984,7 +3000,9 @@ channel_fill_wfds(int maxfd_arg, fd_set *wfds)
     {
 	chanpart_T  *in_part = &ch->ch_part[PART_IN];
 
-	if (in_part->ch_fd != INVALID_FD && in_part->ch_bufref.br_buf != NULL)
+	if (in_part->ch_fd != INVALID_FD
+		&& (in_part->ch_bufref.br_buf != NULL
+		    || in_part->ch_writeque.wq_next != NULL))
 	{
 	    FD_SET((int)in_part->ch_fd, wfds);
 	    if ((int)in_part->ch_fd >= maxfd)
@@ -3007,7 +3025,9 @@ channel_fill_poll_write(int nfd_in, struct pollfd *fds)
     {
 	chanpart_T  *in_part = &ch->ch_part[PART_IN];
 
-	if (in_part->ch_fd != INVALID_FD && in_part->ch_bufref.br_buf != NULL)
+	if (in_part->ch_fd != INVALID_FD
+		&& (in_part->ch_bufref.br_buf != NULL
+		    || in_part->ch_writeque.wq_next != NULL))
 	{
 	    in_part->ch_poll_idx = nfd;
 	    fds[nfd].fd = in_part->ch_fd;
@@ -3234,11 +3254,13 @@ channel_read(channel_T *channel, ch_part_T part, char *func)
 
     /* Reading a disconnection (readlen == 0), or an error. */
     if (readlen <= 0)
-	ch_close_part_on_error(channel, part, (len < 0), func);
-
+    {
+	if (!channel->ch_keep_open)
+	    ch_close_part_on_error(channel, part, (len < 0), func);
+    }
 #if defined(CH_HAS_GUI) && defined(FEAT_GUI_GTK)
-    /* signal the main loop that there is something to read */
-    if (CH_HAS_GUI && gtk_main_level() > 0)
+    else if (CH_HAS_GUI && gtk_main_level() > 0)
+	/* signal the main loop that there is something to read */
 	gtk_main_quit();
 #endif
 }
@@ -3429,7 +3451,7 @@ common_channel_read(typval_T *argvars, typval_T *rettv, int raw)
     rettv->vval.v_string = NULL;
 
     clear_job_options(&opt);
-    if (get_job_options(&argvars[1], &opt, JO_TIMEOUT + JO_PART + JO_ID)
+    if (get_job_options(&argvars[1], &opt, JO_TIMEOUT + JO_PART + JO_ID, 0)
 								      == FAIL)
 	goto theend;
 
@@ -3496,13 +3518,14 @@ channel_fd2channel(sock_T fd, ch_part_T *partp)
 }
 # endif
 
-# if defined(WIN32) || defined(PROTO)
+# if defined(WIN32) || defined(FEAT_GUI) || defined(PROTO)
 /*
  * Check the channels for anything that is ready to be read.
  * The data is put in the read queue.
+ * if "only_keep_open" is TRUE only check channels where ch_keep_open is set.
  */
     void
-channel_handle_events(void)
+channel_handle_events(int only_keep_open)
 {
     channel_T	*channel;
     ch_part_T	part;
@@ -3510,6 +3533,9 @@ channel_handle_events(void)
 
     for (channel = first_channel; channel != NULL; channel = channel->ch_next)
     {
+	if (only_keep_open && !channel->ch_keep_open)
+	    continue;
+
 	/* check the socket and pipes */
 	for (part = PART_SOCK; part < PART_IN; ++part)
 	{
@@ -3529,6 +3555,45 @@ channel_handle_events(void)
 }
 # endif
 
+# if defined(FEAT_GUI) || defined(PROTO)
+/*
+ * Return TRUE when there is any channel with a keep_open flag.
+ */
+    int
+channel_any_keep_open()
+{
+    channel_T	*channel;
+
+    for (channel = first_channel; channel != NULL; channel = channel->ch_next)
+	if (channel->ch_keep_open)
+	    return TRUE;
+    return FALSE;
+}
+# endif
+
+/*
+ * Set "channel"/"part" to non-blocking.
+ * Only works for sockets and pipes.
+ */
+    void
+channel_set_nonblock(channel_T *channel, ch_part_T part)
+{
+    chanpart_T *ch_part = &channel->ch_part[part];
+    int fd = ch_part->ch_fd;
+
+    if (fd != INVALID_FD)
+    {
+#ifdef _WIN32
+	u_long	val = 1;
+
+	ioctlsocket(fd, FIONBIO, &val);
+#else
+	(void)fcntl(fd, F_SETFL, O_NONBLOCK);
+#endif
+	ch_part->ch_nonblocking = TRUE;
+    }
+}
+
 /*
  * Write "buf" (NUL terminated string) to "channel"/"part".
  * When "fun" is not NULL an error message might be given.
@@ -3538,14 +3603,16 @@ channel_handle_events(void)
 channel_send(
 	channel_T *channel,
 	ch_part_T part,
-	char_u	  *buf,
-	int	  len,
+	char_u	  *buf_arg,
+	int	  len_arg,
 	char	  *fun)
 {
     int		res;
     sock_T	fd;
+    chanpart_T	*ch_part = &channel->ch_part[part];
+    int		did_use_queue = FALSE;
 
-    fd = channel->ch_part[part].ch_fd;
+    fd = ch_part->ch_fd;
     if (fd == INVALID_FD)
     {
 	if (!channel->ch_error && fun != NULL)
@@ -3561,29 +3628,144 @@ channel_send(
     {
 	ch_log_lead("SEND ", channel);
 	fprintf(log_fd, "'");
-	ignored = (int)fwrite(buf, len, 1, log_fd);
+	ignored = (int)fwrite(buf_arg, len_arg, 1, log_fd);
 	fprintf(log_fd, "'\n");
 	fflush(log_fd);
 	did_log_msg = TRUE;
     }
 
-    if (part == PART_SOCK)
-	res = sock_write(fd, (char *)buf, len);
-    else
-	res = fd_write(fd, (char *)buf, len);
-    if (res != len)
+    for (;;)
     {
-	if (!channel->ch_error && fun != NULL)
-	{
-	    ch_error(channel, "%s(): write failed", fun);
-	    EMSG2(_("E631: %s(): write failed"), fun);
-	}
-	channel->ch_error = TRUE;
-	return FAIL;
-    }
+	writeq_T    *wq = &ch_part->ch_writeque;
+	char_u	    *buf;
+	int	    len;
 
-    channel->ch_error = FALSE;
-    return OK;
+	if (wq->wq_next != NULL)
+	{
+	    /* first write what was queued */
+	    buf = wq->wq_next->wq_ga.ga_data;
+	    len = wq->wq_next->wq_ga.ga_len;
+	    did_use_queue = TRUE;
+	}
+	else
+	{
+	    if (len_arg == 0)
+		/* nothing to write, called from channel_select_check() */
+		return OK;
+	    buf = buf_arg;
+	    len = len_arg;
+	}
+
+	if (part == PART_SOCK)
+	    res = sock_write(fd, (char *)buf, len);
+	else
+	    res = fd_write(fd, (char *)buf, len);
+	if (res < 0 && (errno == EWOULDBLOCK
+#ifdef EAGAIN
+			|| errno == EAGAIN
+#endif
+		    ))
+	    res = 0; /* nothing got written */
+
+	if (res >= 0 && ch_part->ch_nonblocking)
+	{
+	    writeq_T *entry = wq->wq_next;
+
+	    if (did_use_queue)
+		ch_log(channel, "Sent %d bytes now", res);
+	    if (res == len)
+	    {
+		/* Wrote all the buf[len] bytes. */
+		if (entry != NULL)
+		{
+		    /* Remove the entry from the write queue. */
+		    ga_clear(&entry->wq_ga);
+		    wq->wq_next = entry->wq_next;
+		    if (wq->wq_next == NULL)
+			wq->wq_prev = NULL;
+		    else
+			wq->wq_next->wq_prev = NULL;
+		    continue;
+		}
+		if (did_use_queue)
+		    ch_log(channel, "Write queue empty");
+	    }
+	    else
+	    {
+		/* Wrote only buf[res] bytes, can't write more now. */
+		if (entry != NULL)
+		{
+		    if (res > 0)
+		    {
+			/* Remove the bytes that were written. */
+			mch_memmove(entry->wq_ga.ga_data,
+				    (char *)entry->wq_ga.ga_data + res,
+				    len - res);
+			entry->wq_ga.ga_len -= res;
+		    }
+		    buf = buf_arg;
+		    len = len_arg;
+		}
+		else
+		{
+		    buf += res;
+		    len -= res;
+		}
+		ch_log(channel, "Adding %d bytes to the write queue", len);
+
+		/* Append the not written bytes of the argument to the write
+		 * buffer.  Limit entries to 4000 bytes. */
+		if (wq->wq_prev != NULL
+			&& wq->wq_prev->wq_ga.ga_len + len < 4000)
+		{
+		    writeq_T *last = wq->wq_prev;
+
+		    /* append to the last entry */
+		    if (ga_grow(&last->wq_ga, len) == OK)
+		    {
+			mch_memmove((char *)last->wq_ga.ga_data
+							  + last->wq_ga.ga_len,
+				    buf, len);
+			last->wq_ga.ga_len += len;
+		    }
+		}
+		else
+		{
+		    writeq_T *last = (writeq_T *)alloc((int)sizeof(writeq_T));
+
+		    if (last != NULL)
+		    {
+			last->wq_prev = wq->wq_prev;
+			last->wq_next = NULL;
+			if (wq->wq_prev == NULL)
+			    wq->wq_next = last;
+			else
+			    wq->wq_prev->wq_next = last;
+			wq->wq_prev = last;
+			ga_init2(&last->wq_ga, 1, 1000);
+			if (ga_grow(&last->wq_ga, len) == OK)
+			{
+			    mch_memmove(last->wq_ga.ga_data, buf, len);
+			    last->wq_ga.ga_len = len;
+			}
+		    }
+		}
+	    }
+	}
+	else if (res != len)
+	{
+	    if (!channel->ch_error && fun != NULL)
+	    {
+		ch_error(channel, "%s(): write failed", fun);
+		EMSG2(_("E631: %s(): write failed"), fun);
+	    }
+	    channel->ch_error = TRUE;
+	    return FAIL;
+	}
+
+	channel->ch_error = FALSE;
+	return OK;
+    }
 }
 
 /*
@@ -3612,7 +3794,7 @@ send_common(
     part_send = channel_part_send(channel);
     *part_read = channel_part_read(channel);
 
-    if (get_job_options(&argvars[2], opt, JO_CALLBACK + JO_TIMEOUT) == FAIL)
+    if (get_job_options(&argvars[2], opt, JO_CALLBACK + JO_TIMEOUT, 0) == FAIL)
 	return NULL;
 
     /* Set the callback. An empty callback means no callback and not reading
@@ -3795,13 +3977,7 @@ channel_poll_check(int ret_in, void *fds_in)
 	idx = in_part->ch_poll_idx;
 	if (ret > 0 && idx != -1 && (fds[idx].revents & POLLOUT))
 	{
-	    if (in_part->ch_buf_append)
-	    {
-		if (in_part->ch_bufref.br_buf != NULL)
-		    channel_write_new_lines(in_part->ch_bufref.br_buf);
-	    }
-	    else
-		channel_write_in(channel);
+	    channel_write_input(channel);
 	    --ret;
 	}
     }
@@ -3873,13 +4049,7 @@ channel_select_check(int ret_in, void *rfds_in, void *wfds_in)
 	if (ret > 0 && in_part->ch_fd != INVALID_FD
 					    && FD_ISSET(in_part->ch_fd, wfds))
 	{
-	    if (in_part->ch_buf_append)
-	    {
-		if (in_part->ch_bufref.br_buf != NULL)
-		    channel_write_new_lines(in_part->ch_bufref.br_buf);
-	    }
-	    else
-		channel_write_in(channel);
+	    channel_write_input(channel);
 	    --ret;
 	}
     }
@@ -3976,7 +4146,7 @@ channel_parse_messages(void)
     if (channel_need_redraw)
     {
 	channel_need_redraw = FALSE;
-	redraw_after_callback();
+	redraw_after_callback(TRUE);
     }
 
     --safe_to_invoke_callback;
@@ -4153,6 +4323,8 @@ free_job_options(jobopt_T *opt)
 	partial_unref(opt->jo_exit_partial);
     else if (opt->jo_exit_cb != NULL)
 	func_unref(opt->jo_exit_cb);
+    if (opt->jo_env != NULL)
+	dict_unref(opt->jo_env);
 }
 
 /*
@@ -4167,11 +4339,11 @@ part_from_char(int c)
 /*
  * Get the option entries from the dict in "tv", parse them and put the result
  * in "opt".
- * Only accept options in "supported".
+ * Only accept JO_ options in "supported" and JO2_ options in "supported2".
  * If an option value is invalid return FAIL.
  */
     int
-get_job_options(typval_T *tv, jobopt_T *opt, int supported)
+get_job_options(typval_T *tv, jobopt_T *opt, int supported, int supported2)
 {
     typval_T	*item;
     char_u	*val;
@@ -4409,7 +4581,7 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported)
 #ifdef FEAT_TERMINAL
 	    else if (STRCMP(hi->hi_key, "term_name") == 0)
 	    {
-		if (!(supported & JO2_TERM_NAME))
+		if (!(supported2 & JO2_TERM_NAME))
 		    break;
 		opt->jo_set2 |= JO2_TERM_NAME;
 		opt->jo_term_name = get_tv_string_chk(item);
@@ -4419,7 +4591,97 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported)
 		    return FAIL;
 		}
 	    }
+	    else if (STRCMP(hi->hi_key, "term_finish") == 0)
+	    {
+		if (!(supported2 & JO2_TERM_FINISH))
+		    break;
+		val = get_tv_string(item);
+		if (STRCMP(val, "open") != 0 && STRCMP(val, "close") != 0)
+		{
+		    EMSG2(_(e_invarg2), val);
+		    return FAIL;
+		}
+		opt->jo_set2 |= JO2_TERM_FINISH;
+		opt->jo_term_finish = *val;
+	    }
+	    else if (STRCMP(hi->hi_key, "term_opencmd") == 0)
+	    {
+		char_u *p;
+
+		if (!(supported2 & JO2_TERM_OPENCMD))
+		    break;
+		opt->jo_set2 |= JO2_TERM_OPENCMD;
+		p = opt->jo_term_opencmd = get_tv_string_chk(item);
+		if (p != NULL)
+		{
+		    /* Must have %d and no other %. */
+		    p = vim_strchr(p, '%');
+		    if (p != NULL && (p[1] != 'd'
+					    || vim_strchr(p + 2, '%') != NULL))
+			p = NULL;
+		}
+		if (p == NULL)
+		{
+		    EMSG2(_(e_invarg2), "term_opencmd");
+		    return FAIL;
+		}
+	    }
+	    else if (STRCMP(hi->hi_key, "term_rows") == 0)
+	    {
+		if (!(supported2 & JO2_TERM_ROWS))
+		    break;
+		opt->jo_set |= JO2_TERM_ROWS;
+		opt->jo_term_rows = get_tv_number(item);
+	    }
+	    else if (STRCMP(hi->hi_key, "term_cols") == 0)
+	    {
+		if (!(supported2 & JO2_TERM_COLS))
+		    break;
+		opt->jo_set |= JO2_TERM_COLS;
+		opt->jo_term_cols = get_tv_number(item);
+	    }
+	    else if (STRCMP(hi->hi_key, "vertical") == 0)
+	    {
+		if (!(supported2 & JO2_VERTICAL))
+		    break;
+		opt->jo_set |= JO2_VERTICAL;
+		opt->jo_vertical = get_tv_number(item);
+	    }
+	    else if (STRCMP(hi->hi_key, "curwin") == 0)
+	    {
+		if (!(supported2 & JO2_CURWIN))
+		    break;
+		opt->jo_set |= JO2_CURWIN;
+		opt->jo_curwin = get_tv_number(item);
+	    }
+	    else if (STRCMP(hi->hi_key, "hidden") == 0)
+	    {
+		if (!(supported2 & JO2_HIDDEN))
+		    break;
+		opt->jo_set |= JO2_HIDDEN;
+		opt->jo_hidden = get_tv_number(item);
+	    }
 #endif
+	    else if (STRCMP(hi->hi_key, "env") == 0)
+	    {
+		if (!(supported2 & JO2_ENV))
+		    break;
+		opt->jo_set |= JO2_ENV;
+		opt->jo_env = item->vval.v_dict;
+		++item->vval.v_dict->dv_refcount;
+	    }
+	    else if (STRCMP(hi->hi_key, "cwd") == 0)
+	    {
+		if (!(supported2 & JO2_CWD))
+		    break;
+		opt->jo_cwd = get_tv_string_buf_chk(item, opt->jo_cwd_buf);
+		if (opt->jo_cwd == NULL || !mch_isdir(opt->jo_cwd))
+		{
+		    EMSG2(_(e_invarg2), "cwd");
+		    return FAIL;
+		}
+		opt->jo_set |= JO2_CWD;
+	    }
 	    else if (STRCMP(hi->hi_key, "waittime") == 0)
 	    {
 		if (!(supported & JO_WAITTIME))
@@ -4628,6 +4890,111 @@ job_still_useful(job_T *job)
     return job_need_end_check(job) || job_channel_still_useful(job);
 }
 
+#if !defined(USE_ARGV) || defined(PROTO)
+/*
+ * Escape one argument for an external command.
+ * Returns the escaped string in allocated memory.  NULL when out of memory.
+ */
+    static char_u *
+win32_escape_arg(char_u *arg)
+{
+    int		slen, dlen;
+    int		escaping = 0;
+    int		i;
+    char_u	*s, *d;
+    char_u	*escaped_arg;
+    int		has_spaces = FALSE;
+
+    /* First count the number of extra bytes required. */
+    slen = (int)STRLEN(arg);
+    dlen = slen;
+    for (s = arg; *s != NUL; MB_PTR_ADV(s))
+    {
+	if (*s == '"' || *s == '\\')
+	    ++dlen;
+	if (*s == ' ' || *s == '\t')
+	    has_spaces = TRUE;
+    }
+
+    if (has_spaces)
+	dlen += 2;
+
+    if (dlen == slen)
+	return vim_strsave(arg);
+
+    /* Allocate memory for the result and fill it. */
+    escaped_arg = alloc(dlen + 1);
+    if (escaped_arg == NULL)
+	return NULL;
+    memset(escaped_arg, 0, dlen+1);
+
+    d = escaped_arg;
+
+    if (has_spaces)
+	*d++ = '"';
+
+    for (s = arg; *s != NUL;)
+    {
+	switch (*s)
+	{
+	    case '"':
+		for (i = 0; i < escaping; i++)
+		    *d++ = '\\';
+		escaping = 0;
+		*d++ = '\\';
+		*d++ = *s++;
+		break;
+	    case '\\':
+		escaping++;
+		*d++ = *s++;
+		break;
+	    default:
+		escaping = 0;
+		MB_COPY_CHAR(s, d);
+		break;
+	}
+    }
+
+    /* add terminating quote and finish with a NUL */
+    if (has_spaces)
+    {
+	for (i = 0; i < escaping; i++)
+	    *d++ = '\\';
+	*d++ = '"';
+    }
+    *d = NUL;
+
+    return escaped_arg;
+}
+
+/*
+ * Build a command line from a list, taking care of escaping.
+ * The result is put in gap->ga_data.
+ * Returns FAIL when out of memory.
+ */
+    int
+win32_build_cmd(list_T *l, garray_T *gap)
+{
+    listitem_T  *li;
+    char_u	*s;
+
+    for (li = l->lv_first; li != NULL; li = li->li_next)
+    {
+	s = get_tv_string_chk(&li->li_tv);
+	if (s == NULL)
+	    return FAIL;
+	s = win32_escape_arg(s);
+	if (s == NULL)
+	    return FAIL;
+	ga_concat(gap, s);
+	vim_free(s);
+	if (li->li_next != NULL)
+	    ga_append(gap, ' ');
+    }
+    return OK;
+}
+#endif
+
 /*
  * NOTE: Must call job_cleanup() only once right after the status of "job"
  * changed to JOB_ENDED (i.e. after job_status() returned "dead" first or
@@ -4831,7 +5198,7 @@ job_stop_on_exit(void)
 
     for (job = first_job; job != NULL; job = job->jv_next)
 	if (job->jv_status == JOB_STARTED && job->jv_stoponexit != NULL)
-	    mch_stop_job(job, job->jv_stoponexit);
+	    mch_signal_job(job, job->jv_stoponexit);
 }
 
 /*
@@ -4879,7 +5246,7 @@ job_check_ended(void)
     if (channel_need_redraw)
     {
 	channel_need_redraw = FALSE;
-	redraw_after_callback();
+	redraw_after_callback(TRUE);
     }
 }
 
@@ -4920,8 +5287,9 @@ job_start(typval_T *argvars, jobopt_T *opt_arg)
 	clear_job_options(&opt);
 	opt.jo_mode = MODE_NL;
 	if (get_job_options(&argvars[1], &opt,
-	    JO_MODE_ALL + JO_CB_ALL + JO_TIMEOUT_ALL + JO_STOPONEXIT
-			   + JO_EXIT_CB + JO_OUT_IO + JO_BLOCK_WRITE) == FAIL)
+		    JO_MODE_ALL + JO_CB_ALL + JO_TIMEOUT_ALL + JO_STOPONEXIT
+			 + JO_EXIT_CB + JO_OUT_IO + JO_BLOCK_WRITE,
+		     JO2_ENV + JO2_CWD) == FAIL)
 	    goto theend;
     }
 
@@ -5000,51 +5368,25 @@ job_start(typval_T *argvars, jobopt_T *opt_arg)
     else
     {
 	list_T	    *l = argvars[0].vval.v_list;
+#ifdef USE_ARGV
 	listitem_T  *li;
 	char_u	    *s;
 
-#ifdef USE_ARGV
 	/* Pass argv[] to mch_call_shell(). */
 	argv = (char **)alloc(sizeof(char *) * (l->lv_len + 1));
 	if (argv == NULL)
 	    goto theend;
-#endif
 	for (li = l->lv_first; li != NULL; li = li->li_next)
 	{
 	    s = get_tv_string_chk(&li->li_tv);
 	    if (s == NULL)
 		goto theend;
-#ifdef USE_ARGV
 	    argv[argc++] = (char *)s;
-#else
-	    /* Only escape when needed, double quotes are not always allowed. */
-	    if (li != l->lv_first && vim_strpbrk(s, (char_u *)" \t\"") != NULL)
-	    {
-# ifdef WIN32
-		int old_ssl = p_ssl;
-
-		/* This is using CreateProcess, not cmd.exe.  Always use
-		 * double quote and backslashes. */
-		p_ssl = 0;
-# endif
-		s = vim_strsave_shellescape(s, FALSE, TRUE);
-# ifdef WIN32
-		p_ssl = old_ssl;
-# endif
-		if (s == NULL)
-		    goto theend;
-		ga_concat(&ga, s);
-		vim_free(s);
-	    }
-	    else
-		ga_concat(&ga, s);
-	    if (li->li_next != NULL)
-		ga_append(&ga, ' ');
-#endif
 	}
-#ifdef USE_ARGV
 	argv[argc] = NULL;
 #else
+	if (win32_build_cmd(l, &ga) == FAIL)
+	    goto theend;
 	cmd = ga.ga_data;
 #endif
     }
@@ -5178,7 +5520,7 @@ job_stop(job_T *job, typval_T *argvars, char *type)
 	return 0;
     }
     ch_log(job->jv_channel, "Stopping job with '%s'", (char *)arg);
-    if (mch_stop_job(job, arg) == FAIL)
+    if (mch_signal_job(job, arg) == FAIL)
 	return 0;
 
     /* Assume that only "kill" will kill the job. */

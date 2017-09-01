@@ -473,8 +473,8 @@ close_buffer(
     {
 	if (term_job_running(buf->b_term))
 	{
-	    if (wipe_buf)
-		/* Wiping out a terminal buffer kills the job. */
+	    if (wipe_buf || unload_buf)
+		/* Wiping out or unloading a terminal buffer kills the job. */
 		free_terminal(buf);
 	    else
 	    {
@@ -1648,7 +1648,7 @@ do_buffer(
 	if (bufIsChanged(curbuf))
 #endif
 	{
-	    EMSG(_(e_nowrtmsg));
+	    no_write_message();
 	    return FAIL;
 	}
     }
@@ -1896,6 +1896,28 @@ do_autochdir(void)
 	shorten_fnames(TRUE);
 }
 #endif
+
+    void
+no_write_message(void)
+{
+#ifdef FEAT_TERMINAL
+    if (term_job_running(curbuf->b_term))
+	EMSG(_("E948: Job still running (add ! to end the job)"));
+    else
+#endif
+	EMSG(_("E37: No write since last change (add ! to override)"));
+}
+
+    void
+no_write_message_nobang(void)
+{
+#ifdef FEAT_TERMINAL
+    if (term_job_running(curbuf->b_term))
+	EMSG(_("E948: Job still running"));
+    else
+#endif
+	EMSG(_("E37: No write since last change"));
+}
 
 /*
  * functions for dealing with the buffer list
@@ -3034,6 +3056,8 @@ buflist_list(exarg_T *eap)
     buf_T	*buf;
     int		len;
     int		i;
+    int		ro_char;
+    int		changed_char;
 
     for (buf = firstbuf; buf != NULL && !got_int; buf = buf->b_next)
     {
@@ -3060,6 +3084,21 @@ buflist_list(exarg_T *eap)
 	if (message_filtered(NameBuff))
 	    continue;
 
+	changed_char = (buf->b_flags & BF_READERR) ? 'x'
+					     : (bufIsChanged(buf) ? '+' : ' ');
+#ifdef FEAT_TERMINAL
+	if (term_job_running(buf->b_term))
+	{
+	    ro_char = 'R';
+	    changed_char = ' ';  /* bufIsChanged() returns TRUE to avoid
+				  * closing, but it's not actually changed. */
+	}
+	else if (buf->b_term != NULL)
+	    ro_char = 'F';
+	else
+#endif
+	    ro_char = !buf->b_p_ma ? '-' : (buf->b_p_ro ? '=' : ' ');
+
 	msg_putchar('\n');
 	len = vim_snprintf((char *)IObuff, IOSIZE - 20, "%3d%c%c%c%c%c \"%s\"",
 		buf->b_fnum,
@@ -3068,9 +3107,8 @@ buflist_list(exarg_T *eap)
 			(curwin->w_alt_fnum == buf->b_fnum ? '#' : ' '),
 		buf->b_ml.ml_mfp == NULL ? ' ' :
 			(buf->b_nwindows == 0 ? 'h' : 'a'),
-		!buf->b_p_ma ? '-' : (buf->b_p_ro ? '=' : ' '),
-		(buf->b_flags & BF_READERR) ? 'x'
-					    : (bufIsChanged(buf) ? '+' : ' '),
+		ro_char,
+		changed_char,
 		NameBuff);
 	if (len > IOSIZE - 20)
 	    len = IOSIZE - 20;
@@ -5659,6 +5697,9 @@ write_viminfo_bufferlist(FILE *fp)
 #ifdef FEAT_QUICKFIX
 		|| bt_quickfix(buf)
 #endif
+#ifdef FEAT_TERMINAL
+		|| bt_terminal(buf)
+#endif
 		|| removable(buf->b_ffname))
 	    continue;
 
@@ -5784,8 +5825,8 @@ buf_spname(buf_T *buf)
 	if (buf->b_term != NULL)
 	    return term_get_status_text(buf->b_term);
 #endif
-	if (buf->b_sfname != NULL)
-	    return buf->b_sfname;
+	if (buf->b_fname != NULL)
+	    return buf->b_fname;
 	return (char_u *)_("[Scratch]");
     }
 

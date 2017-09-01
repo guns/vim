@@ -2313,7 +2313,7 @@ msg_scroll_up(void)
 	gui_undraw_cursor();
 #endif
     /* scrolling up always works */
-    screen_del_lines(0, 0, 1, (int)Rows, TRUE, NULL);
+    screen_del_lines(0, 0, 1, (int)Rows, TRUE, 0, NULL);
 
     if (!can_clear((char_u *)" "))
     {
@@ -2639,7 +2639,7 @@ msg_puts_printf(char_u *str, int maxlen)
 # if defined(FEAT_MBYTE) && !defined(FEAT_GUI_MSWIN)
     if (enc_codepage >= 0 && (int)GetConsoleCP() != enc_codepage)
     {
-	int	inlen = STRLEN(str);
+	int	inlen = (int)STRLEN(str);
 	int	outlen;
 	WCHAR	*widestr = (WCHAR *)enc_to_utf16(str, &inlen);
 
@@ -2905,7 +2905,7 @@ do_more_prompt(int typed_char)
 		    }
 
 		    if (toscroll == -1 && screen_ins_lines(0, 0, 1,
-						       (int)Rows, NULL) == OK)
+						     (int)Rows, 0, NULL) == OK)
 		    {
 			/* display line at top */
 			(void)disp_sb_line(0, mp);
