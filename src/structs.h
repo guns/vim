@@ -1487,7 +1487,8 @@ struct jobvar_S
     PROCESS_INFORMATION	jv_proc_info;
     HANDLE		jv_job_object;
 #endif
-    char_u	*jv_tty_name;	/* controlling tty, allocated */
+    char_u	*jv_tty_in;	/* controlling tty input, allocated */
+    char_u	*jv_tty_out;	/* controlling tty output, allocated */
     jobstatus_T	jv_status;
     char_u	*jv_stoponexit; /* allocated */
     int		jv_exitval;
@@ -1632,6 +1633,7 @@ struct channel_S {
     int		ch_last_msg_id;	/* ID of the last message */
 
     chanpart_T	ch_part[PART_COUNT]; /* info for socket, out, err and in */
+    int		ch_write_text_mode; /* write buffer lines with CR, not NL */
 
     char	*ch_hostname;	/* only for socket, allocated */
     int		ch_port;	/* only for socket */
@@ -1651,6 +1653,9 @@ struct channel_S {
 				/* callback for Netbeans when channel is
 				 * closed */
 
+#ifdef WIN32
+    int		ch_named_pipe;	/* using named pipe instead of pty */
+#endif
     char_u	*ch_callback;	/* call when any msg is not handled */
     partial_T	*ch_partial;
     char_u	*ch_close_cb;	/* call when channel is closed */
@@ -1713,7 +1718,8 @@ struct channel_S {
 #define JO2_CURWIN	    0x0200	/* "curwin" */
 #define JO2_HIDDEN	    0x0400	/* "hidden" */
 #define JO2_TERM_OPENCMD    0x0800	/* "term_opencmd" */
-#define JO2_ALL		    0x0FFF
+#define JO2_EOF_CHARS	    0x1000	/* "eof_chars" */
+#define JO2_ALL		    0x1FFF
 
 #define JO_MODE_ALL	(JO_MODE + JO_IN_MODE + JO_OUT_MODE + JO_ERR_MODE)
 #define JO_CB_ALL \
@@ -1779,6 +1785,7 @@ typedef struct
     char_u	*jo_term_name;
     char_u	*jo_term_opencmd;
     int		jo_term_finish;
+    char_u	*jo_eof_chars;
 #endif
 } jobopt_T;
 

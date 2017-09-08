@@ -969,7 +969,13 @@ ch_close_part(channel_T *channel, ch_part_T part)
 	    if ((part == PART_IN || channel->CH_IN_FD != *fd)
 		    && (part == PART_OUT || channel->CH_OUT_FD != *fd)
 		    && (part == PART_ERR || channel->CH_ERR_FD != *fd))
+	    {
+#ifdef WIN32
+		if (channel->ch_named_pipe)
+		    DisconnectNamedPipe((HANDLE)fd);
+#endif
 		fd_close(*fd);
+	    }
 	}
 	*fd = INVALID_FD;
 
@@ -1300,11 +1306,16 @@ write_buf_line(buf_T *buf, linenr_T lnum, channel_T *channel)
 	return;
     memcpy((char *)p, (char *)line, len);
 
-    for (i = 0; i < len; ++i)
-	if (p[i] == NL)
-	    p[i] = NUL;
+    if (channel->ch_write_text_mode)
+	p[len] = CAR;
+    else
+    {
+	for (i = 0; i < len; ++i)
+	    if (p[i] == NL)
+		p[i] = NUL;
 
-    p[len] = NL;
+	p[len] = NL;
+    }
     p[len + 1] = NUL;
     channel_send(channel, PART_IN, p, len + 1, "write_buf_line");
     vim_free(p);
@@ -1417,6 +1428,12 @@ channel_write_in(channel_T *channel)
     in_part->ch_buf_top = lnum;
     if (lnum > buf->b_ml.ml_line_count || lnum > in_part->ch_buf_bot)
     {
+#if defined(FEAT_TERMINAL)
+	/* Send CTRL-D or "eof_chars" to close stdin on MS-Windows. */
+	if (channel->ch_job != NULL)
+	    term_send_eof(channel);
+#endif
+
 	/* Writing is done, no longer need the buffer. */
 	in_part->ch_bufref.br_buf = NULL;
 	ch_log(channel, "Finished writing all lines to channel");
@@ -3075,7 +3092,20 @@ channel_wait(channel_T *channel, sock_T fd, int timeout)
 	    if (r && nread > 0)
 		return CW_READY;
 	    if (r == 0)
-		return CW_ERROR;
+	    {
+		DWORD err = GetLastError();
+
+		if (err != ERROR_BAD_PIPE && err != ERROR_BROKEN_PIPE)
+		    return CW_ERROR;
+
+		if (channel->ch_named_pipe)
+		{
+		    DisconnectNamedPipe((HANDLE)fd);
+		    ConnectNamedPipe((HANDLE)fd, NULL);
+		}
+		else
+		    return CW_ERROR;
+	    }
 
 	    /* perhaps write some buffer lines */
 	    channel_write_any_lines();
@@ -3659,7 +3689,17 @@ channel_send(
 	if (part == PART_SOCK)
 	    res = sock_write(fd, (char *)buf, len);
 	else
+	{
 	    res = fd_write(fd, (char *)buf, len);
+#ifdef WIN32
+	    if (channel->ch_named_pipe && res < 0)
+	    {
+		DisconnectNamedPipe((HANDLE)fd);
+		ConnectNamedPipe((HANDLE)fd, NULL);
+	    }
+#endif
+
+	}
 	if (res < 0 && (errno == EWOULDBLOCK
 #ifdef EAGAIN
 			|| errno == EAGAIN
@@ -4041,6 +4081,7 @@ channel_select_check(int ret_in, void *rfds_in, void *wfds_in)
 	    if (ret > 0 && fd != INVALID_FD && FD_ISSET(fd, rfds))
 	    {
 		channel_read(channel, part, "channel_select_check");
+		FD_CLR(fd, rfds);
 		--ret;
 	    }
 	}
@@ -4050,6 +4091,7 @@ channel_select_check(int ret_in, void *rfds_in, void *wfds_in)
 					    && FD_ISSET(in_part->ch_fd, wfds))
 	{
 	    channel_write_input(channel);
+	    FD_CLR(in_part->ch_fd, wfds);
 	    --ret;
 	}
     }
@@ -4626,6 +4668,20 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported, int supported2)
 		    return FAIL;
 		}
 	    }
+	    else if (STRCMP(hi->hi_key, "eof_chars") == 0)
+	    {
+		char_u *p;
+
+		if (!(supported2 & JO2_EOF_CHARS))
+		    break;
+		opt->jo_set2 |= JO2_EOF_CHARS;
+		p = opt->jo_eof_chars = get_tv_string_chk(item);
+		if (p == NULL)
+		{
+		    EMSG2(_(e_invarg2), "term_opencmd");
+		    return FAIL;
+		}
+	    }
 	    else if (STRCMP(hi->hi_key, "term_rows") == 0)
 	    {
 		if (!(supported2 & JO2_TERM_ROWS))
@@ -4824,7 +4880,8 @@ job_free_contents(job_T *job)
     }
     mch_clear_job(job);
 
-    vim_free(job->jv_tty_name);
+    vim_free(job->jv_tty_in);
+    vim_free(job->jv_tty_out);
     vim_free(job->jv_stoponexit);
     free_callback(job->jv_exit_cb, job->jv_exit_partial);
 }
@@ -5478,8 +5535,10 @@ job_info(job_T *job, dict_T *dict)
     nr = job->jv_proc_info.dwProcessId;
 #endif
     dict_add_nr_str(dict, "process", nr, NULL);
-    dict_add_nr_str(dict, "tty", 0L,
-		   job->jv_tty_name != NULL ? job->jv_tty_name : (char_u *)"");
+    dict_add_nr_str(dict, "tty_in", 0L,
+		   job->jv_tty_in != NULL ? job->jv_tty_in : (char_u *)"");
+    dict_add_nr_str(dict, "tty_out", 0L,
+		   job->jv_tty_out != NULL ? job->jv_tty_out : (char_u *)"");
 
     dict_add_nr_str(dict, "exitval", job->jv_exitval, NULL);
     dict_add_nr_str(dict, "exit_cb", 0L, job->jv_exit_cb);
