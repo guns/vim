@@ -38,9 +38,10 @@
  * in tl_scrollback are no longer used.
  *
  * TODO:
- * - patch to use GUI or cterm colors for vterm. Yasuhiro, #2067
- * - patch to add tmap, jakalope (Jacob Askeland) #2073
- * - Redirecting output does not work on MS-Windows.
+ * - Shift-Tab does not work.
+ * - click in Window toolbar of other window: save/restore Insert and Visual
+ * - Redirecting output does not work on MS-Windows, Test_terminal_redir_file()
+ *   is disabled.
  * - implement term_setsize()
  * - add test for giving error for invalid 'termsize' value.
  * - support minimal size when 'termsize' is "rows*cols".
@@ -55,7 +56,9 @@
  *   mouse in the Terminal window for copy/paste.
  * - when 'encoding' is not utf-8, or the job is using another encoding, setup
  *   conversions.
- * - In the GUI use a terminal emulator for :!cmd.
+ * - In the GUI use a terminal emulator for :!cmd.  Make the height the same as
+ *   the window and position it higher up when it gets filled, so it looks like
+ *   the text scrolls up.
  * - Copy text in the vterm to the Vim buffer once in a while, so that
  *   completion works.
  * - add an optional limit for the scrollback size.  When reaching it remove
@@ -85,6 +88,7 @@ typedef struct {
 typedef struct sb_line_S {
     int		sb_cols;	/* can differ per line */
     cellattr_T	*sb_cells;	/* allocated */
+    cellattr_T	sb_fill_attr;	/* for short line */
 } sb_line_T;
 
 /* typedef term_T in structs.h */
@@ -94,6 +98,9 @@ struct terminal_S {
     VTerm	*tl_vterm;
     job_T	*tl_job;
     buf_T	*tl_buffer;
+
+    /* Set when setting the size of a vterm, reset after redrawing. */
+    int		tl_vterm_size_changed;
 
     /* used when tl_job is NULL and only a pty was created */
     int		tl_tty_fd;
@@ -700,7 +707,7 @@ write_to_term(buf_T *buffer, char_u *msg, channel_T *channel)
 	    update_screen(0);
 	    update_cursor(term, TRUE);
 	}
-	else if (buffer->b_nwindows > 0)
+	else
 	    redraw_after_callback(TRUE);
     }
 }
@@ -943,6 +950,28 @@ add_scrollback_line_to_buffer(term_T *term, char_u *text, int len)
     }
 }
 
+    static void
+cell2cellattr(const VTermScreenCell *cell, cellattr_T *attr)
+{
+    attr->width = cell->width;
+    attr->attrs = cell->attrs;
+    attr->fg = cell->fg;
+    attr->bg = cell->bg;
+}
+
+    static int
+equal_celattr(cellattr_T *a, cellattr_T *b)
+{
+    /* Comparing the colors should be sufficient. */
+    return a->fg.red == b->fg.red
+	&& a->fg.green == b->fg.green
+	&& a->fg.blue == b->fg.blue
+	&& a->bg.red == b->bg.red
+	&& a->bg.green == b->bg.green
+	&& a->bg.blue == b->bg.blue;
+}
+
+
 /*
  * Add the current lines of the terminal to scrollback and to the buffer.
  * Called after the job has ended and when switching to Terminal-Normal mode.
@@ -955,21 +984,30 @@ move_terminal_to_buffer(term_T *term)
     int		    lines_skipped = 0;
     VTermPos	    pos;
     VTermScreenCell cell;
+    cellattr_T	    fill_attr, new_fill_attr;
     cellattr_T	    *p;
     VTermScreen	    *screen;
 
     if (term->tl_vterm == NULL)
 	return;
     screen = vterm_obtain_screen(term->tl_vterm);
+    fill_attr = new_fill_attr = term->tl_default_color;
+
     for (pos.row = 0; pos.row < term->tl_rows; ++pos.row)
     {
 	len = 0;
 	for (pos.col = 0; pos.col < term->tl_cols; ++pos.col)
 	    if (vterm_screen_get_cell(screen, pos, &cell) != 0
 						       && cell.chars[0] != NUL)
+	    {
 		len = pos.col + 1;
+		new_fill_attr = term->tl_default_color;
+	    }
+	    else
+		/* Assume the last attr is the filler attr. */
+		cell2cellattr(&cell, &new_fill_attr);
 
-	if (len == 0)
+	if (len == 0 && equal_celattr(&new_fill_attr, &fill_attr))
 	    ++lines_skipped;
 	else
 	{
@@ -984,14 +1022,19 @@ move_terminal_to_buffer(term_T *term)
 
 		    line->sb_cols = 0;
 		    line->sb_cells = NULL;
+		    line->sb_fill_attr = fill_attr;
 		    ++term->tl_scrollback.ga_len;
 
 		    add_scrollback_line_to_buffer(term, (char_u *)"", 0);
 		}
 	    }
 
-	    p = (cellattr_T *)alloc((int)sizeof(cellattr_T) * len);
-	    if (p != NULL && ga_grow(&term->tl_scrollback, 1) == OK)
+	    if (len == 0)
+		p = NULL;
+	    else
+		p = (cellattr_T *)alloc((int)sizeof(cellattr_T) * len);
+	    if ((p != NULL || len == 0)
+				     && ga_grow(&term->tl_scrollback, 1) == OK)
 	    {
 		garray_T    ga;
 		int	    width;
@@ -1013,10 +1056,7 @@ move_terminal_to_buffer(term_T *term)
 		    {
 			width = cell.width;
 
-			p[pos.col].width = cell.width;
-			p[pos.col].attrs = cell.attrs;
-			p[pos.col].fg = cell.fg;
-			p[pos.col].bg = cell.bg;
+			cell2cellattr(&cell, &p[pos.col]);
 
 			if (ga_grow(&ga, MB_MAXBYTES) == OK)
 			{
@@ -1031,6 +1071,8 @@ move_terminal_to_buffer(term_T *term)
 		}
 		line->sb_cols = len;
 		line->sb_cells = p;
+		line->sb_fill_attr = new_fill_attr;
+		fill_attr = new_fill_attr;
 		++term->tl_scrollback.ga_len;
 
 		if (ga_grow(&ga, 1) == FAIL)
@@ -1046,6 +1088,10 @@ move_terminal_to_buffer(term_T *term)
 		vim_free(p);
 	}
     }
+
+    /* Obtain the current background color. */
+    vterm_state_get_default_colors(vterm_obtain_state(term->tl_vterm),
+		       &term->tl_default_color.fg, &term->tl_default_color.bg);
 
     FOR_ALL_WINDOWS(wp)
     {
@@ -1160,23 +1206,22 @@ term_enter_job_mode()
  * Get a key from the user without mapping.
  * Note: while waiting a terminal may be closed and freed if the channel is
  * closed and ++close was used.
- * TODO: use terminal mode mappings.
+ * Uses terminal mode mappings.
  */
     static int
 term_vgetc()
 {
     int c;
+    int save_State = State;
 
-    ++no_mapping;
-    ++allow_keys;
+    State = TERMINAL;
     got_int = FALSE;
 #ifdef WIN3264
     ctrl_break_was_pressed = FALSE;
 #endif
     c = vgetc();
     got_int = FALSE;
-    --no_mapping;
-    --allow_keys;
+    State = save_State;
     return c;
 }
 
@@ -1365,7 +1410,7 @@ term_paste_register(int prev_c UNUSED)
  * Return TRUE when the cursor of the terminal should be displayed.
  */
     int
-use_terminal_cursor()
+terminal_is_active()
 {
     return in_terminal_loop != NULL;
 }
@@ -1455,13 +1500,15 @@ term_use_loop(void)
 
 /*
  * Wait for input and send it to the job.
+ * When "blocking" is TRUE wait for a character to be typed.  Otherwise return
+ * when there is no more typahead.
  * Return when the start of a CTRL-W command is typed or anything else that
  * should be handled as a Normal mode command.
  * Returns OK if a typed character is to be handled in Normal mode, FAIL if
  * the terminal was closed.
  */
     int
-terminal_loop(void)
+terminal_loop(int blocking)
 {
     int		c;
     int		termkey = 0;
@@ -1498,12 +1545,13 @@ terminal_loop(void)
     }
 #endif
 
-    for (;;)
+    while (blocking || vpeekc() != NUL)
     {
 	/* TODO: skip screen update when handling a sequence of keys. */
 	/* Repeat redrawing in case a message is received while redrawing. */
-	while (curwin->w_redr_type != 0)
-	    update_screen(0);
+	while (must_redraw != 0)
+	    if (update_screen(0) == FAIL)
+		break;
 	update_cursor(curbuf->b_term, FALSE);
 
 	c = term_vgetc();
@@ -1519,7 +1567,7 @@ terminal_loop(void)
 	if (ctrl_break_was_pressed)
 	    mch_signal_job(curbuf->b_term->tl_job, (char_u *)"kill");
 #endif
-
+	/* Was either CTRL-W (termkey) or CTRL-\ pressed? */
 	if (c == (termkey == 0 ? Ctrl_W : termkey) || c == Ctrl_BSL)
 	{
 	    int	    prev_c = c;
@@ -1696,7 +1744,7 @@ color2index(VTermColor *color, int fg, int *boldp)
     else if (red == 128)
     {
 	if (green == 128 && blue == 128)
-	    return lookup_color(12, fg, boldp) + 1; /* high intensity black / dark grey */
+	    return lookup_color(12, fg, boldp) + 1; /* dark grey */
     }
     else if (red == 255)
     {
@@ -1972,16 +2020,21 @@ handle_resize(int rows, int cols, void *user)
 
     term->tl_rows = rows;
     term->tl_cols = cols;
-    FOR_ALL_WINDOWS(wp)
+    if (term->tl_vterm_size_changed)
+	/* Size was set by vterm_set_size(), don't set the window size. */
+	term->tl_vterm_size_changed = FALSE;
+    else
     {
-	if (wp->w_buffer == term->tl_buffer)
+	FOR_ALL_WINDOWS(wp)
 	{
-	    win_setheight_win(rows, wp);
-	    win_setwidth_win(cols, wp);
+	    if (wp->w_buffer == term->tl_buffer)
+	    {
+		win_setheight_win(rows, wp);
+		win_setwidth_win(cols, wp);
+	    }
 	}
+	redraw_buf_later(term->tl_buffer, NOT_VALID);
     }
-
-    redraw_buf_later(term->tl_buffer, NOT_VALID);
     return 1;
 }
 
@@ -2003,11 +2056,14 @@ handle_pushline(int cols, const VTermScreenCell *cells, void *user)
 	int		col;
 	sb_line_T	*line;
 	garray_T	ga;
+	cellattr_T	fill_attr = term->tl_default_color;
 
 	/* do not store empty cells at the end */
 	for (i = 0; i < cols; ++i)
 	    if (cells[i].chars[0] != 0)
 		len = i + 1;
+	    else
+		cell2cellattr(&cells[i], &fill_attr);
 
 	ga_init2(&ga, 1, 100);
 	if (len > 0)
@@ -2024,10 +2080,7 @@ handle_pushline(int cols, const VTermScreenCell *cells, void *user)
 		for (i = 0; (c = cells[col].chars[i]) > 0 || i == 0; ++i)
 		    ga.ga_len += utf_char2bytes(c == NUL ? ' ' : c,
 					     (char_u *)ga.ga_data + ga.ga_len);
-		p[col].width = cells[col].width;
-		p[col].attrs = cells[col].attrs;
-		p[col].fg = cells[col].fg;
-		p[col].bg = cells[col].bg;
+		cell2cellattr(&cells[col], &p[col]);
 	    }
 	}
 	if (ga_grow(&ga, 1) == FAIL)
@@ -2043,6 +2096,7 @@ handle_pushline(int cols, const VTermScreenCell *cells, void *user)
 						  + term->tl_scrollback.ga_len;
 	line->sb_cols = len;
 	line->sb_cells = p;
+	line->sb_fill_attr = fill_attr;
 	++term->tl_scrollback.ga_len;
 	++term->tl_scrollback_scrolled;
     }
@@ -2177,6 +2231,7 @@ term_update_window(win_T *wp)
 	    }
 	}
 
+	term->tl_vterm_size_changed = TRUE;
 	vterm_set_size(vterm, rows, cols);
 	ch_log(term->tl_job->jv_channel, "Resizing terminal to %d lines",
 									 rows);
@@ -2319,7 +2374,7 @@ term_change_in_curbuf(void)
 
 /*
  * Get the screen attribute for a position in the buffer.
- * Use a zero "lnum" to get the default background color.
+ * Use a negative "col" to get the filler background color.
  */
     int
 term_get_attr(buf_T *buf, linenr_T lnum, int col)
@@ -2328,17 +2383,76 @@ term_get_attr(buf_T *buf, linenr_T lnum, int col)
     sb_line_T	*line;
     cellattr_T	*cellattr;
 
-    if (lnum == 0 || lnum > term->tl_scrollback.ga_len)
+    if (lnum > term->tl_scrollback.ga_len)
 	cellattr = &term->tl_default_color;
     else
     {
 	line = (sb_line_T *)term->tl_scrollback.ga_data + lnum - 1;
-	if (col >= line->sb_cols)
-	    cellattr = &term->tl_default_color;
+	if (col < 0 || col >= line->sb_cols)
+	    cellattr = &line->sb_fill_attr;
 	else
 	    cellattr = line->sb_cells + col;
     }
     return cell2attr(cellattr->attrs, cellattr->fg, cellattr->bg);
+}
+
+static VTermColor ansi_table[16] = {
+  {  0,   0,   0}, /* black */
+  {224,   0,   0}, /* dark red */
+  {  0, 224,   0}, /* dark green */
+  {224, 224,   0}, /* dark yellow / brown */
+  {  0,   0, 224}, /* dark blue */
+  {224,   0, 224}, /* dark magenta */
+  {  0, 224, 224}, /* dark cyan */
+  {224, 224, 224}, /* light grey */
+
+  {128, 128, 128}, /* dark grey */
+  {255,  64,  64}, /* light red */
+  { 64, 255,  64}, /* light green */
+  {255, 255,  64}, /* yellow */
+  { 64,  64, 255}, /* light blue */
+  {255,  64, 255}, /* light magenta */
+  { 64, 255, 255}, /* light cyan */
+  {255, 255, 255}, /* white */
+};
+
+static int cube_value[] = {
+    0x00, 0x33, 0x66, 0x99, 0xCC, 0xFF,
+};
+
+static int grey_ramp[] = {
+    0x00, 0x0B, 0x16, 0x21, 0x2C, 0x37, 0x42, 0x4D, 0x58, 0x63, 0x6E, 0x79,
+    0x85, 0x90, 0x9B, 0xA6, 0xB1, 0xBC, 0xC7, 0xD2, 0xDD, 0xE8, 0xF3, 0xFF,
+};
+
+/*
+ * Convert a cterm color number 0 - 255 to RGB.
+ */
+    static void
+cterm_color2rgb(int nr, VTermColor *rgb)
+{
+    int idx;
+
+    if (nr < 16)
+    {
+	*rgb = ansi_table[nr];
+    }
+    else if (nr < 232)
+    {
+	/* 216 color cube */
+	idx = nr - 16;
+	rgb->blue  = cube_value[idx      % 6];
+	rgb->green = cube_value[idx / 6  % 6];
+	rgb->red   = cube_value[idx / 36 % 6];
+    }
+    else if (nr < 256)
+    {
+	/* 24 grey scale ramp */
+	idx = nr - 232;
+	rgb->blue  = grey_ramp[idx];
+	rgb->green = grey_ramp[idx];
+	rgb->red   = grey_ramp[idx];
+    }
 }
 
 /*
@@ -2352,6 +2466,7 @@ create_vterm(term_T *term, int rows, int cols)
     VTermValue	    value;
     VTermColor	    *fg, *bg;
     int		    fgval, bgval;
+    int		    id;
 
     vterm = vterm_new(rows, cols);
     term->tl_vterm = vterm;
@@ -2360,12 +2475,13 @@ create_vterm(term_T *term, int rows, int cols)
     /* TODO: depends on 'encoding'. */
     vterm_set_utf8(vterm, 1);
 
-    /* Vterm uses a default black background.  Set it to white when
-     * 'background' is "light". */
     vim_memset(&term->tl_default_color.attrs, 0, sizeof(VTermScreenCellAttrs));
     term->tl_default_color.width = 1;
     fg = &term->tl_default_color.fg;
     bg = &term->tl_default_color.bg;
+
+    /* Vterm uses a default black background.  Set it to white when
+     * 'background' is "light". */
     if (*p_bg == 'l')
     {
 	fgval = 0;
@@ -2378,6 +2494,99 @@ create_vterm(term_T *term, int rows, int cols)
     }
     fg->red = fg->green = fg->blue = fgval;
     bg->red = bg->green = bg->blue = bgval;
+
+    /* The "Terminal" highlight group overrules the defaults. */
+    id = syn_name2id((char_u *)"Terminal");
+
+    /* Use the actual color for the GUI and when 'guitermcolors' is set. */
+#if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
+    if (0
+# ifdef FEAT_GUI
+	    || gui.in_use
+# endif
+# ifdef FEAT_TERMGUICOLORS
+	    || p_tgc
+# endif
+       )
+    {
+	guicolor_T	fg_rgb = INVALCOLOR;
+	guicolor_T	bg_rgb = INVALCOLOR;
+
+	if (id != 0)
+	    syn_id2colors(id, &fg_rgb, &bg_rgb);
+
+# ifdef FEAT_GUI
+	if (gui.in_use)
+	{
+	    if (fg_rgb == INVALCOLOR)
+		fg_rgb = gui.norm_pixel;
+	    if (bg_rgb == INVALCOLOR)
+		bg_rgb = gui.back_pixel;
+	}
+#  ifdef FEAT_TERMGUICOLORS
+	else
+#  endif
+# endif
+# ifdef FEAT_TERMGUICOLORS
+	{
+	    if (fg_rgb == INVALCOLOR)
+		fg_rgb = cterm_normal_fg_gui_color;
+	    if (bg_rgb == INVALCOLOR)
+		bg_rgb = cterm_normal_bg_gui_color;
+	}
+# endif
+	if (fg_rgb != INVALCOLOR)
+	{
+	    long_u rgb = GUI_MCH_GET_RGB(fg_rgb);
+
+	    fg->red = (unsigned)(rgb >> 16);
+	    fg->green = (unsigned)(rgb >> 8) & 255;
+	    fg->blue = (unsigned)rgb & 255;
+	}
+	if (bg_rgb != INVALCOLOR)
+	{
+	    long_u rgb = GUI_MCH_GET_RGB(bg_rgb);
+
+	    bg->red = (unsigned)(rgb >> 16);
+	    bg->green = (unsigned)(rgb >> 8) & 255;
+	    bg->blue = (unsigned)rgb & 255;
+	}
+    }
+    else
+#endif
+    if (id != 0 && t_colors >= 16)
+    {
+	int cterm_fg, cterm_bg;
+
+	syn_id2cterm_bg(id, &cterm_fg, &cterm_bg);
+	if (cterm_fg >= 0)
+	    cterm_color2rgb(cterm_fg, fg);
+	if (cterm_bg >= 0)
+	    cterm_color2rgb(cterm_bg, bg);
+    }
+#if defined(WIN3264) && !defined(FEAT_GUI_W32)
+    else
+    {
+	int tmp;
+
+	/* In an MS-Windows console we know the normal colors. */
+	if (cterm_normal_fg_color > 0)
+	{
+	    cterm_color2rgb(cterm_normal_fg_color - 1, fg);
+	    tmp = fg->red;
+	    fg->red = fg->blue;
+	    fg->blue = tmp;
+	}
+	if (cterm_normal_bg_color > 0)
+	{
+	    cterm_color2rgb(cterm_normal_bg_color - 1, bg);
+	    tmp = bg->red;
+	    bg->red = bg->blue;
+	    bg->blue = tmp;
+	}
+    }
+#endif
+
     vterm_state_set_default_colors(vterm_obtain_state(vterm), fg, bg);
 
     /* Required to initialize most things. */
