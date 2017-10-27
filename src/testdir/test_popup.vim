@@ -38,7 +38,6 @@ endfu
 func! Test_popup_complete()
   new
   inoremap <f5> <c-r>=ListMonths()<cr>
-  set belloff=all
 
   " <C-E> - select original typed text before the completion started
   call feedkeys("aJu\<f5>\<down>\<c-e>\<esc>", 'tx')
@@ -215,7 +214,6 @@ func! Test_popup_complete()
   call feedkeys("aM\<f5>\<enter>\<esc>", 'tx')
   call assert_equal(["March", "M", "March"], getline(1,4))
   %d
-  set belloff&
 endfu
 
 
@@ -517,7 +515,6 @@ endfunc
 
 func Test_completion_respect_bs_option()
   new
-  set belloff=all
   let li = ["aaa", "aaa12345", "aaaabcdef", "aaaABC"]
 
   set bs=indent,eol
@@ -533,7 +530,6 @@ func Test_completion_respect_bs_option()
   call feedkeys("A\<C-X>\<C-N>\<C-P>\<BS>\<BS>\<BS>\<Esc>", "tx")
   call assert_equal('', getline(1))
 
-  set belloff&
   bw!
 endfunc
 
@@ -620,7 +616,6 @@ endfunc
 
 func Test_complete_CTRLN_startofbuffer()
   new
-  set belloff=all
   call setline(1, [ 'organize(cupboard, 3, 2);',
         \ 'prioritize(bureau, 8, 7);',
         \ 'realize(bannister, 4, 4);',
@@ -631,7 +626,6 @@ func Test_complete_CTRLN_startofbuffer()
         \ 'railing.moralize(3,9);']
   call feedkeys("qai\<c-n>\<c-n>.\<esc>3wdW\<cr>q3@a", 'tx')
   call assert_equal(expected, getline(1,'$'))
-  set belloff&
   bwipe!
 endfunc
 
@@ -665,6 +659,44 @@ func Test_popup_and_window_resize()
   " cursor line also shows !
   call assert_match('^!\s*$', term_getline(g:buf, term_getcursor(g:buf)[0]))
   bwipe!
+endfunc
+
+func Test_popup_and_preview_autocommand()
+  " This used to crash Vim
+  if !has('python')
+    return
+  endif
+  let h = winheight(0)
+  if h < 15
+    return
+  endif
+  new
+  augroup MyBufAdd
+    au!
+    au BufAdd * nested tab sball
+  augroup END
+  set omnifunc=pythoncomplete#Complete
+  call setline(1, 'import os')
+  " make the line long
+  call setline(2, '                                 os.')
+  $
+  call feedkeys("A\<C-X>\<C-O>\<C-N>\<C-N>\<C-N>\<enter>\<esc>", 'tx')
+  call assert_equal("import os", getline(1))
+  call assert_match('                                 os.\(EX_IOERR\|O_CREAT\)$', getline(2))
+  call assert_equal(1, winnr('$'))
+  " previewwindow option is not set
+  call assert_equal(0, &previewwindow)
+  norm! gt
+  call assert_equal(0, &previewwindow)
+  norm! gT
+  call assert_equal(12, tabpagenr('$'))
+  tabonly
+  pclose
+  augroup MyBufAdd
+    au!
+  augroup END
+  augroup! MyBufAdd
+  bw!
 endfunc
 
 " vim: shiftwidth=2 sts=2 expandtab

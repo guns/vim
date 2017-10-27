@@ -5032,7 +5032,7 @@ suggest_trie_walk(
 	    }
 	    PROF_STORE(sp->ts_state)
 	    sp->ts_state = STATE_PLAIN;
-	    /*FALLTHROUGH*/
+	    /* FALLTHROUGH */
 
 	case STATE_PLAIN:
 	    /*
@@ -5256,7 +5256,7 @@ suggest_trie_walk(
 		}
 		break;
 	    }
-	    /*FALLTHROUGH*/
+	    /* FALLTHROUGH */
 
 	case STATE_INS_PREP:
 	    if (sp->ts_flags & TSF_DIDDEL)
@@ -5290,7 +5290,7 @@ suggest_trie_walk(
 	    }
 	    break;
 
-	    /*FALLTHROUGH*/
+	    /* FALLTHROUGH */
 
 	case STATE_INS:
 	    /* Insert one byte.  Repeat this for each possible byte at this
@@ -5477,7 +5477,7 @@ suggest_trie_walk(
 		*p = p[1];
 		p[1] = c;
 	    }
-	    /*FALLTHROUGH*/
+	    /* FALLTHROUGH */
 
 	case STATE_SWAP3:
 	    /* Swap two bytes, skipping one: "123" -> "321".  We change
@@ -5716,7 +5716,7 @@ suggest_trie_walk(
 		p[1] = p[2];
 		p[2] = c;
 	    }
-	    /*FALLTHROUGH*/
+	    /* FALLTHROUGH */
 
 	case STATE_REP_INI:
 	    /* Check if matching with REP items from the .aff file would work.
@@ -5749,7 +5749,7 @@ suggest_trie_walk(
 
 	    PROF_STORE(sp->ts_state)
 	    sp->ts_state = STATE_REP;
-	    /*FALLTHROUGH*/
+	    /* FALLTHROUGH */
 
 	case STATE_REP:
 	    /* Try matching with REP items from the .aff file.  For each match

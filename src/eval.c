@@ -187,7 +187,8 @@ static struct vimvar
     {VV_NAME("t_none",		 VAR_NUMBER), VV_RO},
     {VV_NAME("t_job",		 VAR_NUMBER), VV_RO},
     {VV_NAME("t_channel",	 VAR_NUMBER), VV_RO},
-    {VV_NAME("termrgbresp",	 VAR_STRING), VV_RO},
+    {VV_NAME("termrfgresp",	 VAR_STRING), VV_RO},
+    {VV_NAME("termrbgresp",	 VAR_STRING), VV_RO},
     {VV_NAME("termu7resp",	 VAR_STRING), VV_RO},
     {VV_NAME("termstyleresp",	VAR_STRING), VV_RO},
     {VV_NAME("termblinkresp",	VAR_STRING), VV_RO},
@@ -6994,7 +6995,7 @@ free_tv(typval_T *varp)
 	{
 	    case VAR_FUNC:
 		func_unref(varp->vval.v_string);
-		/*FALLTHROUGH*/
+		/* FALLTHROUGH */
 	    case VAR_STRING:
 		vim_free(varp->vval.v_string);
 		break;
@@ -7039,7 +7040,7 @@ clear_tv(typval_T *varp)
 	{
 	    case VAR_FUNC:
 		func_unref(varp->vval.v_string);
-		/*FALLTHROUGH*/
+		/* FALLTHROUGH */
 	    case VAR_STRING:
 		vim_free(varp->vval.v_string);
 		varp->vval.v_string = NULL;
