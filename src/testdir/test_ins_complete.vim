@@ -2,6 +2,11 @@
 " Test for insert expansion
 func Test_ins_complete()
   edit test_ins_complete.vim
+  " The files in the current directory interferes with the files
+  " used by this test. So use a separate directory for the test.
+  call mkdir('Xdir')
+  cd Xdir
+
   set ff=unix
   call writefile(["test11\t36Gepeto\t/Tag/",
 	      \ "asd\ttest11file\t36G",
@@ -89,4 +94,25 @@ func Test_ins_complete()
   call delete('Xtest11.two')
   call delete('Xtestdata')
   set cpt& cot& def& tags& tagbsearch& hidden&
+  cd ..
+  call delete('Xdir', 'rf')
+endfunc
+
+func Test_omni_dash()
+  func Omni(findstart, base)
+    if a:findstart
+        return 5
+    else
+        echom a:base
+	return ['-help', '-v']
+    endif
+  endfunc
+  set omnifunc=Omni
+  new
+  exe "normal Gofind -\<C-x>\<C-o>"
+  call assert_equal("\n-\nmatch 1 of 2", execute(':2mess'))
+
+  bwipe!
+  delfunc Omni
+  set omnifunc=
 endfunc
