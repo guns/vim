@@ -48,4 +48,5 @@ int linewhite(linenr_T lnum);
 void find_pattern_in_path(char_u *ptr, int dir, int len, int whole, int skip_comments, int type, long count, int action, linenr_T start_lnum, linenr_T end_lnum);
 int read_viminfo_search_pattern(vir_T *virp, int force);
 void write_viminfo_search_pattern(FILE *fp);
+int is_zero_width(char_u *pattern, int firstc);
 /* vim: set ft=c : */

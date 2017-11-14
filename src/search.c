@@ -4654,6 +4654,7 @@ current_quote(
 #endif /* FEAT_TEXTOBJ */
 
 static int is_one_char(char_u *pattern, int move, pos_T *cur, int direction);
+static int is_one_char_int(char_u *pattern, int move, pos_T *cur, int direction, int zero);
 
 /*
  * Find next search match under cursor, cursor at end.
@@ -4820,15 +4821,28 @@ current_search(
     return OK;
 }
 
+    int
+is_zero_width(char_u *pattern, int firstc)
+{
+    return is_one_char_int(pattern, TRUE, NULL, firstc == '/' ? FORWARD : BACKWARD, TRUE);
+}
+
+    int
+is_one_char(char_u *pattern, int move, pos_T *cur, int direction)
+{
+    return is_one_char_int(pattern, move, cur, direction, FALSE);
+}
 /*
  * Check if the pattern is one character long or zero-width.
  * If move is TRUE, check from the beginning of the buffer, else from position
  * "cur".
+ * If zero is TRUE only checks for zero-width pattern, else also checks for
+ * one char width
  * "direction" is FORWARD or BACKWARD.
  * Returns TRUE, FALSE or -1 for failure.
  */
     static int
-is_one_char(char_u *pattern, int move, pos_T *cur, int direction)
+is_one_char_int(char_u *pattern, int move, pos_T *cur, int direction, int zero)
 {
     regmmatch_T	regmatch;
     int		nmatched = 0;
@@ -4880,7 +4894,7 @@ is_one_char(char_u *pattern, int move, pos_T *cur, int direction)
 		&& regmatch.startpos[0].lnum == regmatch.endpos[0].lnum
 		&& regmatch.startpos[0].col == regmatch.endpos[0].col);
 	    /* one char width */
-	    if (!result && inc(&pos) >= 0 && pos.col == regmatch.endpos[0].col)
+	    if (!result && ((!zero && inc(&pos) >= 0) || zero) && pos.col == regmatch.endpos[0].col)
 		result = TRUE;
 	}
     }
