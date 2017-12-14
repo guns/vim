@@ -6369,8 +6369,13 @@ did_set_string_option(
 	     * display output conversion. */
 	    if (((varp == &p_enc && *p_tenc != NUL) || varp == &p_tenc))
 	    {
-		convert_setup(&input_conv, p_tenc, p_enc);
-		convert_setup(&output_conv, p_enc, p_tenc);
+		if (convert_setup(&input_conv, p_tenc, p_enc) == FAIL
+			|| convert_setup(&output_conv, p_enc, p_tenc) == FAIL)
+		{
+		    EMSG3(_("E950: Cannot convert between %s and %s"),
+			    p_tenc, p_enc);
+		    errmsg = e_invarg;
+		}
 	    }
 
 # if defined(WIN3264) && defined(FEAT_MBYTE)
@@ -7401,7 +7406,7 @@ did_set_string_option(
 
 #if defined(FEAT_RENDER_OPTIONS)
     /* 'renderoptions' */
-    else if (varp == &p_rop && gui.in_use)
+    else if (varp == &p_rop)
     {
 	if (!gui_mch_set_rendering_options(p_rop))
 	    errmsg = e_invarg;

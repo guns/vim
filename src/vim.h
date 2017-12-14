@@ -1478,8 +1478,10 @@ typedef UINT32_TYPEDEF UINT32_T;
 #define STATUS_HEIGHT	1	/* height of a status line under a window */
 #ifdef FEAT_MENU		/* height of a status line under a window */
 # define WINBAR_HEIGHT(wp)	(wp)->w_winbar_height
+# define VISIBLE_HEIGHT(wp)	((wp)->w_height + (wp)->w_winbar_height)
 #else
 # define WINBAR_HEIGHT(wp)	0
+# define VISIBLE_HEIGHT(wp)	(wp)->w_height
 #endif
 #define QF_WINHEIGHT	10	/* default height for quickfix window */
 
@@ -2485,7 +2487,8 @@ typedef enum {
 #define FNE_INCL_BR	1	/* include [] in name */
 #define FNE_CHECK_START	2	/* check name starts with valid character */
 
-#if (defined(SUN_SYSTEM) || defined(__FreeBSD__) || defined(__FreeBSD_kernel__)) \
+/* BSD is supposed to cover FreeBSD and similar systems. */
+#if (defined(SUN_SYSTEM) || defined(BSD) || defined(__FreeBSD_kernel__)) \
 	&& defined(S_ISCHR)
 # define OPEN_CHR_FILES
 #endif
