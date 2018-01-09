@@ -3038,3 +3038,70 @@ func Test_lfile_crash()
   call assert_fails('lfile', 'E40')
   au! QuickFixCmdPre
 endfunc
+
+" The following test used to crash vim
+func Test_lbuffer_crash()
+  sv Xtest
+  augroup QF_Test
+    au!
+    au * * bw
+  augroup END
+  lbuffer
+  augroup QF_Test
+    au!
+  augroup END
+endfunc
+
+" The following test used to crash vim
+func Test_lexpr_crash()
+  augroup QF_Test
+    au!
+    au * * call setloclist(0, [], 'f')
+  augroup END
+  lexpr ""
+  augroup QF_Test
+    au!
+  augroup END
+  enew | only
+endfunc
+
+" The following test used to crash Vim
+func Test_lvimgrep_crash()
+  sv Xtest
+  augroup QF_Test
+    au!
+    au * * call setloclist(0, [], 'f')
+  augroup END
+  lvimgrep quickfix test_quickfix.vim
+  augroup QF_Test
+    au!
+  augroup END
+  enew | only
+endfunc
+
+" Test for the position of the quickfix and location list window
+func Test_qfwin_pos()
+  " Open two windows
+  new | only
+  new
+  cexpr ['F1:10:L10']
+  copen
+  " Quickfix window should be the bottom most window
+  call assert_equal(3, winnr())
+  close
+  " Open at the very top
+  wincmd t
+  topleft copen
+  call assert_equal(1, winnr())
+  close
+  " open left of the current window
+  wincmd t
+  below new
+  leftabove copen
+  call assert_equal(2, winnr())
+  close
+  " open right of the current window
+  rightbelow copen
+  call assert_equal(3, winnr())
+  close
+endfunc
