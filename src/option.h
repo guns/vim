@@ -424,6 +424,7 @@ EXTERN int	p_cp;		/* 'compatible' */
 #ifdef FEAT_INS_EXPAND
 EXTERN char_u	*p_cot;		/* 'completeopt' */
 EXTERN long	p_ph;		/* 'pumheight' */
+EXTERN long	p_pw;		/* 'pumwidth' */
 #endif
 EXTERN char_u	*p_cpo;		/* 'cpoptions' */
 #ifdef FEAT_CSCOPE
@@ -476,9 +477,7 @@ EXTERN char_u	*p_efm;		/* 'errorformat' */
 EXTERN char_u	*p_gefm;	/* 'grepformat' */
 EXTERN char_u	*p_gp;		/* 'grepprg' */
 #endif
-#ifdef FEAT_AUTOCMD
 EXTERN char_u	*p_ei;		/* 'eventignore' */
-#endif
 EXTERN int	p_ek;		/* 'esckeys' */
 EXTERN int	p_exrc;		/* 'exrc' */
 #ifdef FEAT_MBYTE
@@ -696,8 +695,14 @@ EXTERN char_u	*p_perldll;	/* 'perldll' */
 #if defined(DYNAMIC_PYTHON3)
 EXTERN char_u	*p_py3dll;	/* 'pythonthreedll' */
 #endif
+#ifdef FEAT_PYTHON3
+EXTERN char_u	*p_py3home;	/* 'pythonthreehome' */
+#endif
 #if defined(DYNAMIC_PYTHON)
 EXTERN char_u	*p_pydll;	/* 'pythondll' */
+#endif
+#ifdef FEAT_PYTHON
+EXTERN char_u	*p_pyhome;	/* 'pythonhome' */
 #endif
 #if defined(FEAT_PYTHON) || defined(FEAT_PYTHON3)
 EXTERN long	p_pyx;		/* 'pyxversion' */
@@ -734,9 +739,7 @@ EXTERN char_u	*p_pp;		/* 'packpath' */
 EXTERN char_u	*p_rtp;		/* 'runtimepath' */
 EXTERN long	p_sj;		/* 'scrolljump' */
 EXTERN long	p_so;		/* 'scrolloff' */
-#ifdef FEAT_SCROLLBIND
 EXTERN char_u	*p_sbo;		/* 'scrollopt' */
-#endif
 EXTERN char_u	*p_sections;	/* 'sections' */
 EXTERN int	p_secure;	/* 'secure' */
 EXTERN char_u	*p_sel;		/* 'selection' */
@@ -1039,9 +1042,7 @@ enum
     , BV_FF
     , BV_FLP
     , BV_FO
-#ifdef FEAT_AUTOCMD
     , BV_FT
-#endif
     , BV_IMI
     , BV_IMS
 #if defined(FEAT_CINDENT) && defined(FEAT_EVAL)
@@ -1130,9 +1131,7 @@ enum
     , WV_TK
     , WV_TMS
 #endif
-#ifdef FEAT_CURSORBIND
     , WV_CRBIND
-#endif
 #ifdef FEAT_LINEBREAK
     , WV_BRI
     , WV_BRIOPT
@@ -1169,9 +1168,7 @@ enum
     , WV_RL
     , WV_RLC
 #endif
-#ifdef FEAT_SCROLLBIND
     , WV_SCBIND
-#endif
     , WV_SCROLL
 #ifdef FEAT_SPELL
     , WV_SPELL

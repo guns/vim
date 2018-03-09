@@ -1269,12 +1269,14 @@ enum auto_event
     EVENT_BUFWRITEPOST,		/* after writing a buffer */
     EVENT_BUFWRITEPRE,		/* before writing a buffer */
     EVENT_BUFWRITECMD,		/* write buffer using command */
+    EVENT_CMDLINECHANGED,	/* command line was modified*/
     EVENT_CMDLINEENTER,		/* after entering the command line */
     EVENT_CMDLINELEAVE,		/* before leaving the command line */
     EVENT_CMDWINENTER,		/* after entering the cmdline window */
     EVENT_CMDWINLEAVE,		/* before leaving the cmdline window */
     EVENT_COLORSCHEME,		/* after loading a colorscheme */
     EVENT_COMPLETEDONE,		/* after finishing insert complete */
+    EVENT_DIRCHANGED,		/* after changing directory as a result of user cmd */
     EVENT_FILEAPPENDPOST,	/* after appending to a file */
     EVENT_FILEAPPENDPRE,	/* before appending to a file */
     EVENT_FILEAPPENDCMD,	/* append to a file using command */
@@ -1335,8 +1337,11 @@ enum auto_event
     EVENT_TABCLOSED,		/* after closing a tab page */
     EVENT_SHELLCMDPOST,		/* after ":!cmd" */
     EVENT_SHELLFILTERPOST,	/* after ":1,2!cmd", ":w !cmd", ":r !cmd". */
-    EVENT_TEXTCHANGED,		/* text was modified */
-    EVENT_TEXTCHANGEDI,		/* text was modified in Insert mode*/
+    EVENT_TEXTCHANGED,		/* text was modified not in Insert mode */
+    EVENT_TEXTCHANGEDI,         /* text was modified in Insert mode without
+				   popup menu visible */
+    EVENT_TEXTCHANGEDP,         /* text was modified in Insert mode with popup
+				   menu visible */
     EVENT_CMDUNDEFINED,		/* command undefined */
     EVENT_OPTIONSET,		/* option was set */
     EVENT_TEXTYANKPOST,		/* after some text was yanked */
@@ -2113,6 +2118,26 @@ typedef enum {
 # define USE_MCH_ERRMSG
 #endif
 
+# if defined(FEAT_MBYTE) && defined(FEAT_EVAL) \
+	&& (!defined(FEAT_GUI_W32) \
+	     || !(defined(FEAT_MBYTE_IME) || defined(GLOBAL_IME))) \
+	&& !(defined(FEAT_GUI_MAC) && defined(MACOS_CONVERT))
+/* Whether IME is supported by im_get_status() defined in mbyte.c.
+ * For Win32 GUI it's in gui_w32.c when FEAT_MBYTE_IME or GLOBAL_IME is defined.
+ * for Mac it is in gui_mac.c for the GUI or in os_mac_conv.c when
+ * MACOS_CONVERT is defined. */
+# define IME_WITHOUT_XIM
+#endif
+
+#if defined(FEAT_MBYTE) && (defined(FEAT_XIM) \
+	|| defined(IME_WITHOUT_XIM) \
+	|| (defined(FEAT_GUI_W32) \
+	    && (defined(FEAT_MBYTE_IME) || defined(GLOBAL_IME))) \
+	|| defined(FEAT_GUI_MAC))
+/* im_set_active() is available */
+# define HAVE_INPUT_METHOD
+#endif
+
 #ifndef FEAT_MBYTE
 # define after_pathsep(b, p)	vim_ispathsep(*((p) - 1))
 # define transchar_byte(c)	transchar(c)
@@ -2512,5 +2537,9 @@ typedef enum {
 #   endif
 # endif
 #endif
+
+/* Replacement for nchar used by nv_replace(). */
+#define REPLACE_CR_NCHAR    -1
+#define REPLACE_NL_NCHAR    -2
 
 #endif /* VIM__H */

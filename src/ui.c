@@ -130,8 +130,7 @@ ui_inchar(
 	if (maxlen >= ta_len - ta_off)
 	{
 	    mch_memmove(buf, ta_str + ta_off, (size_t)ta_len);
-	    vim_free(ta_str);
-	    ta_str = NULL;
+	    VIM_CLEAR(ta_str);
 	    return ta_len;
 	}
 	mch_memmove(buf, ta_str + ta_off, (size_t)maxlen);
@@ -245,7 +244,7 @@ ui_wait_for_chars_or_timer(
 	if (interrupted != NULL && *interrupted)
 	    /* Nothing available, but need to return so that side effects get
 	     * handled, such as handling a message on a channel. */
-	    return FALSE;
+	    return FAIL;
 	if (wtime > 0)
 	    remaining -= due_time;
     }
@@ -578,11 +577,7 @@ clip_lose_selection(VimClipboard *cbd)
 	    update_curbuf(INVERTED_ALL);
 	    setcursor();
 	    cursor_on();
-	    out_flush();
-# ifdef FEAT_GUI
-	    if (gui.in_use)
-		gui_update_cursor(TRUE, FALSE);
-# endif
+	    out_flush_cursor(TRUE, FALSE);
 	}
     }
 #endif
@@ -1844,10 +1839,7 @@ fill_input_buf(int exit_on_error UNUSED)
 	    unconverted = restlen;
 	mch_memmove(inbuf + inbufcount, rest, unconverted);
 	if (unconverted == restlen)
-	{
-	    vim_free(rest);
-	    rest = NULL;
-	}
+	    VIM_CLEAR(rest);
 	else
 	{
 	    restlen -= unconverted;
@@ -3207,7 +3199,8 @@ mouse_find_win(int *rowp, int *colp UNUSED)
 
 #if defined(FEAT_GUI_MOTIF) || defined(FEAT_GUI_GTK) || defined(FEAT_GUI_MAC) \
 	|| defined(FEAT_GUI_ATHENA) || defined(FEAT_GUI_MSWIN) \
-	|| defined(FEAT_GUI_PHOTON) || defined(PROTO)
+	|| defined(FEAT_GUI_PHOTON) || defined(FEAT_TERM_POPUP_MENU) \
+	|| defined(PROTO)
 /*
  * Translate window coordinates to buffer position without any side effects
  */
@@ -3253,7 +3246,8 @@ get_fpos_of_mouse(pos_T *mpos)
 
 #if defined(FEAT_GUI_MOTIF) || defined(FEAT_GUI_GTK) || defined(FEAT_GUI_MAC) \
 	|| defined(FEAT_GUI_ATHENA) || defined(FEAT_GUI_MSWIN) \
-	|| defined(FEAT_GUI_PHOTON) || defined(FEAT_BEVAL) || defined(PROTO)
+	|| defined(FEAT_GUI_PHOTON) || defined(FEAT_BEVAL) \
+	|| defined(FEAT_TERM_POPUP_MENU) || defined(PROTO)
 /*
  * Convert a virtual (screen) column to a character column.
  * The first column is one.
@@ -3305,13 +3299,11 @@ ui_focus_change(
 	last_time = time(NULL);
     }
 
-#ifdef FEAT_AUTOCMD
     /*
      * Fire the focus gained/lost autocommand.
      */
     need_redraw |= apply_autocmds(in_focus ? EVENT_FOCUSGAINED
 				: EVENT_FOCUSLOST, NULL, NULL, FALSE, curbuf);
-#endif
 
     if (need_redraw)
     {
@@ -3331,13 +3323,10 @@ ui_focus_change(
 	    setcursor();
 	}
 	cursor_on();	    /* redrawing may have switched it off */
-	out_flush();
+	out_flush_cursor(FALSE, TRUE);
 # ifdef FEAT_GUI
 	if (gui.in_use)
-	{
-	    gui_update_cursor(FALSE, TRUE);
 	    gui_update_scrollbars(FALSE);
-	}
 # endif
     }
 #ifdef FEAT_TITLE
@@ -3348,7 +3337,7 @@ ui_focus_change(
 }
 #endif
 
-#if defined(FEAT_MBYTE) || defined(PROTO)
+#if defined(HAVE_INPUT_METHOD) || defined(PROTO)
 /*
  * Save current Input Method status to specified place.
  */
