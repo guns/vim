@@ -2035,7 +2035,7 @@ cmdline_changed:
 	    if (is_zero_width(pat, firstc))
 	    {
 		highlight_match = FALSE;
-		SET_NO_HLSEARCH(TRUE); /* turn off previous highlight */
+		set_no_hlsearch(TRUE); /* turn off previous highlight */
 	    }
 	    --emsg_off;
 	    /* first restore the old curwin values, so the screen is
