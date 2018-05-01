@@ -1366,15 +1366,21 @@ key_release_event(GtkWidget *widget UNUSED,
  * Selection handlers:
  */
 
+/* Remember when clip_lose_selection was called from here, we must not call
+ * gtk_selection_owner_set() then. */
+static int in_selection_clear_event = FALSE;
+
     static gint
 selection_clear_event(GtkWidget		*widget UNUSED,
 		      GdkEventSelection	*event,
 		      gpointer		user_data UNUSED)
 {
+    in_selection_clear_event = TRUE;
     if (event->selection == clip_plus.gtk_sel_atom)
 	clip_lose_selection(&clip_plus);
     else
 	clip_lose_selection(&clip_star);
+    in_selection_clear_event = FALSE;
 
     return TRUE;
 }
@@ -5601,15 +5607,17 @@ gui_mch_free_font(GuiFont font)
     guicolor_T
 gui_mch_get_color(char_u *name)
 {
+    guicolor_T color = INVALCOLOR;
+
     if (!gui.in_use)		/* can't do this when GUI not running */
-	return INVALCOLOR;
+	return color;
+
+    if (name != NULL)
+	color = gui_get_color_cmn(name);
 
 #if GTK_CHECK_VERSION(3,0,0)
-    return name != NULL ? gui_get_color_cmn(name) : INVALCOLOR;
+    return color;
 #else
-    guicolor_T color;
-
-    color = (name != NULL) ? gui_get_color_cmn(name) : INVALCOLOR;
     if (color == INVALCOLOR)
 	return INVALCOLOR;
 
@@ -7048,8 +7056,11 @@ clip_mch_request_selection(VimClipboard *cbd)
     void
 clip_mch_lose_selection(VimClipboard *cbd UNUSED)
 {
-    gtk_selection_owner_set(NULL, cbd->gtk_sel_atom, gui.event_time);
-    gui_mch_update();
+    if (!in_selection_clear_event)
+    {
+	gtk_selection_owner_set(NULL, cbd->gtk_sel_atom, gui.event_time);
+	gui_mch_update();
+    }
 }
 
 /*

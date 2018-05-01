@@ -38,48 +38,28 @@
  * in tl_scrollback are no longer used.
  *
  * TODO:
- * - What to store in a session file?  Shell at the prompt would be OK to
- *   restore, but others may not.  Open the window and let the user start the
- *   command?  Also see #2650.
- * - Adding WinBar to terminal window doesn't display, text isn't shifted down.
- * - When using 'termguicolors' still use the 16 ANSI colors as-is.  Helps for
- *   a job that uses 16 colors while Vim is using > 256.
- * - in GUI vertical split causes problems.  Cursor is flickering. (Hirohito
- *   Higashi, 2017 Sep 19)
- * - Trigger TerminalOpen event?  #2422  patch in #2484
- * - after resizing windows overlap. (Boris Staletic, #2164)
- * - Redirecting output does not work on MS-Windows, Test_terminal_redir_file()
+ * - Win32: Make terminal used for :!cmd in the GUI work better.  Allow for
+ *   redirection.  Probably in call to channel_set_pipes().
+ * - Win32: Redirecting output does not work, Test_terminal_redir_file()
  *   is disabled.
- * - if the job in the terminal does not support the mouse, we can use the
- *   mouse in the Terminal window for copy/paste and scrolling.
- * - cursor blinks in terminal on widows with a timer. (xtal8, #2142)
- * - When closing gvim with an active terminal buffer, the dialog suggests
- *   saving the buffer.  Should say something else. (Manas Thakur, #2215)
- *   Also: #2223
- * - Termdebug does not work when Vim build with mzscheme.  gdb hangs.
- * - MS-Windows GUI: WinBar has  tearoff item
- * - MS-Windows GUI: still need to type a key after shell exits?  #1924
- * - After executing a shell command the status line isn't redraw.
- * - implement term_setsize()
- * - add test for giving error for invalid 'termsize' value.
- * - support minimal size when 'termsize' is "rows*cols".
- * - support minimal size when 'termsize' is empty?
+ * - Add test for 'termwinkey'.
+ * - When starting terminal window with shell in terminal, then using :gui to
+ *   switch to GUI, shell stops working. Scrollback seems wrong, command
+ *   running in shell is still running.
  * - GUI: when using tabs, focus in terminal, click on tab does not work.
- * - GUI: when 'confirm' is set and trying to exit Vim, dialog offers to save
- *   changes to "!shell".
- *   (justrajdeep, 2017 Aug 22)
+ * - handle_moverect() scrolls one line at a time.  Postpone scrolling, count
+ *   the number of lines, until a redraw happens.  Then if scrolling many lines
+ *   a redraw is faster.
+ * - Copy text in the vterm to the Vim buffer once in a while, so that
+ *   completion works.
  * - Redrawing is slow with Athena and Motif.  Also other GUI? (Ramel Eshed)
  * - For the GUI fill termios with default values, perhaps like pangoterm:
  *   http://bazaar.launchpad.net/~leonerd/pangoterm/trunk/view/head:/main.c#L134
- * - when 'encoding' is not utf-8, or the job is using another encoding, setup
+ * - When 'encoding' is not utf-8, or the job is using another encoding, setup
  *   conversions.
- * - In the GUI use a terminal emulator for :!cmd.  Make the height the same as
- *   the window and position it higher up when it gets filled, so it looks like
- *   the text scrolls up.
- * - Copy text in the vterm to the Vim buffer once in a while, so that
- *   completion works.
- * - add an optional limit for the scrollback size.  When reaching it remove
- *   10% at the start.
+ * - Termdebug does not work when Vim build with mzscheme: gdb hangs just after
+ *   "run".  Everything else works, including communication channel.  Not
+ *   initializing mzscheme avoid the problem, thus it's not some #ifdef.
  */
 
 #include "vim.h"
@@ -116,6 +96,10 @@ struct terminal_S {
     VTerm	*tl_vterm;
     job_T	*tl_job;
     buf_T	*tl_buffer;
+#if defined(FEAT_GUI)
+    int		tl_system;	/* when non-zero used for :!cmd output */
+    int		tl_toprow;	/* row with first line of system terminal */
+#endif
 
     /* Set when setting the size of a vterm, reset after redrawing. */
     int		tl_vterm_size_changed;
@@ -127,7 +111,11 @@ struct terminal_S {
 
     int		tl_normal_mode; /* TRUE: Terminal-Normal mode */
     int		tl_channel_closed;
-    int		tl_finish;	/* 'c' for ++close, 'o' for ++open */
+    int		tl_finish;
+#define TL_FINISH_UNSET	    NUL
+#define TL_FINISH_CLOSE	    'c'	/* ++close or :terminal without argument */
+#define TL_FINISH_NOCLOSE   'n'	/* ++noclose */
+#define TL_FINISH_OPEN	    'o'	/* ++open */
     char_u	*tl_opencmd;
     char_u	*tl_eof_chars;
 
@@ -135,13 +123,14 @@ struct terminal_S {
     void	*tl_winpty_config;
     void	*tl_winpty;
 #endif
+#if defined(FEAT_SESSION)
+    char_u	*tl_command;
+#endif
+    char_u	*tl_kill;
 
     /* last known vterm size */
     int		tl_rows;
     int		tl_cols;
-    /* vterm size does not follow window size */
-    int		tl_rows_fixed;
-    int		tl_cols_fixed;
 
     char_u	*tl_title; /* NULL or allocated */
     char_u	*tl_status_text; /* NULL or allocated */
@@ -183,10 +172,13 @@ static term_T *in_terminal_loop = NULL;
 /*
  * Functions with separate implementation for MS-Windows and Unix-like systems.
  */
-static int term_and_job_init(term_T *term, typval_T *argvar, jobopt_T *opt);
+static int term_and_job_init(term_T *term, typval_T *argvar, char **argv, jobopt_T *opt);
 static int create_pty_only(term_T *term, jobopt_T *opt);
 static void term_report_winsize(term_T *term, int rows, int cols);
 static void term_free_vterm(term_T *term);
+#ifdef FEAT_GUI
+static void update_system_term(term_T *term);
+#endif
 
 /* The character that we know (or assume) that the terminal expects for the
  * backspace key. */
@@ -211,40 +203,73 @@ static int	desired_cursor_blink = -1;
  */
 
 /*
+ * Parse 'termsize' and set "rows" and "cols" for the terminal size in the
+ * current window.
+ * Sets "rows" and/or "cols" to zero when it should follow the window size.
+ * Return TRUE if the size is the minimum size: "24*80".
+ */
+    static int
+parse_termsize(win_T *wp, int *rows, int *cols)
+{
+    int	minsize = FALSE;
+
+    *rows = 0;
+    *cols = 0;
+
+    if (*wp->w_p_tws != NUL)
+    {
+	char_u *p = vim_strchr(wp->w_p_tws, 'x');
+
+	/* Syntax of value was already checked when it's set. */
+	if (p == NULL)
+	{
+	    minsize = TRUE;
+	    p = vim_strchr(wp->w_p_tws, '*');
+	}
+	*rows = atoi((char *)wp->w_p_tws);
+	*cols = atoi((char *)p + 1);
+    }
+    return minsize;
+}
+
+/*
  * Determine the terminal size from 'termsize' and the current window.
- * Assumes term->tl_rows and term->tl_cols are zero.
  */
     static void
 set_term_and_win_size(term_T *term)
 {
-    if (*curwin->w_p_tms != NUL)
+#ifdef FEAT_GUI
+    if (term->tl_system)
     {
-	char_u *p = vim_strchr(curwin->w_p_tms, 'x') + 1;
-
-	term->tl_rows = atoi((char *)curwin->w_p_tms);
-	term->tl_cols = atoi((char *)p);
+	/* Use the whole screen for the system command.  However, it will start
+	 * at the command line and scroll up as needed, using tl_toprow. */
+	term->tl_rows = Rows;
+	term->tl_cols = Columns;
+	return;
+    }
+#endif
+    if (parse_termsize(curwin, &term->tl_rows, &term->tl_cols))
+    {
+	if (term->tl_rows != 0)
+	    term->tl_rows = MAX(term->tl_rows, curwin->w_height);
+	if (term->tl_cols != 0)
+	    term->tl_cols = MAX(term->tl_cols, curwin->w_width);
     }
     if (term->tl_rows == 0)
 	term->tl_rows = curwin->w_height;
     else
-    {
 	win_setheight_win(term->tl_rows, curwin);
-	term->tl_rows_fixed = TRUE;
-    }
     if (term->tl_cols == 0)
 	term->tl_cols = curwin->w_width;
     else
-    {
 	win_setwidth_win(term->tl_cols, curwin);
-	term->tl_cols_fixed = TRUE;
-    }
 }
 
 /*
  * Initialize job options for a terminal job.
  * Caller may overrule some of them.
  */
-    static void
+    void
 init_job_options(jobopt_T *opt)
 {
     clear_job_options(opt);
@@ -309,12 +334,17 @@ term_close_buffer(buf_T *buf, buf_T *old_curbuf)
 
 /*
  * Start a terminal window and return its buffer.
- * When "without_job" is TRUE only create the buffer, b_term and open the
- * window.
+ * Use either "argvar" or "argv", the other must be NULL.
+ * When "flags" has TERM_START_NOJOB only create the buffer, b_term and open
+ * the window.
  * Returns NULL when failed.
  */
-    static buf_T *
-term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
+    buf_T *
+term_start(
+	typval_T    *argvar,
+	char	    **argv,
+	jobopt_T    *opt,
+	int	    flags)
 {
     exarg_T	split_ea;
     win_T	*old_curwin = curwin;
@@ -322,6 +352,7 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
     buf_T	*old_curbuf = NULL;
     int		res;
     buf_T	*newbuf;
+    int		vertical = opt->jo_vertical || (cmdmod.split & WSP_VERT);
 
     if (check_restricted() || check_secure())
 	return NULL;
@@ -342,26 +373,31 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
     term->tl_cursor_visible = TRUE;
     term->tl_cursor_shape = VTERM_PROP_CURSORSHAPE_BLOCK;
     term->tl_finish = opt->jo_term_finish;
+#ifdef FEAT_GUI
+    term->tl_system = (flags & TERM_START_SYSTEM);
+#endif
     ga_init2(&term->tl_scrollback, sizeof(sb_line_T), 300);
 
     vim_memset(&split_ea, 0, sizeof(split_ea));
     if (opt->jo_curwin)
     {
 	/* Create a new buffer in the current window. */
-	if (!can_abandon(curbuf, forceit))
+	if (!can_abandon(curbuf, flags & TERM_START_FORCEIT))
 	{
 	    no_write_message();
 	    vim_free(term);
 	    return NULL;
 	}
 	if (do_ecmd(0, NULL, NULL, &split_ea, ECMD_ONE,
-		     ECMD_HIDE + (forceit ? ECMD_FORCEIT : 0), curwin) == FAIL)
+		     ECMD_HIDE
+			   + ((flags & TERM_START_FORCEIT) ? ECMD_FORCEIT : 0),
+		     curwin) == FAIL)
 	{
 	    vim_free(term);
 	    return NULL;
 	}
     }
-    else if (opt->jo_hidden)
+    else if (opt->jo_hidden || (flags & TERM_START_SYSTEM))
     {
 	buf_T *buf;
 
@@ -386,17 +422,19 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
 	split_ea.cmdidx = CMD_new;
 	split_ea.cmd = (char_u *)"new";
 	split_ea.arg = (char_u *)"";
-	if (opt->jo_term_rows > 0 && !(cmdmod.split & WSP_VERT))
+	if (opt->jo_term_rows > 0 && !vertical)
 	{
 	    split_ea.line2 = opt->jo_term_rows;
 	    split_ea.addr_count = 1;
 	}
-	if (opt->jo_term_cols > 0 && (cmdmod.split & WSP_VERT))
+	if (opt->jo_term_cols > 0 && vertical)
 	{
 	    split_ea.line2 = opt->jo_term_cols;
 	    split_ea.addr_count = 1;
 	}
 
+	if (vertical)
+	    cmdmod.split |= WSP_VERT;
 	ex_splitview(&split_ea);
 	if (curwin == old_curwin)
 	{
@@ -412,11 +450,9 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
     {
 	/* Only one size was taken care of with :new, do the other one.  With
 	 * "curwin" both need to be done. */
-	if (opt->jo_term_rows > 0 && (opt->jo_curwin
-						 || (cmdmod.split & WSP_VERT)))
+	if (opt->jo_term_rows > 0 && (opt->jo_curwin || vertical))
 	    win_setheight(opt->jo_term_rows);
-	if (opt->jo_term_cols > 0 && (opt->jo_curwin
-						|| !(cmdmod.split & WSP_VERT)))
+	if (opt->jo_term_cols > 0 && (opt->jo_curwin || !vertical))
 	    win_setwidth(opt->jo_term_cols);
     }
 
@@ -426,6 +462,8 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
 
     if (opt->jo_term_name != NULL)
 	curbuf->b_ffname = vim_strsave(opt->jo_term_name);
+    else if (argv != NULL)
+	curbuf->b_ffname = vim_strsave((char_u *)"!system");
     else
     {
 	int	i;
@@ -484,16 +522,70 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
     set_term_and_win_size(term);
     setup_job_options(opt, term->tl_rows, term->tl_cols);
 
-    if (without_job)
+    if (flags & TERM_START_NOJOB)
 	return curbuf;
 
+#if defined(FEAT_SESSION)
+    /* Remember the command for the session file. */
+    if (opt->jo_term_norestore || argv != NULL)
+    {
+	term->tl_command = vim_strsave((char_u *)"NONE");
+    }
+    else if (argvar->v_type == VAR_STRING)
+    {
+	char_u	*cmd = argvar->vval.v_string;
+
+	if (cmd != NULL && STRCMP(cmd, p_sh) != 0)
+	    term->tl_command = vim_strsave(cmd);
+    }
+    else if (argvar->v_type == VAR_LIST
+	    && argvar->vval.v_list != NULL
+	    && argvar->vval.v_list->lv_len > 0)
+    {
+	garray_T	ga;
+	listitem_T	*item;
+
+	ga_init2(&ga, 1, 100);
+	for (item = argvar->vval.v_list->lv_first;
+					item != NULL; item = item->li_next)
+	{
+	    char_u *s = get_tv_string_chk(&item->li_tv);
+	    char_u *p;
+
+	    if (s == NULL)
+		break;
+	    p = vim_strsave_fnameescape(s, FALSE);
+	    if (p == NULL)
+		break;
+	    ga_concat(&ga, p);
+	    vim_free(p);
+	    ga_append(&ga, ' ');
+	}
+	if (item == NULL)
+	{
+	    ga_append(&ga, NUL);
+	    term->tl_command = ga.ga_data;
+	}
+	else
+	    ga_clear(&ga);
+    }
+#endif
+
+    if (opt->jo_term_kill != NULL)
+    {
+	char_u *p = skiptowhite(opt->jo_term_kill);
+
+	term->tl_kill = vim_strnsave(opt->jo_term_kill, p - opt->jo_term_kill);
+    }
+
     /* System dependent: setup the vterm and maybe start the job in it. */
-    if (argvar->v_type == VAR_STRING
+    if (argv == NULL
+	    && argvar->v_type == VAR_STRING
 	    && argvar->vval.v_string != NULL
 	    && STRCMP(argvar->vval.v_string, "NONE") == 0)
 	res = create_pty_only(term, opt);
     else
-	res = term_and_job_init(term, argvar, opt);
+	res = term_and_job_init(term, argvar, argv, opt);
 
     newbuf = curbuf;
     if (res == OK)
@@ -501,19 +593,26 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
 	/* Get and remember the size we ended up with.  Update the pty. */
 	vterm_get_size(term->tl_vterm, &term->tl_rows, &term->tl_cols);
 	term_report_winsize(term, term->tl_rows, term->tl_cols);
+#ifdef FEAT_GUI
+	if (term->tl_system)
+	{
+	    /* display first line below typed command */
+	    term->tl_toprow = msg_row + 1;
+	    term->tl_dirty_row_end = 0;
+	}
+#endif
 
 	/* Make sure we don't get stuck on sending keys to the job, it leads to
 	 * a deadlock if the job is waiting for Vim to read. */
 	channel_set_nonblock(term->tl_job->jv_channel, PART_IN);
 
-	if (!opt->jo_hidden)
+	if (old_curbuf == NULL)
 	{
 	    ++curbuf->b_locked;
 	    apply_autocmds(EVENT_BUFWINENTER, NULL, NULL, FALSE, curbuf);
 	    --curbuf->b_locked;
 	}
-
-	if (old_curbuf != NULL)
+	else
 	{
 	    --curbuf->b_nwindows;
 	    curbuf = old_curbuf;
@@ -526,6 +625,8 @@ term_start(typval_T *argvar, jobopt_T *opt, int without_job, int forceit)
 	term_close_buffer(curbuf, old_curbuf);
 	return NULL;
     }
+
+    apply_autocmds(EVENT_TERMINALOPEN, NULL, NULL, FALSE, newbuf);
     return newbuf;
 }
 
@@ -555,12 +656,23 @@ ex_terminal(exarg_T *eap)
 
 	if ((int)(p - cmd) == 5 && STRNICMP(cmd, "close", 5) == 0)
 	    opt.jo_term_finish = 'c';
+	else if ((int)(p - cmd) == 7 && STRNICMP(cmd, "noclose", 7) == 0)
+	    opt.jo_term_finish = 'n';
 	else if ((int)(p - cmd) == 4 && STRNICMP(cmd, "open", 4) == 0)
 	    opt.jo_term_finish = 'o';
 	else if ((int)(p - cmd) == 6 && STRNICMP(cmd, "curwin", 6) == 0)
 	    opt.jo_curwin = 1;
 	else if ((int)(p - cmd) == 6 && STRNICMP(cmd, "hidden", 6) == 0)
 	    opt.jo_hidden = 1;
+	else if ((int)(p - cmd) == 9 && STRNICMP(cmd, "norestore", 9) == 0)
+	    opt.jo_term_norestore = 1;
+	else if ((int)(p - cmd) == 4 && STRNICMP(cmd, "kill", 4) == 0
+		&& ep != NULL)
+	{
+	    opt.jo_set2 |= JO2_TERM_KILL;
+	    opt.jo_term_kill = ep + 1;
+	    p = skiptowhite(cmd);
+	}
 	else if ((int)(p - cmd) == 4 && STRNICMP(cmd, "rows", 4) == 0
 		&& ep != NULL && isdigit(ep[1]))
 	{
@@ -594,13 +706,19 @@ ex_terminal(exarg_T *eap)
 	    if (*p)
 		*p = NUL;
 	    EMSG2(_("E181: Invalid attribute: %s"), cmd);
-	    return;
+	    goto theend;
 	}
 	cmd = skipwhite(p);
     }
     if (*cmd == NUL)
+    {
 	/* Make a copy of 'shell', an autocommand may change the option. */
 	tofree = cmd = vim_strsave(p_sh);
+
+	/* default to close when the shell exits */
+	if (opt.jo_term_finish == NUL)
+	    opt.jo_term_finish = 'c';
+    }
 
     if (eap->addr_count > 0)
     {
@@ -615,10 +733,48 @@ ex_terminal(exarg_T *eap)
     argvar[0].v_type = VAR_STRING;
     argvar[0].vval.v_string = cmd;
     argvar[1].v_type = VAR_UNKNOWN;
-    term_start(argvar, &opt, FALSE, eap->forceit);
+    term_start(argvar, NULL, &opt, eap->forceit ? TERM_START_FORCEIT : 0);
     vim_free(tofree);
+
+theend:
     vim_free(opt.jo_eof_chars);
 }
+
+#if defined(FEAT_SESSION) || defined(PROTO)
+/*
+ * Write a :terminal command to the session file to restore the terminal in
+ * window "wp".
+ * Return FAIL if writing fails.
+ */
+    int
+term_write_session(FILE *fd, win_T *wp)
+{
+    term_T *term = wp->w_buffer->b_term;
+
+    /* Create the terminal and run the command.  This is not without
+     * risk, but let's assume the user only creates a session when this
+     * will be OK. */
+    if (fprintf(fd, "terminal ++curwin ++cols=%d ++rows=%d ",
+		term->tl_cols, term->tl_rows) < 0)
+	return FAIL;
+    if (term->tl_command != NULL && fputs((char *)term->tl_command, fd) < 0)
+	return FAIL;
+
+    return put_eol(fd);
+}
+
+/*
+ * Return TRUE if "buf" has a terminal that should be restored.
+ */
+    int
+term_should_restore(buf_T *buf)
+{
+    term_T	*term = buf->b_term;
+
+    return term != NULL && (term->tl_command == NULL
+				     || STRCMP(term->tl_command, "NONE") != 0);
+}
+#endif
 
 /*
  * Free the scrollback buffer for "term".
@@ -669,6 +825,10 @@ free_terminal(buf_T *buf)
 
     term_free_vterm(term);
     vim_free(term->tl_title);
+#ifdef FEAT_SESSION
+    vim_free(term->tl_command);
+#endif
+    vim_free(term->tl_kill);
     vim_free(term->tl_status_text);
     vim_free(term->tl_opencmd);
     vim_free(term->tl_eof_chars);
@@ -735,7 +895,13 @@ update_cursor(term_T *term, int redraw)
 {
     if (term->tl_normal_mode)
 	return;
-    setcursor();
+#ifdef FEAT_GUI
+    if (term->tl_system)
+	windgoto(term->tl_cursor_pos.row + term->tl_toprow,
+						      term->tl_cursor_pos.col);
+    else
+#endif
+	setcursor();
     if (redraw)
     {
 	if (term->tl_buffer == curbuf && term->tl_cursor_visible)
@@ -769,6 +935,15 @@ write_to_term(buf_T *buffer, char_u *msg, channel_T *channel)
     ch_log(channel, "writing %d bytes to terminal", (int)len);
     term_write_job_output(term, msg, len);
 
+#ifdef FEAT_GUI
+    if (term->tl_system)
+    {
+	/* show system output, scrolling up the screen as needed */
+	update_system_term(term);
+	update_cursor(term, TRUE);
+    }
+    else
+#endif
     /* In Terminal-Normal mode we are displaying the buffer, not the terminal
      * contents, thus no screen update is needed. */
     if (!term->tl_normal_mode)
@@ -797,6 +972,105 @@ term_send_mouse(VTerm *vterm, int button, int pressed)
 					    mouse_col - curwin->w_wincol, mod);
     if (button != 0)
 	vterm_mouse_button(vterm, button, pressed, mod);
+    return TRUE;
+}
+
+static int enter_mouse_col = -1;
+static int enter_mouse_row = -1;
+
+/*
+ * Handle a mouse click, drag or release.
+ * Return TRUE when a mouse event is sent to the terminal.
+ */
+    static int
+term_mouse_click(VTerm *vterm, int key)
+{
+#if defined(FEAT_CLIPBOARD)
+    /* For modeless selection mouse drag and release events are ignored, unless
+     * they are preceded with a mouse down event */
+    static int	    ignore_drag_release = TRUE;
+    VTermMouseState mouse_state;
+
+    vterm_state_get_mousestate(vterm_obtain_state(vterm), &mouse_state);
+    if (mouse_state.flags == 0)
+    {
+	/* Terminal is not using the mouse, use modeless selection. */
+	switch (key)
+	{
+	case K_LEFTDRAG:
+	case K_LEFTRELEASE:
+	case K_RIGHTDRAG:
+	case K_RIGHTRELEASE:
+		/* Ignore drag and release events when the button-down wasn't
+		 * seen before. */
+		if (ignore_drag_release)
+		{
+		    int save_mouse_col, save_mouse_row;
+
+		    if (enter_mouse_col < 0)
+			break;
+
+		    /* mouse click in the window gave us focus, handle that
+		     * click now */
+		    save_mouse_col = mouse_col;
+		    save_mouse_row = mouse_row;
+		    mouse_col = enter_mouse_col;
+		    mouse_row = enter_mouse_row;
+		    clip_modeless(MOUSE_LEFT, TRUE, FALSE);
+		    mouse_col = save_mouse_col;
+		    mouse_row = save_mouse_row;
+		}
+		/* FALLTHROUGH */
+	case K_LEFTMOUSE:
+	case K_RIGHTMOUSE:
+		if (key == K_LEFTRELEASE || key == K_RIGHTRELEASE)
+		    ignore_drag_release = TRUE;
+		else
+		    ignore_drag_release = FALSE;
+		/* Should we call mouse_has() here? */
+		if (clip_star.available)
+		{
+		    int	    button, is_click, is_drag;
+
+		    button = get_mouse_button(KEY2TERMCAP1(key),
+							 &is_click, &is_drag);
+		    if (mouse_model_popup() && button == MOUSE_LEFT
+					       && (mod_mask & MOD_MASK_SHIFT))
+		    {
+			/* Translate shift-left to right button. */
+			button = MOUSE_RIGHT;
+			mod_mask &= ~MOD_MASK_SHIFT;
+		    }
+		    clip_modeless(button, is_click, is_drag);
+		}
+		break;
+
+	case K_MIDDLEMOUSE:
+		if (clip_star.available)
+		    insert_reg('*', TRUE);
+		break;
+	}
+	enter_mouse_col = -1;
+	return FALSE;
+    }
+#endif
+    enter_mouse_col = -1;
+
+    switch (key)
+    {
+	case K_LEFTMOUSE:
+	case K_LEFTMOUSE_NM:	term_send_mouse(vterm, 1, 1); break;
+	case K_LEFTDRAG:	term_send_mouse(vterm, 1, 1); break;
+	case K_LEFTRELEASE:
+	case K_LEFTRELEASE_NM:	term_send_mouse(vterm, 1, 0); break;
+	case K_MOUSEMOVE:	term_send_mouse(vterm, 0, 0); break;
+	case K_MIDDLEMOUSE:	term_send_mouse(vterm, 2, 1); break;
+	case K_MIDDLEDRAG:	term_send_mouse(vterm, 2, 1); break;
+	case K_MIDDLERELEASE:	term_send_mouse(vterm, 2, 0); break;
+	case K_RIGHTMOUSE:	term_send_mouse(vterm, 3, 1); break;
+	case K_RIGHTDRAG:	term_send_mouse(vterm, 3, 1); break;
+	case K_RIGHTRELEASE:	term_send_mouse(vterm, 3, 0); break;
+    }
     return TRUE;
 }
 
@@ -895,17 +1169,21 @@ term_convert_key(term_T *term, int c, char *buf)
 	case K_MOUSERIGHT:	/* TODO */ return 0;
 
 	case K_LEFTMOUSE:
-	case K_LEFTMOUSE_NM:	other = term_send_mouse(vterm, 1, 1); break;
-	case K_LEFTDRAG:	other = term_send_mouse(vterm, 1, 1); break;
+	case K_LEFTMOUSE_NM:
+	case K_LEFTDRAG:
 	case K_LEFTRELEASE:
-	case K_LEFTRELEASE_NM:	other = term_send_mouse(vterm, 1, 0); break;
-	case K_MOUSEMOVE:	other = term_send_mouse(vterm, 0, 0); break;
-	case K_MIDDLEMOUSE:	other = term_send_mouse(vterm, 2, 1); break;
-	case K_MIDDLEDRAG:	other = term_send_mouse(vterm, 2, 1); break;
-	case K_MIDDLERELEASE:	other = term_send_mouse(vterm, 2, 0); break;
-	case K_RIGHTMOUSE:	other = term_send_mouse(vterm, 3, 1); break;
-	case K_RIGHTDRAG:	other = term_send_mouse(vterm, 3, 1); break;
-	case K_RIGHTRELEASE:	other = term_send_mouse(vterm, 3, 0); break;
+	case K_LEFTRELEASE_NM:
+	case K_MOUSEMOVE:
+	case K_MIDDLEMOUSE:
+	case K_MIDDLEDRAG:
+	case K_MIDDLERELEASE:
+	case K_RIGHTMOUSE:
+	case K_RIGHTDRAG:
+	case K_RIGHTRELEASE:	if (!term_mouse_click(vterm, c))
+				    return 0;
+				other = TRUE;
+				break;
+
 	case K_X1MOUSE:		/* TODO */ return 0;
 	case K_X1DRAG:		/* TODO */ return 0;
 	case K_X1RELEASE:	/* TODO */ return 0;
@@ -964,17 +1242,32 @@ term_convert_key(term_T *term, int c, char *buf)
 
 /*
  * Return TRUE if the job for "term" is still running.
+ * If "check_job_status" is TRUE update the job status.
+ */
+    static int
+term_job_running_check(term_T *term, int check_job_status)
+{
+    /* Also consider the job finished when the channel is closed, to avoid a
+     * race condition when updating the title. */
+    if (term != NULL
+	&& term->tl_job != NULL
+	&& channel_is_open(term->tl_job->jv_channel))
+    {
+	if (check_job_status)
+	    job_status(term->tl_job);
+	return (term->tl_job->jv_status == JOB_STARTED
+		|| term->tl_job->jv_channel->ch_keep_open);
+    }
+    return FALSE;
+}
+
+/*
+ * Return TRUE if the job for "term" is still running.
  */
     int
 term_job_running(term_T *term)
 {
-    /* Also consider the job finished when the channel is closed, to avoid a
-     * race condition when updating the title. */
-    return term != NULL
-	&& term->tl_job != NULL
-	&& channel_is_open(term->tl_job->jv_channel)
-	&& (term->tl_job->jv_status == JOB_STARTED
-		|| term->tl_job->jv_channel->ch_keep_open);
+    return term_job_running_check(term, FALSE);
 }
 
 /*
@@ -989,6 +1282,56 @@ term_none_open(term_T *term)
 	&& term->tl_job != NULL
 	&& channel_is_open(term->tl_job->jv_channel)
 	&& term->tl_job->jv_channel->ch_keep_open;
+}
+
+/*
+ * Used when exiting: kill the job in "buf" if so desired.
+ * Return OK when the job finished.
+ * Return FAIL when the job is still running.
+ */
+    int
+term_try_stop_job(buf_T *buf)
+{
+    int	    count;
+    char    *how = (char *)buf->b_term->tl_kill;
+
+#if defined(FEAT_GUI_DIALOG) || defined(FEAT_CON_DIALOG)
+    if ((how == NULL || *how == NUL) && (p_confirm || cmdmod.confirm))
+    {
+	char_u	buff[DIALOG_MSG_SIZE];
+	int	ret;
+
+	dialog_msg(buff, _("Kill job in \"%s\"?"), buf->b_fname);
+	ret = vim_dialog_yesnocancel(VIM_QUESTION, NULL, buff, 1);
+	if (ret == VIM_YES)
+	    how = "kill";
+	else if (ret == VIM_CANCEL)
+	    return FAIL;
+    }
+#endif
+    if (how == NULL || *how == NUL)
+	return FAIL;
+
+    job_stop(buf->b_term->tl_job, NULL, how);
+
+    /* wait for up to a second for the job to die */
+    for (count = 0; count < 100; ++count)
+    {
+	/* buffer, terminal and job may be cleaned up while waiting */
+	if (!buf_valid(buf)
+		|| buf->b_term == NULL
+		|| buf->b_term->tl_job == NULL)
+	    return OK;
+
+	/* call job_status() to update jv_status */
+	job_status(buf->b_term->tl_job);
+	if (buf->b_term->tl_job->jv_status >= JOB_ENDED)
+	    return OK;
+	ui_delay(10L, FALSE);
+	mch_check_messages();
+	parse_queued_messages();
+    }
+    return FAIL;
 }
 
 /*
@@ -1228,7 +1571,7 @@ set_terminal_mode(term_T *term, int normal_mode)
     static void
 cleanup_vterm(term_T *term)
 {
-    if (term->tl_finish != 'c')
+    if (term->tl_finish != TL_FINISH_CLOSE)
 	move_terminal_to_buffer(term);
     term_free_vterm(term);
     set_terminal_mode(term, FALSE);
@@ -1323,6 +1666,8 @@ term_vgetc()
     return c;
 }
 
+static int	mouse_was_outside = FALSE;
+
 /*
  * Send keys to terminal.
  * Return FAIL when the key needs to be handled in Normal mode.
@@ -1333,7 +1678,6 @@ send_keys_to_term(term_T *term, int c, int typed)
 {
     char	msg[KEY_BUF_LEN];
     size_t	len;
-    static int	mouse_was_outside = FALSE;
     int		dragging_outside = FALSE;
 
     /* Catch keys that need to be handled as in Normal mode. */
@@ -1584,16 +1928,50 @@ prepare_restore_cursor_props(void)
 /*
  * Returns TRUE if the current window contains a terminal and we are sending
  * keys to the job.
+ * If "check_job_status" is TRUE update the job status.
  */
-    int
-term_use_loop(void)
+    static int
+term_use_loop_check(int check_job_status)
 {
     term_T *term = curbuf->b_term;
 
     return term != NULL
 	&& !term->tl_normal_mode
 	&& term->tl_vterm != NULL
-	&& term_job_running(term);
+	&& term_job_running_check(term, check_job_status);
+}
+
+/*
+ * Returns TRUE if the current window contains a terminal and we are sending
+ * keys to the job.
+ */
+    int
+term_use_loop(void)
+{
+    return term_use_loop_check(FALSE);
+}
+
+/*
+ * Called when entering a window with the mouse.  If this is a terminal window
+ * we may want to change state.
+ */
+    void
+term_win_entered()
+{
+    term_T *term = curbuf->b_term;
+
+    if (term != NULL)
+    {
+	if (term_use_loop_check(TRUE))
+	{
+	    reset_VIsual_and_resel();
+	    if (State & INSERT)
+		stop_insert_mode = TRUE;
+	}
+	mouse_was_outside = FALSE;
+	enter_mouse_col = mouse_col;
+	enter_mouse_row = mouse_row;
+    }
 }
 
 /*
@@ -1623,23 +2001,27 @@ terminal_loop(int blocking)
      * stored reference. */
     in_terminal_loop = curbuf->b_term;
 
-    if (*curwin->w_p_tk != NUL)
-	termkey = string_to_key(curwin->w_p_tk, TRUE);
+    if (*curwin->w_p_twk != NUL)
+	termkey = string_to_key(curwin->w_p_twk, TRUE);
     position_cursor(curwin, &curbuf->b_term->tl_cursor_pos);
     may_set_cursor_props(curbuf->b_term);
 
     while (blocking || vpeekc_nomap() != NUL)
     {
-	/* TODO: skip screen update when handling a sequence of keys. */
-	/* Repeat redrawing in case a message is received while redrawing. */
-	while (must_redraw != 0)
-	    if (update_screen(0) == FAIL)
-		break;
+#ifdef FEAT_GUI
+	if (!curbuf->b_term->tl_system)
+#endif
+	    /* TODO: skip screen update when handling a sequence of keys. */
+	    /* Repeat redrawing in case a message is received while redrawing.
+	     */
+	    while (must_redraw != 0)
+		if (update_screen(0) == FAIL)
+		    break;
 	update_cursor(curbuf->b_term, FALSE);
 	restore_cursor = TRUE;
 
 	c = term_vgetc();
-	if (!term_use_loop())
+	if (!term_use_loop_check(TRUE))
 	{
 	    /* Job finished while waiting for a character.  Push back the
 	     * received character. */
@@ -1672,8 +2054,13 @@ terminal_loop(int blocking)
 	if (ctrl_break_was_pressed)
 	    mch_signal_job(curbuf->b_term->tl_job, (char_u *)"kill");
 #endif
-	/* Was either CTRL-W (termkey) or CTRL-\ pressed? */
-	if (c == (termkey == 0 ? Ctrl_W : termkey) || c == Ctrl_BSL)
+	/* Was either CTRL-W (termkey) or CTRL-\ pressed?
+	 * Not in a system terminal. */
+	if ((c == (termkey == 0 ? Ctrl_W : termkey) || c == Ctrl_BSL)
+#ifdef FEAT_GUI
+		&& !curbuf->b_term->tl_system
+#endif
+		)
 	{
 	    int	    prev_c = c;
 
@@ -1685,7 +2072,7 @@ terminal_loop(int blocking)
 #ifdef FEAT_CMDL_INFO
 	    clear_showcmd();
 #endif
-	    if (!term_use_loop())
+	    if (!term_use_loop_check(TRUE))
 		/* job finished while waiting for a character */
 		break;
 
@@ -1710,6 +2097,11 @@ terminal_loop(int blocking)
 	    {
 		/* "CTRL-W .": send CTRL-W to the job */
 		c = Ctrl_W;
+	    }
+	    else if (termkey == 0 && c == Ctrl_BSL)
+	    {
+		/* "CTRL-W CTRL-\": send CTRL-\ to the job */
+		c = Ctrl_BSL;
 	    }
 	    else if (c == 'N')
 	    {
@@ -1828,7 +2220,7 @@ color2index(VTermColor *color, int fg, int *boldp)
 	    case  2: return lookup_color( 4, fg, boldp) + 1; /* dark red */
 	    case  3: return lookup_color( 2, fg, boldp) + 1; /* dark green */
 	    case  4: return lookup_color( 6, fg, boldp) + 1; /* brown */
-	    case  5: return lookup_color( 1, fg, boldp) + 1; /* dark blue*/
+	    case  5: return lookup_color( 1, fg, boldp) + 1; /* dark blue */
 	    case  6: return lookup_color( 5, fg, boldp) + 1; /* dark magenta */
 	    case  7: return lookup_color( 3, fg, boldp) + 1; /* dark cyan */
 	    case  8: return lookup_color( 8, fg, boldp) + 1; /* light grey */
@@ -2169,7 +2561,27 @@ handle_pushline(int cols, const VTermScreenCell *cells, void *user)
 {
     term_T	*term = (term_T *)user;
 
-    /* TODO: Limit the number of lines that are stored. */
+    /* If the number of lines that are stored goes over 'termscrollback' then
+     * delete the first 10%. */
+    if (term->tl_scrollback.ga_len >= term->tl_buffer->b_p_twsl)
+    {
+	int	todo = term->tl_buffer->b_p_twsl / 10;
+	int	i;
+
+	curbuf = term->tl_buffer;
+	for (i = 0; i < todo; ++i)
+	{
+	    vim_free(((sb_line_T *)term->tl_scrollback.ga_data + i)->sb_cells);
+	    ml_delete(1, FALSE);
+	}
+	curbuf = curwin->w_buffer;
+
+	term->tl_scrollback.ga_len -= todo;
+	mch_memmove(term->tl_scrollback.ga_data,
+	    (sb_line_T *)term->tl_scrollback.ga_data + todo,
+	    sizeof(sb_line_T) * term->tl_scrollback.ga_len);
+    }
+
     if (ga_grow(&term->tl_scrollback, 1) == OK)
     {
 	cellattr_T	*p = NULL;
@@ -2263,7 +2675,7 @@ term_channel_closed(channel_T *ch)
 
 		cleanup_vterm(term);
 
-		if (term->tl_finish == 'c')
+		if (term->tl_finish == TL_FINISH_CLOSE)
 		{
 		    aco_save_T	aco;
 
@@ -2274,7 +2686,8 @@ term_channel_closed(channel_T *ch)
 		    aucmd_restbuf(&aco);
 		    break;
 		}
-		if (term->tl_finish == 'o' && term->tl_buffer->b_nwindows == 0)
+		if (term->tl_finish == TL_FINISH_OPEN
+					   && term->tl_buffer->b_nwindows == 0)
 		{
 		    char buf[50];
 
@@ -2311,6 +2724,141 @@ term_channel_closed(channel_T *ch)
 }
 
 /*
+ * Fill one screen line from a line of the terminal.
+ * Advances "pos" to past the last column.
+ */
+    static void
+term_line2screenline(VTermScreen *screen, VTermPos *pos, int max_col)
+{
+    int off = screen_get_current_line_off();
+
+    for (pos->col = 0; pos->col < max_col; )
+    {
+	VTermScreenCell cell;
+	int		c;
+
+	if (vterm_screen_get_cell(screen, *pos, &cell) == 0)
+	    vim_memset(&cell, 0, sizeof(cell));
+
+	c = cell.chars[0];
+	if (c == NUL)
+	{
+	    ScreenLines[off] = ' ';
+	    if (enc_utf8)
+		ScreenLinesUC[off] = NUL;
+	}
+	else
+	{
+	    if (enc_utf8)
+	    {
+		int i;
+
+		/* composing chars */
+		for (i = 0; i < Screen_mco
+			      && i + 1 < VTERM_MAX_CHARS_PER_CELL; ++i)
+		{
+		    ScreenLinesC[i][off] = cell.chars[i + 1];
+		    if (cell.chars[i + 1] == 0)
+			break;
+		}
+		if (c >= 0x80 || (Screen_mco > 0
+					 && ScreenLinesC[0][off] != 0))
+		{
+		    ScreenLines[off] = ' ';
+		    ScreenLinesUC[off] = c;
+		}
+		else
+		{
+		    ScreenLines[off] = c;
+		    ScreenLinesUC[off] = NUL;
+		}
+	    }
+#ifdef WIN3264
+	    else if (has_mbyte && c >= 0x80)
+	    {
+		char_u	mb[MB_MAXBYTES+1];
+		WCHAR	wc = c;
+
+		if (WideCharToMultiByte(GetACP(), 0, &wc, 1,
+					       (char*)mb, 2, 0, 0) > 1)
+		{
+		    ScreenLines[off] = mb[0];
+		    ScreenLines[off + 1] = mb[1];
+		    cell.width = mb_ptr2cells(mb);
+		}
+		else
+		    ScreenLines[off] = c;
+	    }
+#endif
+	    else
+		ScreenLines[off] = c;
+	}
+	ScreenAttrs[off] = cell2attr(cell.attrs, cell.fg, cell.bg);
+
+	++pos->col;
+	++off;
+	if (cell.width == 2)
+	{
+	    if (enc_utf8)
+		ScreenLinesUC[off] = NUL;
+
+	    /* don't set the second byte to NUL for a DBCS encoding, it
+	     * has been set above */
+	    if (enc_utf8 || !has_mbyte)
+		ScreenLines[off] = NUL;
+
+	    ++pos->col;
+	    ++off;
+	}
+    }
+}
+
+#if defined(FEAT_GUI)
+    static void
+update_system_term(term_T *term)
+{
+    VTermPos	    pos;
+    VTermScreen	    *screen;
+
+    if (term->tl_vterm == NULL)
+	return;
+    screen = vterm_obtain_screen(term->tl_vterm);
+
+    /* Scroll up to make more room for terminal lines if needed. */
+    while (term->tl_toprow > 0
+			  && (Rows - term->tl_toprow) < term->tl_dirty_row_end)
+    {
+	int save_p_more = p_more;
+
+	p_more = FALSE;
+	msg_row = Rows - 1;
+	msg_puts((char_u *)"\n");
+	p_more = save_p_more;
+	--term->tl_toprow;
+    }
+
+    for (pos.row = term->tl_dirty_row_start; pos.row < term->tl_dirty_row_end
+						  && pos.row < Rows; ++pos.row)
+    {
+	if (pos.row < term->tl_rows)
+	{
+	    int max_col = MIN(Columns, term->tl_cols);
+
+	    term_line2screenline(screen, &pos, max_col);
+	}
+	else
+	    pos.col = 0;
+
+	screen_line(term->tl_toprow + pos.row, 0, pos.col, Columns, FALSE);
+    }
+
+    term->tl_dirty_row_start = MAX_ROW;
+    term->tl_dirty_row_end = 0;
+    update_cursor(term, TRUE);
+}
+#endif
+
+/*
  * Called to update a window that contains an active terminal.
  * Returns FAIL when there is no terminal running in this window or in
  * Terminal-Normal mode.
@@ -2323,6 +2871,10 @@ term_update_window(win_T *wp)
     VTermScreen *screen;
     VTermState	*state;
     VTermPos	pos;
+    int		rows, cols;
+    int		newrows, newcols;
+    int		minsize;
+    win_T	*twp;
 
     if (term == NULL || term->tl_vterm == NULL || term->tl_normal_mode)
 	return FAIL;
@@ -2341,31 +2893,32 @@ term_update_window(win_T *wp)
      * If the window was resized a redraw will be triggered and we get here.
      * Adjust the size of the vterm unless 'termsize' specifies a fixed size.
      */
-    if ((!term->tl_rows_fixed && term->tl_rows != wp->w_height)
-	    || (!term->tl_cols_fixed && term->tl_cols != wp->w_width))
-    {
-	int	rows = term->tl_rows_fixed ? term->tl_rows : wp->w_height;
-	int	cols = term->tl_cols_fixed ? term->tl_cols : wp->w_width;
-	win_T	*twp;
+    minsize = parse_termsize(wp, &rows, &cols);
 
-	FOR_ALL_WINDOWS(twp)
+    newrows = 99999;
+    newcols = 99999;
+    FOR_ALL_WINDOWS(twp)
+    {
+	/* When more than one window shows the same terminal, use the
+	 * smallest size. */
+	if (twp->w_buffer == term->tl_buffer)
 	{
-	    /* When more than one window shows the same terminal, use the
-	     * smallest size. */
-	    if (twp->w_buffer == term->tl_buffer)
-	    {
-		if (!term->tl_rows_fixed && rows > twp->w_height)
-		    rows = twp->w_height;
-		if (!term->tl_cols_fixed && cols > twp->w_width)
-		    cols = twp->w_width;
-	    }
+	    newrows = MIN(newrows, twp->w_height);
+	    newcols = MIN(newcols, twp->w_width);
 	}
+    }
+    newrows = rows == 0 ? newrows : minsize ? MAX(rows, newrows) : rows;
+    newcols = cols == 0 ? newcols : minsize ? MAX(cols, newcols) : cols;
+
+    if (term->tl_rows != newrows || term->tl_cols != newcols)
+    {
+
 
 	term->tl_vterm_size_changed = TRUE;
-	vterm_set_size(vterm, rows, cols);
+	vterm_set_size(vterm, newrows, newcols);
 	ch_log(term->tl_job->jv_channel, "Resizing terminal to %d lines",
-									 rows);
-	term_report_winsize(term, rows, cols);
+								      newrows);
+	term_report_winsize(term, newrows, newcols);
     }
 
     /* The cursor may have been moved when resizing. */
@@ -2375,96 +2928,20 @@ term_update_window(win_T *wp)
     for (pos.row = term->tl_dirty_row_start; pos.row < term->tl_dirty_row_end
 					  && pos.row < wp->w_height; ++pos.row)
     {
-	int off = screen_get_current_line_off();
-	int max_col = MIN(wp->w_width, term->tl_cols);
-
 	if (pos.row < term->tl_rows)
 	{
-	    for (pos.col = 0; pos.col < max_col; )
-	    {
-		VTermScreenCell cell;
-		int		c;
+	    int max_col = MIN(wp->w_width, term->tl_cols);
 
-		if (vterm_screen_get_cell(screen, pos, &cell) == 0)
-		    vim_memset(&cell, 0, sizeof(cell));
-
-		c = cell.chars[0];
-		if (c == NUL)
-		{
-		    ScreenLines[off] = ' ';
-		    if (enc_utf8)
-			ScreenLinesUC[off] = NUL;
-		}
-		else
-		{
-		    if (enc_utf8)
-		    {
-			int i;
-
-			/* composing chars */
-			for (i = 0; i < Screen_mco
-				      && i + 1 < VTERM_MAX_CHARS_PER_CELL; ++i)
-			{
-			    ScreenLinesC[i][off] = cell.chars[i + 1];
-			    if (cell.chars[i + 1] == 0)
-				break;
-			}
-			if (c >= 0x80 || (Screen_mco > 0
-						 && ScreenLinesC[0][off] != 0))
-			{
-			    ScreenLines[off] = ' ';
-			    ScreenLinesUC[off] = c;
-			}
-			else
-			{
-			    ScreenLines[off] = c;
-			    ScreenLinesUC[off] = NUL;
-			}
-		    }
-#ifdef WIN3264
-		    else if (has_mbyte && c >= 0x80)
-		    {
-			char_u	mb[MB_MAXBYTES+1];
-			WCHAR	wc = c;
-
-			if (WideCharToMultiByte(GetACP(), 0, &wc, 1,
-						       (char*)mb, 2, 0, 0) > 1)
-			{
-			    ScreenLines[off] = mb[0];
-			    ScreenLines[off + 1] = mb[1];
-			    cell.width = mb_ptr2cells(mb);
-			}
-			else
-			    ScreenLines[off] = c;
-		    }
-#endif
-		    else
-			ScreenLines[off] = c;
-		}
-		ScreenAttrs[off] = cell2attr(cell.attrs, cell.fg, cell.bg);
-
-		++pos.col;
-		++off;
-		if (cell.width == 2)
-		{
-		    if (enc_utf8)
-			ScreenLinesUC[off] = NUL;
-
-		    /* don't set the second byte to NUL for a DBCS encoding, it
-		     * has been set above */
-		    if (enc_utf8 || !has_mbyte)
-			ScreenLines[off] = NUL;
-
-		    ++pos.col;
-		    ++off;
-		}
-	    }
+	    term_line2screenline(screen, &pos, max_col);
 	}
 	else
 	    pos.col = 0;
 
-	screen_line(wp->w_winrow + pos.row + winbar_height(wp),
-				    wp->w_wincol, pos.col, wp->w_width, FALSE);
+	screen_line(wp->w_winrow + pos.row
+#ifdef FEAT_MENU
+				+ winbar_height(wp)
+#endif
+				, wp->w_wincol, pos.col, wp->w_width, FALSE);
     }
     term->tl_dirty_row_start = MAX_ROW;
     term->tl_dirty_row_end = 0;
@@ -2538,87 +3015,25 @@ term_get_attr(buf_T *buf, linenr_T lnum, int col)
     return cell2attr(cellattr->attrs, cellattr->fg, cellattr->bg);
 }
 
-static VTermColor ansi_table[16] = {
-  {  0,   0,   0,  1}, /* black */
-  {224,   0,   0,  2}, /* dark red */
-  {  0, 224,   0,  3}, /* dark green */
-  {224, 224,   0,  4}, /* dark yellow / brown */
-  {  0,   0, 224,  5}, /* dark blue */
-  {224,   0, 224,  6}, /* dark magenta */
-  {  0, 224, 224,  7}, /* dark cyan */
-  {224, 224, 224,  8}, /* light grey */
-
-  {128, 128, 128,  9}, /* dark grey */
-  {255,  64,  64, 10}, /* light red */
-  { 64, 255,  64, 11}, /* light green */
-  {255, 255,  64, 12}, /* yellow */
-  { 64,  64, 255, 13}, /* light blue */
-  {255,  64, 255, 14}, /* light magenta */
-  { 64, 255, 255, 15}, /* light cyan */
-  {255, 255, 255, 16}, /* white */
-};
-
-static int cube_value[] = {
-    0x00, 0x5F, 0x87, 0xAF, 0xD7, 0xFF
-};
-
-static int grey_ramp[] = {
-    0x08, 0x12, 0x1C, 0x26, 0x30, 0x3A, 0x44, 0x4E, 0x58, 0x62, 0x6C, 0x76,
-    0x80, 0x8A, 0x94, 0x9E, 0xA8, 0xB2, 0xBC, 0xC6, 0xD0, 0xDA, 0xE4, 0xEE
-};
-
 /*
  * Convert a cterm color number 0 - 255 to RGB.
  * This is compatible with xterm.
  */
     static void
-cterm_color2rgb(int nr, VTermColor *rgb)
+cterm_color2vterm(int nr, VTermColor *rgb)
 {
-    int idx;
-
-    if (nr < 16)
-    {
-	*rgb = ansi_table[nr];
-    }
-    else if (nr < 232)
-    {
-	/* 216 color cube */
-	idx = nr - 16;
-	rgb->blue  = cube_value[idx      % 6];
-	rgb->green = cube_value[idx / 6  % 6];
-	rgb->red   = cube_value[idx / 36 % 6];
-	rgb->ansi_index = VTERM_ANSI_INDEX_NONE;
-    }
-    else if (nr < 256)
-    {
-	/* 24 grey scale ramp */
-	idx = nr - 232;
-	rgb->blue  = grey_ramp[idx];
-	rgb->green = grey_ramp[idx];
-	rgb->red   = grey_ramp[idx];
-	rgb->ansi_index = VTERM_ANSI_INDEX_NONE;
-    }
+    cterm_color2rgb(nr, &rgb->red, &rgb->green, &rgb->blue, &rgb->ansi_index);
 }
 
 /*
- * Create a new vterm and initialize it.
+ * Initialize term->tl_default_color from the environment.
  */
     static void
-create_vterm(term_T *term, int rows, int cols)
+init_default_colors(term_T *term)
 {
-    VTerm	    *vterm;
-    VTermScreen	    *screen;
-    VTermValue	    value;
     VTermColor	    *fg, *bg;
     int		    fgval, bgval;
     int		    id;
-
-    vterm = vterm_new(rows, cols);
-    term->tl_vterm = vterm;
-    screen = vterm_obtain_screen(vterm);
-    vterm_screen_set_callbacks(screen, &screen_callbacks, term);
-    /* TODO: depends on 'encoding'. */
-    vterm_set_utf8(vterm, 1);
 
     vim_memset(&term->tl_default_color.attrs, 0, sizeof(VTermScreenCellAttrs));
     term->tl_default_color.width = 1;
@@ -2652,6 +3067,10 @@ create_vterm(term_T *term, int rows, int cols)
 # endif
 # ifdef FEAT_TERMGUICOLORS
 	    || p_tgc
+#  ifdef FEAT_VTP
+	    /* Finally get INVALCOLOR on this execution path */
+	    || (!p_tgc && t_colors >= 256)
+#  endif
 # endif
        )
     {
@@ -2703,9 +3122,9 @@ create_vterm(term_T *term, int rows, int cols)
     if (id != 0 && t_colors >= 16)
     {
 	if (term_default_cterm_fg >= 0)
-	    cterm_color2rgb(term_default_cterm_fg, fg);
+	    cterm_color2vterm(term_default_cterm_fg, fg);
 	if (term_default_cterm_bg >= 0)
-	    cterm_color2rgb(term_default_cterm_bg, bg);
+	    cterm_color2vterm(term_default_cterm_bg, bg);
     }
     else
     {
@@ -2716,7 +3135,7 @@ create_vterm(term_T *term, int rows, int cols)
 	/* In an MS-Windows console we know the normal colors. */
 	if (cterm_normal_fg_color > 0)
 	{
-	    cterm_color2rgb(cterm_normal_fg_color - 1, fg);
+	    cterm_color2vterm(cterm_normal_fg_color - 1, fg);
 # if defined(WIN3264) && !defined(FEAT_GUI_W32)
 	    tmp = fg->red;
 	    fg->red = fg->blue;
@@ -2730,7 +3149,7 @@ create_vterm(term_T *term, int rows, int cols)
 
 	if (cterm_normal_bg_color > 0)
 	{
-	    cterm_color2rgb(cterm_normal_bg_color - 1, bg);
+	    cterm_color2vterm(cterm_normal_bg_color - 1, bg);
 # if defined(WIN3264) && !defined(FEAT_GUI_W32)
 	    tmp = bg->red;
 	    bg->red = bg->blue;
@@ -2742,8 +3161,315 @@ create_vterm(term_T *term, int rows, int cols)
 	    term_get_bg_color(&bg->red, &bg->green, &bg->blue);
 # endif
     }
+}
 
-    vterm_state_set_default_colors(vterm_obtain_state(vterm), fg, bg);
+#if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
+/*
+ * Set the 16 ANSI colors from array of RGB values
+ */
+    static void
+set_vterm_palette(VTerm *vterm, long_u *rgb)
+{
+    int		index = 0;
+    VTermState	*state = vterm_obtain_state(vterm);
+    for (; index < 16; index++)
+    {
+	VTermColor	color;
+	color.red = (unsigned)(rgb[index] >> 16);
+	color.green = (unsigned)(rgb[index] >> 8) & 255;
+	color.blue = (unsigned)rgb[index] & 255;
+	vterm_state_set_palette_color(state, index, &color);
+    }
+}
+
+/*
+ * Set the ANSI color palette from a list of colors
+ */
+    static int
+set_ansi_colors_list(VTerm *vterm, list_T *list)
+{
+    int		n = 0;
+    long_u	rgb[16];
+    listitem_T	*li = list->lv_first;
+
+    for (; li != NULL && n < 16; li = li->li_next, n++)
+    {
+	char_u		*color_name;
+	guicolor_T	guicolor;
+
+	color_name = get_tv_string_chk(&li->li_tv);
+	if (color_name == NULL)
+	    return FAIL;
+
+	guicolor = GUI_GET_COLOR(color_name);
+	if (guicolor == INVALCOLOR)
+	    return FAIL;
+
+	rgb[n] = GUI_MCH_GET_RGB(guicolor);
+    }
+
+    if (n != 16 || li != NULL)
+	return FAIL;
+
+    set_vterm_palette(vterm, rgb);
+
+    return OK;
+}
+
+/*
+ * Initialize the ANSI color palette from g:terminal_ansi_colors[0:15]
+ */
+    static void
+init_vterm_ansi_colors(VTerm *vterm)
+{
+    dictitem_T	*var = find_var((char_u *)"g:terminal_ansi_colors", NULL, TRUE);
+
+    if (var != NULL
+	    && (var->di_tv.v_type != VAR_LIST
+		|| var->di_tv.vval.v_list == NULL
+		|| set_ansi_colors_list(vterm, var->di_tv.vval.v_list) == FAIL))
+	EMSG2(_(e_invarg2), "g:terminal_ansi_colors");
+}
+#endif
+
+/*
+ * Handles a "drop" command from the job in the terminal.
+ * "item" is the file name, "item->li_next" may have options.
+ */
+    static void
+handle_drop_command(listitem_T *item)
+{
+    char_u	*fname = get_tv_string(&item->li_tv);
+    listitem_T	*opt_item = item->li_next;
+    int		bufnr;
+    win_T	*wp;
+    tabpage_T   *tp;
+    exarg_T	ea;
+    char_u	*tofree = NULL;
+
+    bufnr = buflist_add(fname, BLN_LISTED | BLN_NOOPT);
+    FOR_ALL_TAB_WINDOWS(tp, wp)
+    {
+	if (wp->w_buffer->b_fnum == bufnr)
+	{
+	    /* buffer is in a window already, go there */
+	    goto_tabpage_win(tp, wp);
+	    return;
+	}
+    }
+
+    vim_memset(&ea, 0, sizeof(ea));
+
+    if (opt_item != NULL && opt_item->li_tv.v_type == VAR_DICT
+					&& opt_item->li_tv.vval.v_dict != NULL)
+    {
+	dict_T *dict = opt_item->li_tv.vval.v_dict;
+	char_u *p;
+
+	p = get_dict_string(dict, (char_u *)"ff", FALSE);
+	if (p == NULL)
+	    p = get_dict_string(dict, (char_u *)"fileformat", FALSE);
+	if (p != NULL)
+	{
+	    if (check_ff_value(p) == FAIL)
+		ch_log(NULL, "Invalid ff argument to drop: %s", p);
+	    else
+		ea.force_ff = *p;
+	}
+	p = get_dict_string(dict, (char_u *)"enc", FALSE);
+	if (p == NULL)
+	    p = get_dict_string(dict, (char_u *)"encoding", FALSE);
+	if (p != NULL)
+	{
+	    ea.cmd = alloc((int)STRLEN(p) + 12);
+	    if (ea.cmd != NULL)
+	    {
+		sprintf((char *)ea.cmd, "sbuf ++enc=%s", p);
+		ea.force_enc = 11;
+		tofree = ea.cmd;
+	    }
+	}
+
+	p = get_dict_string(dict, (char_u *)"bad", FALSE);
+	if (p != NULL)
+	    get_bad_opt(p, &ea);
+
+	if (dict_find(dict, (char_u *)"bin", -1) != NULL)
+	    ea.force_bin = FORCE_BIN;
+	if (dict_find(dict, (char_u *)"binary", -1) != NULL)
+	    ea.force_bin = FORCE_BIN;
+	if (dict_find(dict, (char_u *)"nobin", -1) != NULL)
+	    ea.force_bin = FORCE_NOBIN;
+	if (dict_find(dict, (char_u *)"nobinary", -1) != NULL)
+	    ea.force_bin = FORCE_NOBIN;
+    }
+
+    /* open in new window, like ":split fname" */
+    if (ea.cmd == NULL)
+	ea.cmd = (char_u *)"split";
+    ea.arg = fname;
+    ea.cmdidx = CMD_split;
+    ex_splitview(&ea);
+
+    vim_free(tofree);
+}
+
+/*
+ * Handles a function call from the job running in a terminal.
+ * "item" is the function name, "item->li_next" has the arguments.
+ */
+    static void
+handle_call_command(term_T *term, channel_T *channel, listitem_T *item)
+{
+    char_u	*func;
+    typval_T	argvars[2];
+    typval_T	rettv;
+    int		doesrange;
+
+    if (item->li_next == NULL)
+    {
+	ch_log(channel, "Missing function arguments for call");
+	return;
+    }
+    func = get_tv_string(&item->li_tv);
+
+    if (STRNCMP(func, "Tapi_", 5) != 0)
+    {
+	ch_log(channel, "Invalid function name: %s", func);
+	return;
+    }
+
+    argvars[0].v_type = VAR_NUMBER;
+    argvars[0].vval.v_number = term->tl_buffer->b_fnum;
+    argvars[1] = item->li_next->li_tv;
+    if (call_func(func, (int)STRLEN(func), &rettv,
+		2, argvars, /* argv_func */ NULL,
+		/* firstline */ 1, /* lastline */ 1,
+		&doesrange, /* evaluate */ TRUE,
+		/* partial */ NULL, /* selfdict */ NULL) == OK)
+    {
+	clear_tv(&rettv);
+	ch_log(channel, "Function %s called", func);
+    }
+    else
+	ch_log(channel, "Calling function %s failed", func);
+}
+
+/*
+ * Called by libvterm when it cannot recognize an OSC sequence.
+ * We recognize a terminal API command.
+ */
+    static int
+parse_osc(const char *command, size_t cmdlen, void *user)
+{
+    term_T	*term = (term_T *)user;
+    js_read_T	reader;
+    typval_T	tv;
+    channel_T	*channel = term->tl_job == NULL ? NULL
+						    : term->tl_job->jv_channel;
+
+    /* We recognize only OSC 5 1 ; {command} */
+    if (cmdlen < 3 || STRNCMP(command, "51;", 3) != 0)
+	return 0; /* not handled */
+
+    reader.js_buf = vim_strnsave((char_u *)command + 3, (int)(cmdlen - 3));
+    if (reader.js_buf == NULL)
+	return 1;
+    reader.js_fill = NULL;
+    reader.js_used = 0;
+    if (json_decode(&reader, &tv, 0) == OK
+	    && tv.v_type == VAR_LIST
+	    && tv.vval.v_list != NULL)
+    {
+	listitem_T *item = tv.vval.v_list->lv_first;
+
+	if (item == NULL)
+	    ch_log(channel, "Missing command");
+	else
+	{
+	    char_u	*cmd = get_tv_string(&item->li_tv);
+
+	    /* Make sure an invoked command doesn't delete the buffer (and the
+	     * terminal) under our fingers. */
+	    ++term->tl_buffer->b_locked;
+
+	    item = item->li_next;
+	    if (item == NULL)
+		ch_log(channel, "Missing argument for %s", cmd);
+	    else if (STRCMP(cmd, "drop") == 0)
+		handle_drop_command(item);
+	    else if (STRCMP(cmd, "call") == 0)
+		handle_call_command(term, channel, item);
+	    else
+		ch_log(channel, "Invalid command received: %s", cmd);
+	    --term->tl_buffer->b_locked;
+	}
+    }
+    else
+	ch_log(channel, "Invalid JSON received");
+
+    vim_free(reader.js_buf);
+    clear_tv(&tv);
+    return 1;
+}
+
+static VTermParserCallbacks parser_fallbacks = {
+  NULL,		/* text */
+  NULL,		/* control */
+  NULL,		/* escape */
+  NULL,		/* csi */
+  parse_osc,	/* osc */
+  NULL,		/* dcs */
+  NULL		/* resize */
+};
+
+/*
+ * Use Vim's allocation functions for vterm so profiling works.
+ */
+    static void *
+vterm_malloc(size_t size, void *data UNUSED)
+{
+    return alloc_clear((unsigned) size);
+}
+
+    static void
+vterm_memfree(void *ptr, void *data UNUSED)
+{
+    vim_free(ptr);
+}
+
+static VTermAllocatorFunctions vterm_allocator = {
+  &vterm_malloc,
+  &vterm_memfree
+};
+
+/*
+ * Create a new vterm and initialize it.
+ */
+    static void
+create_vterm(term_T *term, int rows, int cols)
+{
+    VTerm	    *vterm;
+    VTermScreen	    *screen;
+    VTermState	    *state;
+    VTermValue	    value;
+
+    vterm = vterm_new_with_allocator(rows, cols, &vterm_allocator, NULL);
+    term->tl_vterm = vterm;
+    screen = vterm_obtain_screen(vterm);
+    vterm_screen_set_callbacks(screen, &screen_callbacks, term);
+    /* TODO: depends on 'encoding'. */
+    vterm_set_utf8(vterm, 1);
+
+    init_default_colors(term);
+
+    vterm_state_set_default_colors(
+	    vterm_obtain_state(vterm),
+	    &term->tl_default_color.fg,
+	    &term->tl_default_color.bg);
+
+    if (t_colors >= 16)
+	vterm_state_set_bold_highbright(vterm_obtain_state(vterm), 1);
 
     /* Required to initialize most things. */
     vterm_screen_reset(screen, 1 /* hard */);
@@ -2762,8 +3488,9 @@ create_vterm(term_T *term, int rows, int cols)
 #else
     value.boolean = 0;
 #endif
-    vterm_state_set_termprop(vterm_obtain_state(vterm),
-					       VTERM_PROP_CURSORBLINK, &value);
+    state = vterm_obtain_state(vterm);
+    vterm_state_set_termprop(state, VTERM_PROP_CURSORBLINK, &value);
+    vterm_state_set_unrecognised_fallbacks(state, &parser_fallbacks, term);
 }
 
 /*
@@ -2833,10 +3560,11 @@ set_terminal_default_colors(int cterm_fg, int cterm_bg)
 
 /*
  * Get the buffer from the first argument in "argvars".
- * Returns NULL when the buffer is not for a terminal window.
+ * Returns NULL when the buffer is not for a terminal window and logs a message
+ * with "where".
  */
     static buf_T *
-term_get_buf(typval_T *argvars)
+term_get_buf(typval_T *argvars, char *where)
 {
     buf_T *buf;
 
@@ -2845,7 +3573,10 @@ term_get_buf(typval_T *argvars)
     buf = get_buf_tv(&argvars[0], FALSE);
     --emsg_off;
     if (buf == NULL || buf->b_term == NULL)
+    {
+	ch_log(NULL, "%s: invalid buffer argument", where);
 	return NULL;
+    }
     return buf;
 }
 
@@ -2891,7 +3622,7 @@ dump_term_color(FILE *fd, VTermColor *color)
     void
 f_term_dumpwrite(typval_T *argvars, typval_T *rettv UNUSED)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_dumpwrite()");
     term_T	*term;
     char_u	*fname;
     int		max_height = 0;
@@ -2968,6 +3699,15 @@ f_term_dumpwrite(typval_T *argvars, typval_T *rettv UNUSED)
 
 	    for (i = 0; i < VTERM_MAX_CHARS_PER_CELL; ++i)
 	    {
+		int c = cell.chars[i];
+		int pc = prev_cell.chars[i];
+
+		/* For the first character NUL is the same as space. */
+		if (i == 0)
+		{
+		    c = (c == NUL) ? ' ' : c;
+		    pc = (pc == NUL) ? ' ' : pc;
+		}
 		if (cell.chars[i] != prev_cell.chars[i])
 		    same_chars = FALSE;
 		if (cell.chars[i] == NUL || prev_cell.chars[i] == NUL)
@@ -3001,7 +3741,7 @@ f_term_dumpwrite(typval_T *argvars, typval_T *rettv UNUSED)
 		    for (i = 0; i < VTERM_MAX_CHARS_PER_CELL
 						  && cell.chars[i] != NUL; ++i)
 		    {
-			len = utf_char2bytes(cell.chars[0], charbuf);
+			len = utf_char2bytes(cell.chars[i], charbuf);
 			fwrite(charbuf, len, 1, fd);
 		    }
 		}
@@ -3294,6 +4034,57 @@ read_dump_file(FILE *fd, VTermPos *cursor_pos)
 }
 
 /*
+ * Return an allocated string with at least "text_width" "=" characters and
+ * "fname" inserted in the middle.
+ */
+    static char_u *
+get_separator(int text_width, char_u *fname)
+{
+    int	    width = MAX(text_width, curwin->w_width);
+    char_u  *textline;
+    int	    fname_size;
+    char_u  *p = fname;
+    int	    i;
+    size_t  off;
+
+    textline = alloc(width + (int)STRLEN(fname) + 1);
+    if (textline == NULL)
+	return NULL;
+
+    fname_size = vim_strsize(fname);
+    if (fname_size < width - 8)
+    {
+	/* enough room, don't use the full window width */
+	width = MAX(text_width, fname_size + 8);
+    }
+    else if (fname_size > width - 8)
+    {
+	/* full name doesn't fit, use only the tail */
+	p = gettail(fname);
+	fname_size = vim_strsize(p);
+    }
+    /* skip characters until the name fits */
+    while (fname_size > width - 8)
+    {
+	p += (*mb_ptr2len)(p);
+	fname_size = vim_strsize(p);
+    }
+
+    for (i = 0; i < (width - fname_size) / 2 - 1; ++i)
+	textline[i] = '=';
+    textline[i++] = ' ';
+
+    STRCPY(textline + i, p);
+    off = STRLEN(textline);
+    textline[off] = ' ';
+    for (i = 1; i < (width - fname_size) / 2; ++i)
+	textline[off + i] = '=';
+    textline[off + i] = NUL;
+
+    return textline;
+}
+
+/*
  * Common for "term_dumpdiff()" and "term_dumpload()".
  */
     static void
@@ -3305,6 +4096,7 @@ term_load_dump(typval_T *argvars, typval_T *rettv, int do_diff)
     char_u	buf2[NUMBUFLEN];
     char_u	*fname1;
     char_u	*fname2 = NULL;
+    char_u	*fname_tofree = NULL;
     FILE	*fd1;
     FILE	*fd2 = NULL;
     char_u	*textline = NULL;
@@ -3336,12 +4128,25 @@ term_load_dump(typval_T *argvars, typval_T *rettv, int do_diff)
     }
 
     init_job_options(&opt);
-    /* TODO: use the {options} argument */
+    if (argvars[do_diff ? 2 : 1].v_type != VAR_UNKNOWN
+	    && get_job_options(&argvars[do_diff ? 2 : 1], &opt, 0,
+		    JO2_TERM_NAME + JO2_TERM_COLS + JO2_TERM_ROWS
+		    + JO2_VERTICAL + JO2_CURWIN + JO2_NORESTORE) == FAIL)
+	goto theend;
 
-    /* TODO: use the file name arguments for the buffer name */
-    opt.jo_term_name = (char_u *)"dump diff";
+    if (opt.jo_term_name == NULL)
+    {
+	size_t len = STRLEN(fname1) + 12;
 
-    buf = term_start(&argvars[0], &opt, TRUE, FALSE);
+	fname_tofree = alloc((int)len);
+	if (fname_tofree != NULL)
+	{
+	    vim_snprintf((char *)fname_tofree, len, "dump diff %s", fname1);
+	    opt.jo_term_name = fname_tofree;
+	}
+    }
+
+    buf = term_start(&argvars[0], NULL, &opt, TERM_START_NOJOB);
     if (buf != NULL && buf->b_term != NULL)
     {
 	int		i;
@@ -3352,6 +4157,8 @@ term_load_dump(typval_T *argvars, typval_T *rettv, int do_diff)
 	int		width2;
 	VTermPos	cursor_pos1;
 	VTermPos	cursor_pos2;
+
+	init_default_colors(term);
 
 	rettv->vval.v_number = buf->b_fnum;
 
@@ -3374,16 +4181,19 @@ term_load_dump(typval_T *argvars, typval_T *rettv, int do_diff)
 
 	term->tl_top_diff_rows = curbuf->b_ml.ml_line_count;
 
-	textline = alloc(width + 1);
+	textline = get_separator(width, fname1);
 	if (textline == NULL)
 	    goto theend;
-	for (i = 0; i < width; ++i)
-	    textline[i] = '=';
+	if (add_empty_scrollback(term, &term->tl_default_color, 0) == OK)
+	    ml_append(curbuf->b_ml.ml_line_count, textline, 0, FALSE);
+	vim_free(textline);
+
+	textline = get_separator(width, fname2);
+	if (textline == NULL)
+	    goto theend;
+	if (add_empty_scrollback(term, &term->tl_default_color, 0) == OK)
+	    ml_append(curbuf->b_ml.ml_line_count, textline, 0, FALSE);
 	textline[width] = NUL;
-	if (add_empty_scrollback(term, &term->tl_default_color, 0) == OK)
-	    ml_append(curbuf->b_ml.ml_line_count, textline, 0, FALSE);
-	if (add_empty_scrollback(term, &term->tl_default_color, 0) == OK)
-	    ml_append(curbuf->b_ml.ml_line_count, textline, 0, FALSE);
 
 	bot_lnum = curbuf->b_ml.ml_line_count;
 	width2 = read_dump_file(fd2, &cursor_pos2);
@@ -3504,10 +4314,14 @@ term_load_dump(typval_T *argvars, typval_T *rettv, int do_diff)
 	}
 
 	term->tl_cols = width;
+
+	/* looks better without wrapping */
+	curwin->w_p_wrap = 0;
     }
 
 theend:
     vim_free(textline);
+    vim_free(fname_tofree);
     fclose(fd1);
     if (fd2 != NULL)
 	fclose(fd2);
@@ -3630,7 +4444,7 @@ f_term_dumpload(typval_T *argvars, typval_T *rettv)
     void
 f_term_getaltscreen(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_getaltscreen()");
 
     if (buf == NULL)
 	return;
@@ -3677,7 +4491,7 @@ f_term_getattr(typval_T *argvars, typval_T *rettv)
     void
 f_term_getcursor(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_getcursor()");
     term_T	*term;
     list_T	*l;
     dict_T	*d;
@@ -3711,7 +4525,7 @@ f_term_getcursor(typval_T *argvars, typval_T *rettv)
     void
 f_term_getjob(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_getjob()");
 
     rettv->v_type = VAR_JOB;
     rettv->vval.v_job = NULL;
@@ -3739,7 +4553,7 @@ get_row_number(typval_T *tv, term_T *term)
     void
 f_term_getline(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	    *buf = term_get_buf(argvars);
+    buf_T	    *buf = term_get_buf(argvars, "term_getline()");
     term_T	    *term;
     int		    row;
 
@@ -3786,7 +4600,7 @@ f_term_getline(typval_T *argvars, typval_T *rettv)
     void
 f_term_getscrolled(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_getscrolled()");
 
     if (buf == NULL)
 	return;
@@ -3799,7 +4613,7 @@ f_term_getscrolled(typval_T *argvars, typval_T *rettv)
     void
 f_term_getsize(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_getsize()");
     list_T	*l;
 
     if (rettv_list_alloc(rettv) == FAIL)
@@ -3813,12 +4627,42 @@ f_term_getsize(typval_T *argvars, typval_T *rettv)
 }
 
 /*
+ * "term_setsize(buf, rows, cols)" function
+ */
+    void
+f_term_setsize(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
+{
+    buf_T	*buf = term_get_buf(argvars, "term_setsize()");
+    term_T	*term;
+    varnumber_T rows, cols;
+
+    if (buf == NULL)
+    {
+	EMSG(_("E955: Not a terminal buffer"));
+	return;
+    }
+    if (buf->b_term->tl_vterm == NULL)
+	return;
+    term = buf->b_term;
+    rows = get_tv_number(&argvars[1]);
+    rows = rows <= 0 ? term->tl_rows : rows;
+    cols = get_tv_number(&argvars[2]);
+    cols = cols <= 0 ? term->tl_cols : cols;
+    vterm_set_size(term->tl_vterm, rows, cols);
+    /* handle_resize() will resize the windows */
+
+    /* Get and remember the size we ended up with.  Update the pty. */
+    vterm_get_size(term->tl_vterm, &term->tl_rows, &term->tl_cols);
+    term_report_winsize(term, term->tl_rows, term->tl_cols);
+}
+
+/*
  * "term_getstatus(buf)" function
  */
     void
 f_term_getstatus(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_getstatus()");
     term_T	*term;
     char_u	val[100];
 
@@ -3842,7 +4686,7 @@ f_term_getstatus(typval_T *argvars, typval_T *rettv)
     void
 f_term_gettitle(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_gettitle()");
 
     rettv->v_type = VAR_STRING;
     if (buf == NULL)
@@ -3858,7 +4702,7 @@ f_term_gettitle(typval_T *argvars, typval_T *rettv)
     void
 f_term_gettty(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_gettty()");
     char_u	*p;
     int		num = 0;
 
@@ -3916,7 +4760,7 @@ f_term_list(typval_T *argvars UNUSED, typval_T *rettv)
     void
 f_term_scrape(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	    *buf = term_get_buf(argvars);
+    buf_T	    *buf = term_get_buf(argvars, "term_scrape()");
     VTermScreen	    *screen = NULL;
     VTermPos	    pos;
     list_T	    *l;
@@ -4025,7 +4869,7 @@ f_term_scrape(typval_T *argvars, typval_T *rettv)
     void
 f_term_sendkeys(typval_T *argvars, typval_T *rettv)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_sendkeys()");
     char_u	*msg;
     term_T	*term;
 
@@ -4047,6 +4891,112 @@ f_term_sendkeys(typval_T *argvars, typval_T *rettv)
     }
 }
 
+#if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS) || defined(PROTO)
+/*
+ * "term_getansicolors(buf)" function
+ */
+    void
+f_term_getansicolors(typval_T *argvars, typval_T *rettv)
+{
+    buf_T	*buf = term_get_buf(argvars, "term_getansicolors()");
+    term_T	*term;
+    VTermState	*state;
+    VTermColor  color;
+    char_u	hexbuf[10];
+    int		index;
+    list_T	*list;
+
+    if (rettv_list_alloc(rettv) == FAIL)
+	return;
+
+    if (buf == NULL)
+	return;
+    term = buf->b_term;
+    if (term->tl_vterm == NULL)
+	return;
+
+    list = rettv->vval.v_list;
+    state = vterm_obtain_state(term->tl_vterm);
+    for (index = 0; index < 16; index++)
+    {
+	vterm_state_get_palette_color(state, index, &color);
+	sprintf((char *)hexbuf, "#%02x%02x%02x",
+		color.red, color.green, color.blue);
+	if (list_append_string(list, hexbuf, 7) == FAIL)
+	    return;
+    }
+}
+
+/*
+ * "term_setansicolors(buf, list)" function
+ */
+    void
+f_term_setansicolors(typval_T *argvars, typval_T *rettv UNUSED)
+{
+    buf_T	*buf = term_get_buf(argvars, "term_setansicolors()");
+    term_T	*term;
+
+    if (buf == NULL)
+	return;
+    term = buf->b_term;
+    if (term->tl_vterm == NULL)
+	return;
+
+    if (argvars[1].v_type != VAR_LIST || argvars[1].vval.v_list == NULL)
+    {
+	EMSG(_(e_listreq));
+	return;
+    }
+
+    if (set_ansi_colors_list(term->tl_vterm, argvars[1].vval.v_list) == FAIL)
+	EMSG(_(e_invarg));
+}
+#endif
+
+/*
+ * "term_setrestore(buf, command)" function
+ */
+    void
+f_term_setrestore(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
+{
+#if defined(FEAT_SESSION)
+    buf_T	*buf = term_get_buf(argvars, "term_setrestore()");
+    term_T	*term;
+    char_u	*cmd;
+
+    if (buf == NULL)
+	return;
+    term = buf->b_term;
+    vim_free(term->tl_command);
+    cmd = get_tv_string_chk(&argvars[1]);
+    if (cmd != NULL)
+	term->tl_command = vim_strsave(cmd);
+    else
+	term->tl_command = NULL;
+#endif
+}
+
+/*
+ * "term_setkill(buf, how)" function
+ */
+    void
+f_term_setkill(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
+{
+    buf_T	*buf = term_get_buf(argvars, "term_setkill()");
+    term_T	*term;
+    char_u	*how;
+
+    if (buf == NULL)
+	return;
+    term = buf->b_term;
+    vim_free(term->tl_kill);
+    how = get_tv_string_chk(&argvars[1]);
+    if (how != NULL)
+	term->tl_kill = vim_strsave(how);
+    else
+	term->tl_kill = NULL;
+}
+
 /*
  * "term_start(command, options)" function
  */
@@ -4064,12 +5014,12 @@ f_term_start(typval_T *argvars, typval_T *rettv)
 		    + JO_EXIT_CB + JO_CLOSE_CALLBACK + JO_OUT_IO,
 		JO2_TERM_NAME + JO2_TERM_FINISH + JO2_HIDDEN + JO2_TERM_OPENCMD
 		    + JO2_TERM_COLS + JO2_TERM_ROWS + JO2_VERTICAL + JO2_CURWIN
-		    + JO2_CWD + JO2_ENV + JO2_EOF_CHARS) == FAIL)
+		    + JO2_CWD + JO2_ENV + JO2_EOF_CHARS
+		    + JO2_NORESTORE + JO2_TERM_KILL
+		    + JO2_ANSI_COLORS) == FAIL)
 	return;
 
-    if (opt.jo_vertical)
-	cmdmod.split = WSP_VERT;
-    buf = term_start(&argvars[0], &opt, FALSE, FALSE);
+    buf = term_start(&argvars[0], NULL, &opt, 0);
 
     if (buf != NULL && buf->b_term != NULL)
 	rettv->vval.v_number = buf->b_fnum;
@@ -4081,13 +5031,10 @@ f_term_start(typval_T *argvars, typval_T *rettv)
     void
 f_term_wait(typval_T *argvars, typval_T *rettv UNUSED)
 {
-    buf_T	*buf = term_get_buf(argvars);
+    buf_T	*buf = term_get_buf(argvars, "term_wait()");
 
     if (buf == NULL)
-    {
-	ch_log(NULL, "term_wait(): invalid argument");
 	return;
-    }
     if (buf->b_term->tl_job == NULL)
     {
 	ch_log(NULL, "term_wait(): no job to wait for");
@@ -4268,6 +5215,7 @@ dyn_winpty_init(int verbose)
 term_and_job_init(
 	term_T	    *term,
 	typval_T    *argvar,
+	char	    **argv UNUSED,
 	jobopt_T    *opt)
 {
     WCHAR	    *cmd_wchar = NULL;
@@ -4315,14 +5263,6 @@ term_and_job_init(
     win32_build_env(opt->jo_env, &ga_env, TRUE);
     env_wchar = ga_env.ga_data;
 
-    job = job_alloc();
-    if (job == NULL)
-	goto failed;
-
-    channel = add_channel();
-    if (channel == NULL)
-	goto failed;
-
     term->tl_winpty_config = winpty_config_new(0, &winpty_err);
     if (term->tl_winpty_config == NULL)
 	goto failed;
@@ -4353,6 +5293,18 @@ term_and_job_init(
     job = job_alloc();
     if (job == NULL)
 	goto failed;
+    if (argvar->v_type == VAR_STRING)
+    {
+	int argc;
+
+	build_argv_from_string(cmd, &job->jv_argv, &argc);
+    }
+    else
+    {
+	int argc;
+
+	build_argv_from_list(argvar->vval.v_list, &job->jv_argv, &argc);
+    }
 
     if (opt->jo_set & JO_IN_BUF)
 	job->jv_in_buf = buflist_findnr(opt->jo_io_buf[PART_IN]);
@@ -4395,6 +5347,13 @@ term_and_job_init(
     vim_free(env_wchar);
 
     create_vterm(term, term->tl_rows, term->tl_cols);
+
+#if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
+    if (opt->jo_set2 & JO2_ANSI_COLORS)
+	set_vterm_palette(term->tl_vterm, opt->jo_ansi_colors);
+    else
+	init_vterm_ansi_colors(term->tl_vterm);
+#endif
 
     channel_set_job(channel, job, opt);
     job_set_options(job, opt);
@@ -4531,7 +5490,7 @@ term_free_vterm(term_T *term)
 }
 
 /*
- * Request size to terminal.
+ * Report the size to the terminal.
  */
     static void
 term_report_winsize(term_T *term, int rows, int cols)
@@ -4556,17 +5515,27 @@ terminal_enabled(void)
  * Create a new terminal of "rows" by "cols" cells.
  * Start job for "cmd".
  * Store the pointers in "term".
+ * When "argv" is not NULL then "argvar" is not used.
  * Return OK or FAIL.
  */
     static int
 term_and_job_init(
 	term_T	    *term,
 	typval_T    *argvar,
+	char	    **argv,
 	jobopt_T    *opt)
 {
     create_vterm(term, term->tl_rows, term->tl_cols);
 
-    term->tl_job = job_start(argvar, opt);
+#if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
+    if (opt->jo_set2 & JO2_ANSI_COLORS)
+	set_vterm_palette(term->tl_vterm, opt->jo_ansi_colors);
+    else
+	init_vterm_ansi_colors(term->tl_vterm);
+#endif
+
+    /* This may change a string in "argvar". */
+    term->tl_job = job_start(argvar, argv, opt);
     if (term->tl_job != NULL)
 	++term->tl_job->jv_refcount;
 
@@ -4603,7 +5572,7 @@ term_free_vterm(term_T *term)
 }
 
 /*
- * Request size to terminal.
+ * Report the size to the terminal.
  */
     static void
 term_report_winsize(term_T *term, int rows, int cols)

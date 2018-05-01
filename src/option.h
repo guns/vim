@@ -214,6 +214,7 @@
 #define SHM_ALL		"rmfixlnwaWtToOsAIcqF" /* all possible flags for 'shm' */
 
 /* characters for p_go: */
+#define GO_TERMINAL	'!'		/* use terminal for system commands */
 #define GO_ASEL		'a'		/* autoselect */
 #define GO_ASELML	'A'		/* autoselect modeless selection */
 #define GO_BOT		'b'		/* use bottom scrollbar */
@@ -236,7 +237,7 @@
 #define GO_FOOTER	'F'		/* add footer */
 #define GO_VERTICAL	'v'		/* arrange dialog buttons vertically */
 #define GO_KEEPWINSIZE	'k'		/* keep GUI window size */
-#define GO_ALL		"aAbcefFghilmMprtTvk" /* all possible flags for 'go' */
+#define GO_ALL		"!aAbcefFghilmMprtTvk" /* all possible flags for 'go' */
 
 /* flags for 'comments' option */
 #define COM_NEST	'n'		/* comments strings nest */
@@ -751,7 +752,7 @@ EXTERN unsigned	ssop_flags;
 /* Also used for 'viewoptions'! */
 static char *(p_ssop_values[]) = {"buffers", "winpos", "resize", "winsize",
     "localoptions", "options", "help", "blank", "globals", "slash", "unix",
-    "sesdir", "curdir", "folds", "cursor", "tabpages", NULL};
+    "sesdir", "curdir", "folds", "cursor", "tabpages", "terminal", NULL};
 # endif
 # define SSOP_BUFFERS		0x001
 # define SSOP_WINPOS		0x002
@@ -769,6 +770,7 @@ static char *(p_ssop_values[]) = {"buffers", "winpos", "resize", "winsize",
 # define SSOP_FOLDS		0x2000
 # define SSOP_CURSOR		0x4000
 # define SSOP_TABPAGES		0x8000
+# define SSOP_TERMINAL		0x10000
 #endif
 EXTERN char_u	*p_sh;		/* 'shell' */
 EXTERN char_u	*p_shcf;	/* 'shellcmdflag' */
@@ -846,6 +848,9 @@ EXTERN char_u	*p_tcldll;	/* 'tcldll' */
 #endif
 #ifdef FEAT_ARABIC
 EXTERN int	p_tbidi;	/* 'termbidi' */
+#endif
+#ifdef FEAT_TERMINAL
+EXTERN long	p_tlsl;		/* 'terminalscroll' */
 #endif
 #ifdef FEAT_MBYTE
 EXTERN char_u	*p_tenc;	/* 'termencoding' */
@@ -1109,6 +1114,9 @@ enum
     , BV_UDF
     , BV_UL
     , BV_WM
+#ifdef FEAT_TERMINAL
+    , BV_TWSL
+#endif
     , BV_COUNT	    /* must be the last one */
 };
 
@@ -1128,8 +1136,8 @@ enum
     , WV_COLE
 #endif
 #ifdef FEAT_TERMINAL
-    , WV_TK
-    , WV_TMS
+    , WV_TWK
+    , WV_TWS
 #endif
     , WV_CRBIND
 #ifdef FEAT_LINEBREAK

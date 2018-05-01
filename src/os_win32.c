@@ -214,7 +214,7 @@ static guicolor_T save_console_bg_rgb;
 static guicolor_T save_console_fg_rgb;
 
 # ifdef FEAT_TERMGUICOLORS
-#  define USE_VTP		(vtp_working && p_tgc)
+#  define USE_VTP		(vtp_working && is_term_win32() && (p_tgc || (!p_tgc && t_colors >= 256)))
 # else
 #  define USE_VTP		0
 # endif
@@ -2630,7 +2630,6 @@ mch_init(void)
 
     /* set termcap codes to current text attributes */
     update_tcap(g_attrCurrent);
-    swap_tcap();
 
     GetConsoleCursorInfo(g_hConOut, &g_cci);
     GetConsoleMode(g_hConIn,  &g_cmodein);
@@ -4488,7 +4487,7 @@ mch_system_piped(char *cmd, int options)
     int		c;
     int		noread_cnt = 0;
     garray_T	ga;
-    int	    delay = 1;
+    int		delay = 1;
     DWORD	buffer_off = 0;	/* valid bytes in buffer[] */
     char	*p = NULL;
 
@@ -4782,6 +4781,81 @@ mch_system(char *cmd, int options)
 
 #endif
 
+#if defined(FEAT_GUI) && defined(FEAT_TERMINAL)
+/*
+ * Use a terminal window to run a shell command in.
+ */
+    static int
+mch_call_shell_terminal(
+    char_u	*cmd,
+    int		options UNUSED)	/* SHELL_*, see vim.h */
+{
+    jobopt_T	opt;
+    char_u	*newcmd = NULL;
+    typval_T	argvar[2];
+    long_u	cmdlen;
+    int		retval = -1;
+    buf_T	*buf;
+    aco_save_T	aco;
+    oparg_T	oa;		/* operator arguments */
+
+    if (cmd == NULL)
+	cmdlen = STRLEN(p_sh) + 1;
+    else
+	cmdlen = STRLEN(p_sh) + STRLEN(p_shcf) + STRLEN(cmd) + 10;
+    newcmd = lalloc(cmdlen, TRUE);
+    if (newcmd == NULL)
+	return 255;
+    if (cmd == NULL)
+    {
+	STRCPY(newcmd, p_sh);
+	ch_log(NULL, "starting terminal to run a shell");
+    }
+    else
+    {
+	vim_snprintf((char *)newcmd, cmdlen, "%s %s %s", p_sh, p_shcf, cmd);
+	ch_log(NULL, "starting terminal for system command '%s'", cmd);
+    }
+
+    init_job_options(&opt);
+
+    argvar[0].v_type = VAR_STRING;
+    argvar[0].vval.v_string = newcmd;
+    argvar[1].v_type = VAR_UNKNOWN;
+    buf = term_start(argvar, NULL, &opt, TERM_START_SYSTEM);
+    if (buf == NULL)
+	return 255;
+
+    /* Find a window to make "buf" curbuf. */
+    aucmd_prepbuf(&aco, buf);
+
+    clear_oparg(&oa);
+    while (term_use_loop())
+    {
+	if (oa.op_type == OP_NOP && oa.regname == NUL && !VIsual_active)
+	{
+	    /* If terminal_loop() returns OK we got a key that is handled
+	     * in Normal model. We don't do redrawing anyway. */
+	    if (terminal_loop(TRUE) == OK)
+		normal_cmd(&oa, TRUE);
+	}
+	else
+	    normal_cmd(&oa, TRUE);
+    }
+    retval = 0;
+    ch_log(NULL, "system command finished");
+
+    /* restore curwin/curbuf and a few other things */
+    aucmd_restbuf(&aco);
+
+    wait_return(TRUE);
+    do_buffer(DOBUF_WIPE, DOBUF_FIRST, FORWARD, buf->b_fnum, TRUE);
+
+    vim_free(newcmd);
+    return retval;
+}
+#endif
+
 /*
  * Either execute a command by calling the shell or start a new shell
  */
@@ -4849,6 +4923,19 @@ mch_call_shell(
     {
 	fprintf(fdDump, "mch_call_shell(\"%s\", %d)\n", cmd, options);
 	fflush(fdDump);
+    }
+#endif
+#if defined(FEAT_GUI) && defined(FEAT_TERMINAL)
+    /* TODO: make the terminal window work with input or output redirected. */
+    if (vim_strchr(p_go, GO_TERMINAL) != NULL
+	 && (options & (SHELL_FILTER|SHELL_DOOUT|SHELL_WRITE|SHELL_READ)) == 0)
+    {
+	/* Use a terminal window to run the command in. */
+	x = mch_call_shell_terminal(cmd, options);
+#ifdef FEAT_TITLE
+	resettitle();
+#endif
+	return x;
     }
 #endif
 
@@ -5675,7 +5762,11 @@ clear_chars(
     if (!USE_VTP)
 	FillConsoleOutputAttribute(g_hConOut, g_attrCurrent, n, coord, &dwDummy);
     else
-	FillConsoleOutputAttribute(g_hConOut, 0, n, coord, &dwDummy);
+    {
+	set_console_color_rgb();
+	gotoxy(coord.X + 1, coord.Y + 1);
+	vtp_printf("\033[%dX", n);
+    }
 }
 
 
@@ -7565,6 +7656,18 @@ vtp_sgr_bulks(
     vtp_printf((char *)buf);
 }
 
+# ifdef FEAT_TERMGUICOLORS
+    static int
+ctermtoxterm(
+    int cterm)
+{
+    uint8_t r, g, b, idx;
+
+    cterm_color2rgb(cterm, &r, &g, &b, &idx);
+    return (((int)r << 16) | ((int)g << 8) | (int)b);
+}
+# endif
+
     static void
 set_console_color_rgb(void)
 {
@@ -7573,6 +7676,8 @@ set_console_color_rgb(void)
     int id;
     guicolor_T fg = INVALCOLOR;
     guicolor_T bg = INVALCOLOR;
+    int ctermfg;
+    int ctermbg;
 
     if (!USE_VTP)
 	return;
@@ -7581,9 +7686,19 @@ set_console_color_rgb(void)
     if (id > 0)
 	syn_id2colors(id, &fg, &bg);
     if (fg == INVALCOLOR)
-	fg = 0xc0c0c0;	    /* white text */
+    {
+	ctermfg = -1;
+	if (id > 0)
+	    syn_id2cterm_bg(id, &ctermfg, &ctermbg);
+	fg = ctermfg != -1 ? ctermtoxterm(ctermfg) : 0xc0c0c0; /* white */
+    }
     if (bg == INVALCOLOR)
-	bg = 0x000000;	    /* black background */
+    {
+	ctermbg = -1;
+	if (id > 0)
+	    syn_id2cterm_bg(id, &ctermfg, &ctermbg);
+	bg = ctermbg != -1 ? ctermtoxterm(ctermbg) : 0x000000; /* black */
+    }
     fg = (GetRValue(fg) << 16) | (GetGValue(fg) << 8) | GetBValue(fg);
     bg = (GetRValue(bg) << 16) | (GetGValue(bg) << 8) | GetBValue(bg);
 
@@ -7640,6 +7755,12 @@ has_vtp_working(void)
 use_vtp(void)
 {
     return USE_VTP;
+}
+
+    int
+is_term_win32(void)
+{
+    return T_NAME != NULL && STRCMP(T_NAME, "win32") == 0;
 }
 
 #endif

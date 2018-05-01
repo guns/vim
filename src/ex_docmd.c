@@ -83,7 +83,6 @@ static void	ex_abclear(exarg_T *eap);
 #endif
 static void	ex_autocmd(exarg_T *eap);
 static void	ex_doautocmd(exarg_T *eap);
-#ifdef FEAT_LISTCMDS
 static void	ex_bunload(exarg_T *eap);
 static void	ex_buffer(exarg_T *eap);
 static void	ex_bmodified(exarg_T *eap);
@@ -91,20 +90,6 @@ static void	ex_bnext(exarg_T *eap);
 static void	ex_bprevious(exarg_T *eap);
 static void	ex_brewind(exarg_T *eap);
 static void	ex_blast(exarg_T *eap);
-#else
-# define ex_bunload		ex_ni
-# define ex_buffer		ex_ni
-# define ex_bmodified		ex_ni
-# define ex_bnext		ex_ni
-# define ex_bprevious		ex_ni
-# define ex_brewind		ex_ni
-# define ex_blast		ex_ni
-# define buflist_list		ex_ni
-# define ex_checktime		ex_ni
-#endif
-#if !defined(FEAT_LISTCMDS)
-# define ex_buffer_all		ex_ni
-#endif
 static char_u	*getargcmd(char_u **);
 static char_u	*skip_cmd_arg(char_u *p, int rembs);
 static int	getargopt(exarg_T *eap);
@@ -184,12 +169,6 @@ static void	ex_goto(exarg_T *eap);
 static void	ex_shell(exarg_T *eap);
 static void	ex_preserve(exarg_T *eap);
 static void	ex_recover(exarg_T *eap);
-#ifndef FEAT_LISTCMDS
-# define ex_argedit		ex_ni
-# define ex_argadd		ex_ni
-# define ex_argdelete		ex_ni
-# define ex_listdo		ex_ni
-#endif
 static void	ex_mode(exarg_T *eap);
 static void	ex_wrongmodifier(exarg_T *eap);
 static void	ex_find(exarg_T *eap);
@@ -2838,7 +2817,6 @@ do_one_cmd(
 	    goto doend;
     }
 
-#ifdef FEAT_LISTCMDS
     /*
      * Accept buffer name.  Cannot be used at the same time with a buffer
      * number.  Don't do this for a user command.
@@ -2867,7 +2845,6 @@ do_one_cmd(
 	ea.addr_count = 1;
 	ea.arg = skipwhite(p);
     }
-#endif
 
     /* The :try command saves the emsg_silent flag, reset it here when
      * ":silent! try" was used, it should only apply to :try itself. */
@@ -4108,7 +4085,6 @@ set_one_cmd_context(
 	    set_context_in_sign_cmd(xp, arg);
 	    break;
 #endif
-#ifdef FEAT_LISTCMDS
 	case CMD_bdelete:
 	case CMD_bwipeout:
 	case CMD_bunload:
@@ -4121,7 +4097,6 @@ set_one_cmd_context(
 	    xp->xp_context = EXPAND_BUFFERS;
 	    xp->xp_pattern = arg;
 	    break;
-#endif
 #ifdef FEAT_USR_CMDS
 	case CMD_USER:
 	case CMD_USER_BUF:
@@ -4292,6 +4267,13 @@ set_one_cmd_context(
 	    xp->xp_pattern = arg;
 	    break;
 #endif
+
+	case CMD_argdelete:
+	    while ((xp->xp_pattern = vim_strchr(arg, ' ')) != NULL)
+		arg = xp->xp_pattern + 1;
+	    xp->xp_context = EXPAND_ARGLIST;
+	    xp->xp_pattern = arg;
+	    break;
 
 #endif /* FEAT_CMDL_COMPL */
 
@@ -5326,6 +5308,20 @@ skip_cmd_arg(
     return p;
 }
 
+#if defined(FEAT_MBYTE) || defined(PROTO)
+    int
+get_bad_opt(char_u *p, exarg_T *eap)
+{
+    if (STRICMP(p, "keep") == 0)
+	eap->bad_char = BAD_KEEP;
+    else if (STRICMP(p, "drop") == 0)
+	eap->bad_char = BAD_DROP;
+    else if (MB_BYTE2LEN(*p) == 1 && p[1] == NUL)
+	eap->bad_char = *p;
+    return FAIL;
+}
+#endif
+
 /*
  * Get "++opt=arg" argument.
  * Return FAIL or OK.
@@ -5405,6 +5401,7 @@ getargopt(exarg_T *eap)
 #endif
 	if (check_ff_value(eap->cmd + eap->force_ff) == FAIL)
 	    return FAIL;
+	eap->force_ff = eap->cmd[eap->force_ff];
 #ifdef FEAT_MBYTE
     }
     else if (pp == &eap->force_enc)
@@ -5417,14 +5414,7 @@ getargopt(exarg_T *eap)
     {
 	/* Check ++bad= argument.  Must be a single-byte character, "keep" or
 	 * "drop". */
-	p = eap->cmd + bad_char_idx;
-	if (STRICMP(p, "keep") == 0)
-	    eap->bad_char = BAD_KEEP;
-	else if (STRICMP(p, "drop") == 0)
-	    eap->bad_char = BAD_DROP;
-	else if (MB_BYTE2LEN(*p) == 1 && p[1] == NUL)
-	    eap->bad_char = *p;
-	else
+	if (get_bad_opt(eap->cmd + bad_char_idx, eap) == FAIL)
 	    return FAIL;
     }
 #endif
@@ -5521,7 +5511,6 @@ ex_doautocmd(exarg_T *eap)
 	do_modelines(0);
 }
 
-#ifdef FEAT_LISTCMDS
 /*
  * :[N]bunload[!] [N] [bufname] unload buffer
  * :[N]bdelete[!] [N] [bufname] delete buffer from buffer list
@@ -5620,7 +5609,6 @@ ex_blast(exarg_T *eap)
     if (eap->do_ecmd_cmd != NULL)
 	do_cmdline_cmd(eap->do_ecmd_cmd);
 }
-#endif
 
     int
 ends_excmd(int c)
@@ -5879,6 +5867,7 @@ static struct
     char    *name;
 } command_complete[] =
 {
+    {EXPAND_ARGLIST, "arglist"},
     {EXPAND_AUGROUP, "augroup"},
     {EXPAND_BEHAVE, "behave"},
     {EXPAND_BUFFERS, "buffer"},
@@ -7187,8 +7176,35 @@ not_exiting(void)
     settmode(TMODE_RAW);
 }
 
+    static int
+before_quit_autocmds(win_T *wp, int quit_all, int forceit)
+{
+    apply_autocmds(EVENT_QUITPRE, NULL, NULL, FALSE, wp->w_buffer);
+
+    /* Bail out when autocommands closed the window.
+     * Refuse to quit when the buffer in the last window is being closed (can
+     * only happen in autocommands). */
+    if (!win_valid(wp)
+	    || curbuf_locked()
+	    || (wp->w_buffer->b_nwindows == 1 && wp->w_buffer->b_locked > 0))
+	return TRUE;
+
+    if (quit_all || (check_more(FALSE, forceit) == OK && only_one_window()))
+    {
+	apply_autocmds(EVENT_EXITPRE, NULL, NULL, FALSE, curbuf);
+	/* Refuse to quit when locked or when the buffer in the last window is
+	 * being closed (can only happen in autocommands). */
+	if (curbuf_locked()
+			  || (curbuf->b_nwindows == 1 && curbuf->b_locked > 0))
+	    return TRUE;
+    }
+
+    return FALSE;
+}
+
 /*
  * ":quit": quit current window, quit Vim if the last window is closed.
+ * ":{nr}quit": quit window {nr}
  */
     static void
 ex_quit(exarg_T *eap)
@@ -7222,12 +7238,9 @@ ex_quit(exarg_T *eap)
     /* Refuse to quit when locked. */
     if (curbuf_locked())
 	return;
-    apply_autocmds(EVENT_QUITPRE, NULL, NULL, FALSE, wp->w_buffer);
-    /* Bail out when autocommands closed the window.
-     * Refuse to quit when the buffer in the last window is being closed (can
-     * only happen in autocommands). */
-    if (!win_valid(wp)
-	    || (wp->w_buffer->b_nwindows == 1 && wp->w_buffer->b_locked > 0))
+
+    /* Trigger QuitPre and maybe ExitPre */
+    if (before_quit_autocmds(wp, FALSE, eap->forceit))
 	return;
 
 #ifdef FEAT_NETBEANS_INTG
@@ -7301,10 +7314,8 @@ ex_quit_all(exarg_T *eap)
 	text_locked_msg();
 	return;
     }
-    apply_autocmds(EVENT_QUITPRE, NULL, NULL, FALSE, curbuf);
-    /* Refuse to quit when locked or when the buffer in the last window is
-     * being closed (can only happen in autocommands). */
-    if (curbuf_locked() || (curbuf->b_nwindows == 1 && curbuf->b_locked > 0))
+
+    if (before_quit_autocmds(curwin, TRUE, eap->forceit))
 	return;
 
     exiting = TRUE;
@@ -7743,7 +7754,7 @@ ex_stop(exarg_T *eap)
 }
 
 /*
- * ":exit", ":xit" and ":wq": Write file and exit Vim.
+ * ":exit", ":xit" and ":wq": Write file and quite the current window.
  */
     static void
 ex_exit(exarg_T *eap)
@@ -7761,10 +7772,8 @@ ex_exit(exarg_T *eap)
 	text_locked_msg();
 	return;
     }
-    apply_autocmds(EVENT_QUITPRE, NULL, NULL, FALSE, curbuf);
-    /* Refuse to quit when locked or when the buffer in the last window is
-     * being closed (can only happen in autocommands). */
-    if (curbuf_locked() || (curbuf->b_nwindows == 1 && curbuf->b_locked > 0))
+
+    if (before_quit_autocmds(curwin, FALSE, eap->forceit))
 	return;
 
     /*
@@ -7960,7 +7969,6 @@ alist_unlink(alist_T *al)
     }
 }
 
-#if defined(FEAT_LISTCMDS) || defined(HAVE_DROP_FILE) || defined(PROTO)
 /*
  * Create a new argument list and use it for the current window.
  */
@@ -7980,7 +7988,6 @@ alist_new(void)
 	alist_init(curwin->w_alist);
     }
 }
-#endif
 
 #if !defined(UNIX) || defined(PROTO)
 /*
@@ -8652,9 +8659,7 @@ do_exedit(
 		    + (eap->forceit ? ECMD_FORCEIT : 0)
 		      /* after a split we can use an existing buffer */
 		    + (old_curwin != NULL ? ECMD_OLDBUF : 0)
-#ifdef FEAT_LISTCMDS
 		    + (eap->cmdidx == CMD_badd ? ECMD_ADDBUF : 0 )
-#endif
 		    , old_curwin == NULL ? curwin : NULL) == FAIL)
 	{
 	    /* Editing the file failed.  If the window was split, close it. */
@@ -9614,7 +9619,8 @@ ex_redir(exarg_T *eap)
 
 		browseFile = do_browse(BROWSE_SAVE,
 			(char_u *)_("Save Redirection"),
-			fname, NULL, NULL, BROWSE_FILTER_ALL_FILES, curbuf);
+			fname, NULL, NULL,
+			(char_u *)_(BROWSE_FILTER_ALL_FILES), curbuf);
 		if (browseFile == NULL)
 		    return;		/* operation cancelled */
 		vim_free(fname);
@@ -9840,7 +9846,8 @@ ex_mkrc(
 		eap->cmdidx == CMD_mksession ? (char_u *)_("Save Session") :
 # endif
 		(char_u *)_("Save Setup"),
-		fname, (char_u *)"vim", NULL, BROWSE_FILTER_MACROS, NULL);
+		fname, (char_u *)"vim", NULL,
+		(char_u *)_(BROWSE_FILTER_MACROS), NULL);
 	if (browseFile == NULL)
 	    goto theend;
 	fname = browseFile;
@@ -11095,6 +11102,11 @@ makeopens(
     {
 	if (!(only_save_windows && buf->b_nwindows == 0)
 		&& !(buf->b_help && !(ssop_flags & SSOP_HELP))
+#ifdef FEAT_TERMINAL
+		/* skip terminal buffers: finished ones are not useful, others
+		 * will be resurrected and result in a new buffer */
+		&& !bt_terminal(buf)
+#endif
 		&& buf->b_fname != NULL
 		&& buf->b_p_bl)
 	{
@@ -11305,7 +11317,8 @@ makeopens(
     /*
      * Wipe out an empty unnamed buffer we started in.
      */
-    if (put_line(fd, "if exists('s:wipebuf')") == FAIL)
+    if (put_line(fd, "if exists('s:wipebuf') && s:wipebuf != bufnr('%')")
+								       == FAIL)
 	return FAIL;
     if (put_line(fd, "  silent exe 'bwipe ' . s:wipebuf") == FAIL)
 	return FAIL;
@@ -11465,6 +11478,12 @@ ses_do_frame(frame_T *fr)
     static int
 ses_do_win(win_T *wp)
 {
+#ifdef FEAT_TERMINAL
+    if (bt_terminal(wp->w_buffer))
+	return !term_is_finished(wp->w_buffer)
+	    && (ssop_flags & SSOP_TERMINAL)
+	    && term_should_restore(wp->w_buffer);
+#endif
     if (wp->w_buffer->b_fname == NULL
 #ifdef FEAT_QUICKFIX
 	    /* When 'buftype' is "nofile" can't restore the window contents. */
@@ -11530,13 +11549,21 @@ put_view(
     /* Edit the file.  Skip this when ":next" already did it. */
     if (add_edit && (!did_next || wp->w_arg_idx_invalid))
     {
+# ifdef FEAT_TERMINAL
+	if (bt_terminal(wp->w_buffer))
+	{
+	    if (term_write_session(fd, wp) == FAIL)
+		return FAIL;
+	}
+	else
+# endif
 	/*
 	 * Load the file.
 	 */
 	if (wp->w_buffer->b_ffname != NULL
-#ifdef FEAT_QUICKFIX
+# ifdef FEAT_QUICKFIX
 		&& !bt_nofile(wp->w_buffer)
-#endif
+# endif
 		)
 	{
 	    /*
@@ -11554,8 +11581,7 @@ put_view(
 		    || fputs(" | else | edit ", fd) < 0
 		    || ses_fname(fd, wp->w_buffer, flagp, FALSE) == FAIL
 		    || fputs(" | endif", fd) < 0
-		    ||
-		put_eol(fd) == FAIL)
+		    || put_eol(fd) == FAIL)
 		return FAIL;
 	}
 	else
@@ -12169,14 +12195,23 @@ ex_set(exarg_T *eap)
 	(void)do_set(eap->arg, flags);
 }
 
-#ifdef FEAT_SEARCH_EXTRA
+#if defined(FEAT_SEARCH_EXTRA) || defined(PROTO)
+    void
+set_no_hlsearch(int flag)
+{
+    no_hlsearch = flag;
+# ifdef FEAT_EVAL
+    set_vim_var_nr(VV_HLSEARCH, !no_hlsearch && p_hls);
+# endif
+}
+
 /*
  * ":nohlsearch"
  */
     static void
 ex_nohlsearch(exarg_T *eap UNUSED)
 {
-    SET_NO_HLSEARCH(TRUE);
+    set_no_hlsearch(TRUE);
     redraw_all_later(SOME_VALID);
 }
 

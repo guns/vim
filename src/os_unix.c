@@ -441,7 +441,7 @@ mch_inchar(
 		    /* no character available within "wtime" */
 		    return 0;
 
-		if (wtime < 0)
+		else
 		{
 		    /* no character available within 'updatetime' */
 		    did_start_blocking = TRUE;
@@ -603,7 +603,7 @@ mch_total_mem(int special UNUSED)
 #  ifdef MAC_OS_X_VERSION_10_9
 					    + vm_stat.compressor_page_count
 #  endif
-					    ) * getpagesize();
+					    ) * sysconf(_SC_PAGESIZE);
 	mach_port_deallocate(mach_task_self(), host);
     }
 # endif
@@ -4154,88 +4154,6 @@ wait4pid(pid_t child, waitstatus *status)
     return wait_pid;
 }
 
-#if defined(FEAT_JOB_CHANNEL) || !defined(USE_SYSTEM) || defined(PROTO)
-/*
- * Parse "cmd" and put the white-separated parts in "argv".
- * "argv" is an allocated array with "argc" entries.
- * Returns FAIL when out of memory.
- */
-    int
-mch_parse_cmd(char_u *cmd, int use_shcf, char ***argv, int *argc)
-{
-    int		i;
-    char_u	*p, *d;
-    int		inquote;
-
-    /*
-     * Do this loop twice:
-     * 1: find number of arguments
-     * 2: separate them and build argv[]
-     */
-    for (i = 0; i < 2; ++i)
-    {
-	p = skipwhite(cmd);
-	inquote = FALSE;
-	*argc = 0;
-	for (;;)
-	{
-	    if (i == 1)
-		(*argv)[*argc] = (char *)p;
-	    ++*argc;
-	    d = p;
-	    while (*p != NUL && (inquote || (*p != ' ' && *p != TAB)))
-	    {
-		if (p[0] == '"')
-		    /* quotes surrounding an argument and are dropped */
-		    inquote = !inquote;
-		else
-		{
-		    if (p[0] == '\\' && p[1] != NUL)
-		    {
-			/* First pass: skip over "\ " and "\"".
-			 * Second pass: Remove the backslash. */
-			++p;
-		    }
-		    if (i == 1)
-			*d++ = *p;
-		}
-		++p;
-	    }
-	    if (*p == NUL)
-	    {
-		if (i == 1)
-		    *d++ = NUL;
-		break;
-	    }
-	    if (i == 1)
-		*d++ = NUL;
-	    p = skipwhite(p + 1);
-	}
-	if (*argv == NULL)
-	{
-	    if (use_shcf)
-	    {
-		/* Account for possible multiple args in p_shcf. */
-		p = p_shcf;
-		for (;;)
-		{
-		    p = skiptowhite(p);
-		    if (*p == NUL)
-			break;
-		    ++*argc;
-		    p = skipwhite(p);
-		}
-	    }
-
-	    *argv = (char **)alloc((unsigned)((*argc + 4) * sizeof(char *)));
-	    if (*argv == NULL)	    /* out of memory */
-		return FAIL;
-	}
-    }
-    return OK;
-}
-#endif
-
 #if !defined(USE_SYSTEM) || defined(FEAT_JOB_CHANNEL)
 /*
  * Set the environment for a child process.
@@ -4359,8 +4277,121 @@ may_send_sigint(int c UNUSED, pid_t pid UNUSED, pid_t wpid UNUSED)
 # endif
 }
 
-    int
-mch_call_shell(
+#if !defined(USE_SYSTEM) || (defined(FEAT_GUI) && defined(FEAT_TERMINAL))
+
+    static int
+build_argv(
+	char_u *cmd,
+	char ***argvp,
+	char_u **sh_tofree,
+	char_u **shcf_tofree)
+{
+    char	**argv = NULL;
+    int		argc;
+
+    *sh_tofree = vim_strsave(p_sh);
+    if (*sh_tofree == NULL)		/* out of memory */
+	return FAIL;
+
+    if (mch_parse_cmd(*sh_tofree, TRUE, &argv, &argc) == FAIL)
+	return FAIL;
+    *argvp = argv;
+
+    if (cmd != NULL)
+    {
+	char_u	*s;
+	char_u	*p;
+
+	if (extra_shell_arg != NULL)
+	    argv[argc++] = (char *)extra_shell_arg;
+
+	/* Break 'shellcmdflag' into white separated parts.  This doesn't
+	 * handle quoted strings, they are very unlikely to appear. */
+	*shcf_tofree = alloc((unsigned)STRLEN(p_shcf) + 1);
+	if (*shcf_tofree == NULL)    /* out of memory */
+	    return FAIL;
+	s = *shcf_tofree;
+	p = p_shcf;
+	while (*p != NUL)
+	{
+	    argv[argc++] = (char *)s;
+	    while (*p && *p != ' ' && *p != TAB)
+		*s++ = *p++;
+	    *s++ = NUL;
+	    p = skipwhite(p);
+	}
+
+	argv[argc++] = (char *)cmd;
+    }
+    argv[argc] = NULL;
+    return OK;
+}
+#endif
+
+#if defined(FEAT_GUI) && defined(FEAT_TERMINAL)
+/*
+ * Use a terminal window to run a shell command in.
+ */
+    static int
+mch_call_shell_terminal(
+    char_u	*cmd,
+    int		options UNUSED)	/* SHELL_*, see vim.h */
+{
+    jobopt_T	opt;
+    char	**argv = NULL;
+    char_u	*tofree1 = NULL;
+    char_u	*tofree2 = NULL;
+    int		retval = -1;
+    buf_T	*buf;
+    aco_save_T	aco;
+    oparg_T	oa;		/* operator arguments */
+
+    if (build_argv(cmd, &argv, &tofree1, &tofree2) == FAIL)
+	goto theend;
+
+    init_job_options(&opt);
+    ch_log(NULL, "starting terminal for system command '%s'", cmd);
+    buf = term_start(NULL, argv, &opt, TERM_START_SYSTEM);
+
+    /* Find a window to make "buf" curbuf. */
+    aucmd_prepbuf(&aco, buf);
+
+    clear_oparg(&oa);
+    while (term_use_loop())
+    {
+	if (oa.op_type == OP_NOP && oa.regname == NUL && !VIsual_active)
+	{
+	    /* If terminal_loop() returns OK we got a key that is handled
+	     * in Normal model. We don't do redrawing anyway. */
+	    if (terminal_loop(TRUE) == OK)
+		normal_cmd(&oa, TRUE);
+	}
+	else
+	    normal_cmd(&oa, TRUE);
+    }
+    retval = 0;
+    ch_log(NULL, "system command finished");
+
+    /* restore curwin/curbuf and a few other things */
+    aucmd_restbuf(&aco);
+
+    wait_return(TRUE);
+    do_buffer(DOBUF_WIPE, DOBUF_FIRST, FORWARD, buf->b_fnum, TRUE);
+
+theend:
+    vim_free(argv);
+    vim_free(tofree1);
+    vim_free(tofree2);
+    return retval;
+}
+#endif
+
+#ifdef USE_SYSTEM
+/*
+ * Use system() to start the shell: simple but slow.
+ */
+    static int
+mch_call_shell_system(
     char_u	*cmd,
     int		options)	/* SHELL_*, see vim.h */
 {
@@ -4369,7 +4400,6 @@ mch_call_shell(
     char	*ofn = NULL;
 #endif
     int		tmode = cur_tmode;
-#ifdef USE_SYSTEM	/* use system() to start the shell: simple but slow */
     char_u	*newcmd;	/* only needed for unix */
     int		x;
 
@@ -4443,14 +4473,23 @@ mch_call_shell(
     restore_clipboard();
 # endif
     return x;
+}
 
-#else /* USE_SYSTEM */	    /* don't use system(), use fork()/exec() */
+#else /* USE_SYSTEM */
 
 # define EXEC_FAILED 122    /* Exit code when shell didn't execute.  Don't use
 			       127, some shells use that already */
 # define OPEN_NULL_FAILED 123 /* Exit code if /dev/null can't be opened */
 
-    char_u	*newcmd;
+/*
+ * Don't use system(), use fork()/exec().
+ */
+    static int
+mch_call_shell_fork(
+    char_u	*cmd,
+    int		options)	/* SHELL_*, see vim.h */
+{
+    int		tmode = cur_tmode;
     pid_t	pid;
     pid_t	wpid = 0;
     pid_t	wait_pid = 0;
@@ -4461,10 +4500,9 @@ mch_call_shell(
 # endif
     int		retval = -1;
     char	**argv = NULL;
-    int		argc;
-    char_u	*p_shcf_copy = NULL;
+    char_u	*tofree1 = NULL;
+    char_u	*tofree2 = NULL;
     int		i;
-    char_u	*p;
     int		pty_master_fd = -1;	    /* for pty's */
 # ifdef FEAT_GUI
     int		pty_slave_fd = -1;
@@ -4474,43 +4512,12 @@ mch_call_shell(
     int		pipe_error = FALSE;
     int		did_settmode = FALSE;	/* settmode(TMODE_RAW) called */
 
-    newcmd = vim_strsave(p_sh);
-    if (newcmd == NULL)		/* out of memory */
-	goto error;
-
     out_flush();
     if (options & SHELL_COOKED)
 	settmode(TMODE_COOK);		/* set to normal mode */
 
-    if (mch_parse_cmd(newcmd, TRUE, &argv, &argc) == FAIL)
+    if (build_argv(cmd, &argv, &tofree1, &tofree2) == FAIL)
 	goto error;
-
-    if (cmd != NULL)
-    {
-	char_u	*s;
-
-	if (extra_shell_arg != NULL)
-	    argv[argc++] = (char *)extra_shell_arg;
-
-	/* Break 'shellcmdflag' into white separated parts.  This doesn't
-	 * handle quoted strings, they are very unlikely to appear. */
-	p_shcf_copy = alloc((unsigned)STRLEN(p_shcf) + 1);
-	if (p_shcf_copy == NULL)    /* out of memory */
-	    goto error;
-	s = p_shcf_copy;
-	p = p_shcf;
-	while (*p != NUL)
-	{
-	    argv[argc++] = (char *)s;
-	    while (*p && *p != ' ' && *p != TAB)
-		*s++ = *p++;
-	    *s++ = NUL;
-	    p = skipwhite(p);
-	}
-
-	argv[argc++] = (char *)cmd;
-    }
-    argv[argc] = NULL;
 
     /*
      * For the GUI, when writing the output into the buffer and when reading
@@ -5081,6 +5088,7 @@ mch_call_shell(
 			else if (has_mbyte)
 			{
 			    int		l;
+			    char_u	*p;
 
 			    len += buffer_off;
 			    buffer[len] = NUL;
@@ -5319,8 +5327,6 @@ finished:
 		MSG_PUTS(_("\nCommand terminated\n"));
 	}
     }
-    vim_free(argv);
-    vim_free(p_shcf_copy);
 
 error:
     if (!did_settmode)
@@ -5329,11 +5335,28 @@ error:
 # ifdef FEAT_TITLE
     resettitle();
 # endif
-    vim_free(newcmd);
+    vim_free(argv);
+    vim_free(tofree1);
+    vim_free(tofree2);
 
     return retval;
-
+}
 #endif /* USE_SYSTEM */
+
+    int
+mch_call_shell(
+    char_u	*cmd,
+    int		options)	/* SHELL_*, see vim.h */
+{
+#if defined(FEAT_GUI) && defined(FEAT_TERMINAL)
+    if (gui.in_use && vim_strchr(p_go, GO_TERMINAL) != NULL)
+	return mch_call_shell_terminal(cmd, options);
+#endif
+#ifdef USE_SYSTEM
+    return mch_call_shell_system(cmd, options);
+#else
+    return mch_call_shell_fork(cmd, options);
+#endif
 }
 
 #if defined(FEAT_JOB_CHANNEL) || defined(PROTO)
@@ -5471,11 +5494,23 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options)
 
 # ifdef FEAT_TERMINAL
 	if (options->jo_term_rows > 0)
+	{
+	    char *term = (char *)T_NAME;
+
+#ifdef FEAT_GUI
+	    if (term_is_gui(T_NAME))
+		/* In the GUI 'term' is not what we want, use $TERM. */
+		term = getenv("TERM");
+#endif
+	    /* Use 'term' or $TERM if it starts with "xterm", otherwise fall
+	     * back to "xterm". */
+	    if (term == NULL || *term == NUL || STRNCMP(term, "xterm", 5) != 0)
+		term = "xterm";
 	    set_child_environment(
 		    (long)options->jo_term_rows,
 		    (long)options->jo_term_cols,
-		    STRNCMP(T_NAME, "xterm", 5) == 0
-						   ? (char *)T_NAME : "xterm");
+		    term);
+	}
 	else
 # endif
 	    set_default_child_environment();
@@ -5603,13 +5638,14 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options)
 	close(fd_err[1]);
     if (channel != NULL)
     {
-	channel_set_pipes(channel,
-		use_file_for_in || use_null_for_in
-			? INVALID_FD : fd_in[1] < 0 ? pty_master_fd : fd_in[1],
-		use_file_for_out || use_null_for_out
-		      ? INVALID_FD : fd_out[0] < 0 ? pty_master_fd : fd_out[0],
-		use_out_for_err || use_file_for_err || use_null_for_err
-		     ? INVALID_FD : fd_err[0] < 0 ? pty_master_fd : fd_err[0]);
+	int in_fd = use_file_for_in || use_null_for_in
+			? INVALID_FD : fd_in[1] < 0 ? pty_master_fd : fd_in[1];
+	int out_fd = use_file_for_out || use_null_for_out
+		      ? INVALID_FD : fd_out[0] < 0 ? pty_master_fd : fd_out[0];
+	int err_fd = use_out_for_err || use_file_for_err || use_null_for_err
+		      ? INVALID_FD : fd_err[0] < 0 ? pty_master_fd : fd_err[0];
+
+	channel_set_pipes(channel, in_fd, out_fd, err_fd);
 	channel_set_job(channel, job, options);
     }
     else

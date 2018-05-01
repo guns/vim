@@ -1854,18 +1854,15 @@ fill_input_buf(int exit_on_error UNUSED)
     len = 0;	/* to avoid gcc warning */
     for (try = 0; try < 100; ++try)
     {
-#  ifdef VMS
-	len = vms_read(
-#  else
-	len = read(read_cmd_fd,
-#  endif
-	    (char *)inbuf + inbufcount, (size_t)((INBUFLEN - inbufcount)
+	size_t readlen = (size_t)((INBUFLEN - inbufcount)
 #  ifdef FEAT_MBYTE
-		/ input_conv.vc_factor
+			    / input_conv.vc_factor
 #  endif
-		));
-#  if 0
-		)	/* avoid syntax highlight error */
+			    );
+#  ifdef VMS
+	len = vms_read((char *)inbuf + inbufcount, readlen);
+#  else
+	len = read(read_cmd_fd, (char *)inbuf + inbufcount, readlen);
 #  endif
 
 	if (len > 0 || got_int)
@@ -2827,11 +2824,18 @@ retnomove:
 	 * (MOUSE_FOCUS was set above if we dragged first). */
 	if (dragwin == NULL || (flags & MOUSE_RELEASED))
 	    win_enter(wp, TRUE);		/* can make wp invalid! */
-#ifdef CHECK_DOUBLE_CLICK
-	/* set topline, to be able to check for double click ourselves */
+
 	if (curwin != old_curwin)
+	{
+#ifdef CHECK_DOUBLE_CLICK
+	    /* set topline, to be able to check for double click ourselves */
 	    set_mouse_topline(curwin);
 #endif
+#ifdef FEAT_TERMINAL
+	    /* when entering a terminal window may change state */
+	    term_win_entered();
+#endif
+	}
 	if (on_status_line)			/* In (or below) status line */
 	{
 	    /* Don't use start_arrow() if we're in the same window */

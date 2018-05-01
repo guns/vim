@@ -3001,7 +3001,7 @@ rename_buffer(char_u *new_fname)
     apply_autocmds(EVENT_BUFFILEPOST, NULL, NULL, FALSE, curbuf);
 
     /* Change directories when the 'acd' option is set. */
-    DO_AUTOCHDIR
+    DO_AUTOCHDIR;
     return OK;
 }
 
@@ -3259,7 +3259,7 @@ do_write(exarg_T *eap)
 	 * got changed or set. */
 	if (eap->cmdidx == CMD_saveas || name_was_missing)
 	{
-	    DO_AUTOCHDIR
+	    DO_AUTOCHDIR;
 	}
     }
 
@@ -3750,10 +3750,8 @@ do_ecmd(
 		fname_case(sfname, 0);   /* set correct case for sfname */
 #endif
 
-#ifdef FEAT_LISTCMDS
 	if ((flags & ECMD_ADDBUF) && (ffname == NULL || *ffname == NUL))
 	    goto theend;
-#endif
 
 	if (ffname == NULL)
 	    other_file = TRUE;
@@ -3835,9 +3833,7 @@ do_ecmd(
      */
     if (other_file)
     {
-#ifdef FEAT_LISTCMDS
 	if (!(flags & ECMD_ADDBUF))
-#endif
 	{
 	    if (!cmdmod.keepalt)
 		curwin->w_alt_fnum = curbuf->b_fnum;
@@ -3849,7 +3845,6 @@ do_ecmd(
 	    buf = buflist_findnr(fnum);
 	else
 	{
-#ifdef FEAT_LISTCMDS
 	    if (flags & ECMD_ADDBUF)
 	    {
 		linenr_T	tlnum = 1L;
@@ -3863,7 +3858,6 @@ do_ecmd(
 		(void)buflist_new(ffname, sfname, tlnum, BLN_LISTED);
 		goto theend;
 	    }
-#endif
 	    buf = buflist_new(ffname, sfname, 0L,
 		    BLN_CURBUF | ((flags & ECMD_SET_HELP) ? 0 : BLN_LISTED));
 
@@ -4021,11 +4015,7 @@ do_ecmd(
     }
     else /* !other_file */
     {
-	if (
-#ifdef FEAT_LISTCMDS
-		(flags & ECMD_ADDBUF) ||
-#endif
-		check_fname() == FAIL)
+	if ((flags & ECMD_ADDBUF) || check_fname() == FAIL)
 	    goto theend;
 
 	oldbuf = (flags & ECMD_OLDBUF);
@@ -4162,7 +4152,7 @@ do_ecmd(
 #endif
 
 	/* Change directories when the 'acd' option is set. */
-	DO_AUTOCHDIR
+	DO_AUTOCHDIR;
 
 	/*
 	 * Careful: open_buffer() and apply_autocmds() may change the current

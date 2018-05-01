@@ -7224,6 +7224,8 @@ load_colors(char_u *name)
     buf = alloc((unsigned)(STRLEN(name) + 12));
     if (buf != NULL)
     {
+	apply_autocmds(EVENT_COLORSCHEMEPRE, name,
+					       curbuf->b_fname, FALSE, curbuf);
 	sprintf((char *)buf, "colors/%s.vim", name);
 	retval = source_runtime(buf, DIP_START + DIP_OPT);
 	vim_free(buf);
@@ -10044,11 +10046,11 @@ highlight_changed(void)
 #ifdef USER_HIGHLIGHT
     char_u      userhl[10];
 # ifdef FEAT_STL_OPT
-    int		id_SNC = -1;
     int		id_S = -1;
+    int		id_SNC = 0;
 #  ifdef FEAT_TERMINAL
-    int		id_ST = -1;
-    int		id_STNC = -1;
+    int		id_ST = 0;
+    int		id_STNC = 0;
 #  endif
     int		hlcnt;
 # endif
