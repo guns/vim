@@ -2473,8 +2473,9 @@ installrtbase: $(HELPSOURCE)/vim.1 $(DEST_VIM) $(DEST_RT) \
 	cd $(PRINTSOURCE); $(INSTALL_DATA) *.ps $(DEST_PRINT)
 	cd $(DEST_PRINT); chmod $(FILEMOD) *.ps
 # install the colorscheme files
-	cd $(COLSOURCE); $(INSTALL_DATA) *.vim README.txt $(DEST_COL)
-	cd $(DEST_COL); chmod $(HELPMOD) *.vim README.txt
+	cd $(COLSOURCE); $(INSTALL_DATA_R) *.vim tools README.txt $(DEST_COL)
+	cd $(DEST_COL); chmod $(DIRMOD) tools
+	cd $(DEST_COL); chmod $(HELPMOD) *.vim README.txt tools/*.vim
 # install the syntax files
 	cd $(SYNSOURCE); $(INSTALL_DATA) *.vim README.txt $(DEST_SYN)
 	cd $(DEST_SYN); chmod $(HELPMOD) *.vim README.txt
@@ -2823,6 +2824,7 @@ uninstall_runtime:
 	-rm -f $(SYS_FTPLUGOF_FILE) $(SYS_FTPLUGIN_FILE)
 	-rm -f $(SYS_OPTWIN_FILE)
 	-rm -f $(DEST_COL)/*.vim $(DEST_COL)/README.txt
+	-rm -rf $(DEST_COL)/tools
 	-rm -f $(DEST_SYN)/*.vim $(DEST_SYN)/README.txt
 	-rm -f $(DEST_IND)/*.vim $(DEST_IND)/README.txt
 	-rm -rf $(DEST_MACRO)
