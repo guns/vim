@@ -671,7 +671,6 @@ static struct builtin_term builtin_termcaps[] =
 /*
  * VT320 is working as an ANSI terminal compatible DEC terminal.
  * (it covers VT1x0, VT2x0 and VT3x0 up to VT320 on VMS as well)
- * Note: K_F1...K_F5 are for internal use, should not be defined.
  * TODO:- rewrite ESC[ codes to CSI
  *      - keyboard languages (CSI ? 26 n)
  */
@@ -723,6 +722,8 @@ static struct builtin_term builtin_termcaps[] =
     {K_DOWN,		IF_EB("\033[B", ESC_STR "[B")},
     {K_RIGHT,		IF_EB("\033[C", ESC_STR "[C")},
     {K_LEFT,		IF_EB("\033[D", ESC_STR "[D")},
+    // Note: cursor key sequences for application cursor mode are omitted,
+    // because they interfere with typed commands: <Esc>OA.
     {K_F1,		IF_EB("\033[11~", ESC_STR "[11~")},
     {K_F2,		IF_EB("\033[12~", ESC_STR "[12~")},
     {K_F3,		IF_EB("\033[13~", ESC_STR "[13~")},
@@ -749,11 +750,23 @@ static struct builtin_term builtin_termcaps[] =
     {K_END,		IF_EB("\033[4~", ESC_STR "[4~")},
     {K_PAGEUP,		IF_EB("\033[5~", ESC_STR "[5~")},
     {K_PAGEDOWN,	IF_EB("\033[6~", ESC_STR "[6~")},
+    // These sequences starting with <Esc> O may interfere with what the user
+    // is typing.  Remove these if that bothers you.
     {K_KPLUS,		IF_EB("\033Ok", ESC_STR "Ok")},	/* keypad plus */
     {K_KMINUS,		IF_EB("\033Om", ESC_STR "Om")},	/* keypad minus */
     {K_KDIVIDE,		IF_EB("\033Oo", ESC_STR "Oo")},	/* keypad / */
     {K_KMULTIPLY,	IF_EB("\033Oj", ESC_STR "Oj")},	/* keypad * */
     {K_KENTER,		IF_EB("\033OM", ESC_STR "OM")},	/* keypad Enter */
+    {K_K0,		IF_EB("\033Op", ESC_STR "Op")},	/* keypad 0 */
+    {K_K1,		IF_EB("\033Oq", ESC_STR "Oq")},	/* keypad 1 */
+    {K_K2,		IF_EB("\033Or", ESC_STR "Or")},	/* keypad 2 */
+    {K_K3,		IF_EB("\033Os", ESC_STR "Os")},	/* keypad 3 */
+    {K_K4,		IF_EB("\033Ot", ESC_STR "Ot")},	/* keypad 4 */
+    {K_K5,		IF_EB("\033Ou", ESC_STR "Ou")},	/* keypad 5 */
+    {K_K6,		IF_EB("\033Ov", ESC_STR "Ov")},	/* keypad 6 */
+    {K_K7,		IF_EB("\033Ow", ESC_STR "Ow")},	/* keypad 7 */
+    {K_K8,		IF_EB("\033Ox", ESC_STR "Ox")},	/* keypad 8 */
+    {K_K9,		IF_EB("\033Oy", ESC_STR "Oy")},	/* keypad 9 */
     {K_BS,		"\x7f"},	/* for some reason 0177 doesn't work */
 # endif
 
@@ -909,6 +922,10 @@ static struct builtin_term builtin_termcaps[] =
 #  endif
     {(int)KS_CBE,	IF_EB("\033[?2004h", ESC_STR "[?2004h")},
     {(int)KS_CBD,	IF_EB("\033[?2004l", ESC_STR "[?2004l")},
+    {(int)KS_CST,	IF_EB("\033[22;2t", ESC_STR "[22;2t")},
+    {(int)KS_CRT,	IF_EB("\033[23;2t", ESC_STR "[23;2t")},
+    {(int)KS_SSI,	IF_EB("\033[22;1t", ESC_STR "[22;1t")},
+    {(int)KS_SRI,	IF_EB("\033[23;1t", ESC_STR "[23;1t")},
 
     {K_UP,		IF_EB("\033O*A", ESC_STR "O*A")},
     {K_DOWN,		IF_EB("\033O*B", ESC_STR "O*B")},
@@ -960,6 +977,16 @@ static struct builtin_term builtin_termcaps[] =
     {K_KMULTIPLY,	IF_EB("\033O*j", ESC_STR "O*j")},     /* keypad * */
     {K_KENTER,		IF_EB("\033O*M", ESC_STR "O*M")},     /* keypad Enter */
     {K_KPOINT,		IF_EB("\033O*n", ESC_STR "O*n")},     /* keypad . */
+    {K_K0,		IF_EB("\033O*p", ESC_STR "O*p")},     /* keypad 0 */
+    {K_K1,		IF_EB("\033O*q", ESC_STR "O*q")},     /* keypad 1 */
+    {K_K2,		IF_EB("\033O*r", ESC_STR "O*r")},     /* keypad 2 */
+    {K_K3,		IF_EB("\033O*s", ESC_STR "O*s")},     /* keypad 3 */
+    {K_K4,		IF_EB("\033O*t", ESC_STR "O*t")},     /* keypad 4 */
+    {K_K5,		IF_EB("\033O*u", ESC_STR "O*u")},     /* keypad 5 */
+    {K_K6,		IF_EB("\033O*v", ESC_STR "O*v")},     /* keypad 6 */
+    {K_K7,		IF_EB("\033O*w", ESC_STR "O*w")},     /* keypad 7 */
+    {K_K8,		IF_EB("\033O*x", ESC_STR "O*x")},     /* keypad 8 */
+    {K_K9,		IF_EB("\033O*y", ESC_STR "O*y")},     /* keypad 9 */
     {K_KDEL,		IF_EB("\033[3;*~", ESC_STR "[3;*~")}, /* keypad Del */
     {K_PS,		IF_EB("\033[200~", ESC_STR "[200~")}, /* paste start */
     {K_PE,		IF_EB("\033[201~", ESC_STR "[201~")}, /* paste end */
@@ -1460,7 +1487,7 @@ parse_builtin_tcap(char_u *term)
 			    if (term_7to8bit(t))
 			    {
 				*t = term_7to8bit(t);
-				STRCPY(t + 1, t + 2);
+				STRMOVE(t + 1, t + 2);
 			    }
 			term_strings[p->bt_entry] = s;
 			set_term_option_alloced(&term_strings[p->bt_entry]);
@@ -1577,6 +1604,8 @@ get_term_entries(int *height, int *width)
 			{KS_8F, "8f"}, {KS_8B, "8b"},
 			{KS_CBE, "BE"}, {KS_CBD, "BD"},
 			{KS_CPS, "PS"}, {KS_CPE, "PE"},
+			{KS_CST, "ST"}, {KS_CRT, "RT"},
+			{KS_SSI, "Si"}, {KS_SRI, "Ri"},
 			{(enum SpecialKey)0, NULL}
 		    };
     int		    i;
@@ -2951,6 +2980,45 @@ term_settitle(char_u *title)
     out_str(T_FS);			/* set title end */
     out_flush();
 }
+
+/*
+ * Tell the terminal to push (save) the title and/or icon, so that it can be
+ * popped (restored) later.
+ */
+    void
+term_push_title(int which)
+{
+    if ((which & SAVE_RESTORE_TITLE) && *T_CST != NUL)
+    {
+	OUT_STR(T_CST);
+	out_flush();
+    }
+
+    if ((which & SAVE_RESTORE_ICON) && *T_SSI != NUL)
+    {
+	OUT_STR(T_SSI);
+	out_flush();
+    }
+}
+
+/*
+ * Tell the terminal to pop the title and/or icon.
+ */
+    void
+term_pop_title(int which)
+{
+    if ((which & SAVE_RESTORE_TITLE) && *T_CRT != NUL)
+    {
+	OUT_STR(T_CRT);
+	out_flush();
+    }
+
+    if ((which & SAVE_RESTORE_ICON) && *T_SRI != NUL)
+    {
+	OUT_STR(T_SRI);
+	out_flush();
+    }
+}
 #endif
 
 /*
@@ -3766,16 +3834,23 @@ scroll_start(void)
 static int cursor_is_off = FALSE;
 
 /*
+ * Enable the cursor without checking if it's already enabled.
+ */
+    void
+cursor_on_force(void)
+{
+    out_str(T_VE);
+    cursor_is_off = FALSE;
+}
+
+/*
  * Enable the cursor.
  */
     void
 cursor_on(void)
 {
     if (cursor_is_off)
-    {
-	out_str(T_VE);
-	cursor_is_off = FALSE;
-    }
+	cursor_on_force();
 }
 
 /*
@@ -4636,17 +4711,21 @@ check_termcode(
 
 			if (version == 95)
 			{
-			    /* Mac Terminal.app sends 1;95;0 */
+			    // Mac Terminal.app sends 1;95;0
 			    if (STRNCMP(tp + extra - 2, "1;95;0c", 7) == 0)
 			    {
 				is_not_xterm = TRUE;
 				is_mac_terminal = TRUE;
 			    }
 # ifdef FEAT_MOUSE_SGR
-			    /* iTerm2 sends 0;95;0 */
+			    // iTerm2 sends 0;95;0
 			    if (STRNCMP(tp + extra - 2, "0;95;0c", 7) == 0)
 				is_iterm2 = TRUE;
+			    else
 # endif
+			    // old iTerm2 sends 0;95;
+			    if (STRNCMP(tp + extra - 2, "0;95;c", 6) == 0)
+				is_not_xterm = TRUE;
 			}
 
 			/* Only set 'ttymouse' automatically if it was not set
@@ -4688,6 +4767,11 @@ check_termcode(
 			/* Konsole sends 0;115;0 */
 			if (version == 115
 				&& STRNCMP(tp + extra - 2, "0;115;0c", 8) == 0)
+			    is_not_xterm = TRUE;
+
+			// Xterm first responded to this request at patch level
+			// 95, so assume anything below 95 is not xterm.
+			if (version < 95)
 			    is_not_xterm = TRUE;
 
 			/* Only request the cursor style if t_SH and t_RS are

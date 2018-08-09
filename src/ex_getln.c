@@ -5207,16 +5207,6 @@ expand_shellcmd(
     hash_init(&found_ht);
     for (s = path; ; s = e)
     {
-	if (*s == NUL)
-	{
-	    if (did_curdir)
-		break;
-	    /* Find directories in the current directory, path is empty. */
-	    did_curdir = TRUE;
-	}
-	else if (*s == '.')
-	    did_curdir = TRUE;
-
 #if defined(MSWIN)
 	e = vim_strchr(s, ';');
 #else
@@ -5224,6 +5214,23 @@ expand_shellcmd(
 #endif
 	if (e == NULL)
 	    e = s + STRLEN(s);
+
+	if (*s == NUL)
+	{
+	    if (did_curdir)
+		break;
+	    // Find directories in the current directory, path is empty.
+	    did_curdir = TRUE;
+	    flags |= EW_DIR;
+	}
+	else if (STRNCMP(s, ".", (int)(e - s)) == 0)
+	{
+	    did_curdir = TRUE;
+	    flags |= EW_DIR;
+	}
+	else
+	    // Do not match directories inside a $PATH item.
+	    flags &= ~EW_DIR;
 
 	l = e - s;
 	if (l > MAXPATHL - 5)
@@ -5280,23 +5287,21 @@ expand_shellcmd(
 
 
 # if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL)
-static void * call_user_expand_func(void *(*user_expand_func)(char_u *, int, char_u **, int), expand_T	*xp, int *num_file, char_u ***file);
-
 /*
  * Call "user_expand_func()" to invoke a user defined Vim script function and
  * return the result (either a string or a List).
  */
     static void *
 call_user_expand_func(
-    void	*(*user_expand_func)(char_u *, int, char_u **, int),
+    void	*(*user_expand_func)(char_u *, int, typval_T *),
     expand_T	*xp,
     int		*num_file,
     char_u	***file)
 {
     int		keep = 0;
-    char_u	num[50];
-    char_u	*args[3];
+    typval_T	args[4];
     int		save_current_SID = current_SID;
+    char_u	*pat = NULL;
     void	*ret;
     struct cmdline_info	    save_ccline;
 
@@ -5311,10 +5316,15 @@ call_user_expand_func(
 	ccline.cmdbuff[ccline.cmdlen] = 0;
     }
 
-    args[0] = vim_strnsave(xp->xp_pattern, xp->xp_pattern_len);
-    args[1] = xp->xp_line;
-    sprintf((char *)num, "%d", xp->xp_col);
-    args[2] = num;
+    pat = vim_strnsave(xp->xp_pattern, xp->xp_pattern_len);
+
+    args[0].v_type = VAR_STRING;
+    args[0].vval.v_string = pat;
+    args[1].v_type = VAR_STRING;
+    args[1].vval.v_string = xp->xp_line;
+    args[2].v_type = VAR_NUMBER;
+    args[2].vval.v_number = xp->xp_col;
+    args[3].v_type = VAR_UNKNOWN;
 
     /* Save the cmdline, we don't know what the function may do. */
     save_ccline = ccline;
@@ -5322,14 +5332,14 @@ call_user_expand_func(
     ccline.cmdprompt = NULL;
     current_SID = xp->xp_scriptID;
 
-    ret = user_expand_func(xp->xp_arg, 3, args, FALSE);
+    ret = user_expand_func(xp->xp_arg, 3, args);
 
     ccline = save_ccline;
     current_SID = save_current_SID;
     if (ccline.cmdbuff != NULL)
 	ccline.cmdbuff[ccline.cmdlen] = keep;
 
-    vim_free(args[0]);
+    vim_free(pat);
     return ret;
 }
 

@@ -14,9 +14,9 @@
  */
 
 /*
- * PCHAR(lp, c) - put character 'c' at position 'lp'
+ * PBYTE(lp, c) - put byte 'c' at position 'lp'
  */
-#define PCHAR(lp, c) (*(ml_get_buf(curbuf, (lp).lnum, TRUE) + (lp).col) = (c))
+#define PBYTE(lp, c) (*(ml_get_buf(curbuf, (lp).lnum, TRUE) + (lp).col) = (c))
 
 /*
  * Position comparisons
@@ -235,11 +235,7 @@
 # define TIME_MSG(s) do { /**/ } while (0)
 #endif
 
-#ifdef FEAT_VREPLACE
-# define REPLACE_NORMAL(s) (((s) & REPLACE_FLAG) && !((s) & VREPLACE_FLAG))
-#else
-# define REPLACE_NORMAL(s) ((s) & REPLACE_FLAG)
-#endif
+#define REPLACE_NORMAL(s) (((s) & REPLACE_FLAG) && !((s) & VREPLACE_FLAG))
 
 #ifdef FEAT_ARABIC
 # define UTF_COMPOSINGLIKE(p1, p2)  utf_composinglike((p1), (p2))

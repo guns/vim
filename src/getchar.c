@@ -1246,27 +1246,43 @@ del_typebuf(int len, int offset)
     static void
 gotchars(char_u *chars, int len)
 {
-    char_u	*s = chars;
-    int		c;
-    char_u	buf[2];
-    int		todo = len;
+    char_u		*s = chars;
+    int			i;
+    static char_u	buf[4];
+    static int		buflen = 0;
+    int			todo = len;
 
-    /* remember how many chars were last recorded */
-    if (reg_recording != 0)
-	last_recorded_len += len;
-
-    buf[1] = NUL;
     while (todo--)
     {
+	buf[buflen++] = *s++;
+
+	// When receiving a special key sequence, store it until we have all
+	// the bytes and we can decide what to do with it.
+	if (buflen == 1 && buf[0] == K_SPECIAL)
+	    continue;
+	if (buflen == 2)
+	    continue;
+	if (buflen == 3 && buf[1] == KS_EXTRA
+		       && (buf[2] == KE_FOCUSGAINED || buf[2] == KE_FOCUSLOST))
+	{
+	    // Drop K_FOCUSGAINED and K_FOCUSLOST, they are not useful in a
+	    // recording.
+	    buflen = 0;
+	    continue;
+	}
+
 	/* Handle one byte at a time; no translation to be done. */
-	c = *s++;
-	updatescript(c);
+	for (i = 0; i < buflen; ++i)
+	    updatescript(buf[i]);
 
 	if (reg_recording != 0)
 	{
-	    buf[0] = c;
-	    add_buff(&recordbuff, buf, 1L);
+	    buf[buflen] = NUL;
+	    add_buff(&recordbuff, buf, (long)buflen);
+	    /* remember how many chars were last recorded */
+	    last_recorded_len += buflen;
 	}
+	buflen = 0;
     }
     may_sync_undo();
 
@@ -1694,18 +1710,18 @@ vgetc(void)
 	 * its ASCII equivalent */
 	switch (c)
 	{
-	    case K_KPLUS:		c = '+'; break;
-	    case K_KMINUS:		c = '-'; break;
-	    case K_KDIVIDE:		c = '/'; break;
+	    case K_KPLUS:	c = '+'; break;
+	    case K_KMINUS:	c = '-'; break;
+	    case K_KDIVIDE:	c = '/'; break;
 	    case K_KMULTIPLY:	c = '*'; break;
-	    case K_KENTER:		c = CAR; break;
+	    case K_KENTER:	c = CAR; break;
 	    case K_KPOINT:
 #ifdef WIN32
-				    /* Can be either '.' or a ',', *
-				     * depending on the type of keypad. */
-				    c = MapVirtualKey(VK_DECIMAL, 2); break;
+				// Can be either '.' or a ',',
+				// depending on the type of keypad.
+				c = MapVirtualKey(VK_DECIMAL, 2); break;
 #else
-				    c = '.'; break;
+				c = '.'; break;
 #endif
 	    case K_K0:		c = '0'; break;
 	    case K_K1:		c = '1'; break;
@@ -2856,6 +2872,11 @@ vgetorpeek(int advance)
 /*
  * get a character: 3. from the user - get it
  */
+		if (typebuf.tb_len == 0)
+		    // timedout may have been set while waiting for a mapping
+		    // that has a <Nop> RHS.
+		    timedout = FALSE;
+
 		wait_tb_len = typebuf.tb_len;
 		c = inchar(typebuf.tb_buf + typebuf.tb_off + typebuf.tb_len,
 			typebuf.tb_buflen - typebuf.tb_off - typebuf.tb_len - 1,

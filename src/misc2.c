@@ -3381,8 +3381,8 @@ same_directory(char_u *f1, char_u *f2)
 	     && pathcmp((char *)ffname, (char *)f2, (int)(t1 - ffname)) == 0);
 }
 
-#if defined(FEAT_SESSION) || defined(MSWIN) || defined(FEAT_GUI_MAC) \
-	|| defined(FEAT_GUI_GTK) \
+#if defined(FEAT_SESSION) || defined(FEAT_AUTOCHDIR) \
+	|| defined(MSWIN) || defined(FEAT_GUI_MAC) || defined(FEAT_GUI_GTK) \
 	|| defined(FEAT_SUN_WORKSHOP) || defined(FEAT_NETBEANS_INTG) \
 	|| defined(PROTO)
 /*
@@ -3766,10 +3766,8 @@ get_shape_idx(int mouse)
 #endif
     if (!mouse && State == SHOWMATCH)
 	return SHAPE_IDX_SM;
-#ifdef FEAT_VREPLACE
     if (State & VREPLACE_FLAG)
 	return SHAPE_IDX_R;
-#endif
     if (State & REPLACE_FLAG)
 	return SHAPE_IDX_R;
     if (State & INSERT)

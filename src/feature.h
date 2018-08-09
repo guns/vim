@@ -207,13 +207,6 @@
 #endif
 
 /*
- * +vreplace		"gR" and "gr" commands.
- */
-#ifdef FEAT_NORMAL
-# define FEAT_VREPLACE
-#endif
-
-/*
  * +cmdline_info	'showcmd' and 'ruler' options.
  */
 #ifdef FEAT_NORMAL
@@ -803,6 +796,13 @@
 /* Mac specific thing: Codewarrior interface. */
 #ifdef FEAT_GUI_MAC
 # define FEAT_CW_EDITOR
+#endif
+
+/*
+ * +vartabs		'vartabstop' and 'varsofttabstop' options.
+ */
+#ifdef FEAT_BIG
+# define FEAT_VARTABS
 #endif
 
 /*

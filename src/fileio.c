@@ -3850,6 +3850,9 @@ buf_write(
 	    stat_T	st_new;
 	    char_u	*dirp;
 	    char_u	*rootname;
+#if defined(UNIX) || defined(WIN3264)
+	    char_u      *p;
+#endif
 #if defined(UNIX)
 	    int		did_set_shortname;
 	    mode_t	umask_save;
@@ -3887,6 +3890,17 @@ buf_write(
 		 * Isolate one directory name, using an entry in 'bdir'.
 		 */
 		(void)copy_option_part(&dirp, copybuf, BUFSIZE, ",");
+
+#if defined(UNIX) || defined(WIN3264)
+		p = copybuf + STRLEN(copybuf);
+		if (after_pathsep(copybuf, p) && p[-1] == p[-2])
+		    // Ends with '//', use full path
+		    if ((p = make_percent_swname(copybuf, fname)) != NULL)
+		    {
+			backup = modname(p, backup_ext, FALSE);
+			vim_free(p);
+		    }
+#endif
 		rootname = get_file_in_dir(fname, copybuf);
 		if (rootname == NULL)
 		{
@@ -3904,9 +3918,10 @@ buf_write(
 		for (;;)
 		{
 		    /*
-		     * Make backup file name.
+		     * Make the backup file name.
 		     */
-		    backup = buf_modname((buf->b_p_sn || buf->b_shortname),
+		    if (backup == NULL)
+			backup = buf_modname((buf->b_p_sn || buf->b_shortname),
 						 rootname, backup_ext, FALSE);
 		    if (backup == NULL)
 		    {
@@ -4108,14 +4123,29 @@ buf_write(
 		 * Isolate one directory name and make the backup file name.
 		 */
 		(void)copy_option_part(&dirp, IObuff, IOSIZE, ",");
-		rootname = get_file_in_dir(fname, IObuff);
-		if (rootname == NULL)
-		    backup = NULL;
-		else
+
+#if defined(UNIX) || defined(WIN3264)
+		p = IObuff + STRLEN(IObuff);
+		if (after_pathsep(IObuff, p) && p[-1] == p[-2])
+		    // path ends with '//', use full path
+		    if ((p = make_percent_swname(IObuff, fname)) != NULL)
+		    {
+			backup = modname(p, backup_ext, FALSE);
+			vim_free(p);
+		    }
+#endif
+		if (backup == NULL)
 		{
-		    backup = buf_modname((buf->b_p_sn || buf->b_shortname),
-						 rootname, backup_ext, FALSE);
-		    vim_free(rootname);
+		    rootname = get_file_in_dir(fname, IObuff);
+		    if (rootname == NULL)
+			backup = NULL;
+		    else
+		    {
+			backup = buf_modname(
+				(buf->b_p_sn || buf->b_shortname),
+						rootname, backup_ext, FALSE);
+			vim_free(rootname);
+		    }
 		}
 
 		if (backup != NULL)
@@ -6252,7 +6282,7 @@ shorten_filenames(char_u **fnames, int count)
 #endif
 
 /*
- * add extension to file name - change path/fo.o.h to path/fo.o.h.ext or
+ * Add extension to file name - change path/fo.o.h to path/fo.o.h.ext or
  * fo_o_h.ext for MSDOS or when shortname option set.
  *
  * Assumed that fname is a valid name found in the filesystem we assure that
@@ -6897,7 +6927,7 @@ buf_check_timestamp(
      * this buffer. */
     if (buf->b_ffname == NULL
 	    || buf->b_ml.ml_mfp == NULL
-	    || *buf->b_p_bt != NUL
+	    || !bt_normal(buf)
 	    || buf->b_saving
 	    || busy
 #ifdef FEAT_NETBEANS_INTG
@@ -6923,11 +6953,13 @@ buf_check_timestamp(
     {
 	retval = 1;
 
-	/* set b_mtime to stop further warnings (e.g., when executing
-	 * FileChangedShell autocmd) */
+	// set b_mtime to stop further warnings (e.g., when executing
+	// FileChangedShell autocmd)
 	if (stat_res < 0)
 	{
-	    buf->b_mtime = 0;
+	    // When 'autoread' is set we'll check the file again to see if it
+	    // re-appears.
+	    buf->b_mtime = buf->b_p_ar;
 	    buf->b_orig_size = 0;
 	    buf->b_orig_mode = 0;
 	}
@@ -8412,19 +8444,19 @@ au_event_restore(char_u *old_ei)
  *				    will be automatically executed for <event>
  *				    when editing a file matching <pat>, in
  *				    the current group.
- * :autocmd <event> <pat>	    Show the auto-commands associated with
+ * :autocmd <event> <pat>	    Show the autocommands associated with
  *				    <event> and <pat>.
- * :autocmd <event>		    Show the auto-commands associated with
+ * :autocmd <event>		    Show the autocommands associated with
  *				    <event>.
- * :autocmd			    Show all auto-commands.
- * :autocmd! <event> <pat> <cmd>    Remove all auto-commands associated with
+ * :autocmd			    Show all autocommands.
+ * :autocmd! <event> <pat> <cmd>    Remove all autocommands associated with
  *				    <event> and <pat>, and add the command
  *				    <cmd>, for the current group.
- * :autocmd! <event> <pat>	    Remove all auto-commands associated with
+ * :autocmd! <event> <pat>	    Remove all autocommands associated with
  *				    <event> and <pat> for the current group.
- * :autocmd! <event>		    Remove all auto-commands associated with
+ * :autocmd! <event>		    Remove all autocommands associated with
  *				    <event> for the current group.
- * :autocmd!			    Remove ALL auto-commands for the current
+ * :autocmd!			    Remove ALL autocommands for the current
  *				    group.
  *
  *  Multiple events and patterns may be given separated by commas.  Here are
@@ -8534,7 +8566,7 @@ do_autocmd(char_u *arg_in, int forceit)
     if (!forceit && *cmd == NUL)
     {
 	/* Highlight title */
-	MSG_PUTS_TITLE(_("\n--- Auto-Commands ---"));
+	MSG_PUTS_TITLE(_("\n--- Autocommands ---"));
     }
 
     /*
@@ -9602,7 +9634,7 @@ apply_autocmds_group(
     autocmd_match = fname;
 
 
-    /* Don't redraw while doing auto commands. */
+    /* Don't redraw while doing autocommands. */
     ++RedrawingDisabled;
     save_sourcing_name = sourcing_name;
     sourcing_name = NULL;	/* don't free this one */
@@ -9855,7 +9887,7 @@ auto_next_pat(
 		    : ap->buflocal_nr == apc->arg_bufnr)
 	    {
 		name = event_nr2name(apc->event);
-		s = _("%s Auto commands for \"%s\"");
+		s = _("%s Autocommands for \"%s\"");
 		sourcing_name = alloc((unsigned)(STRLEN(s)
 					    + STRLEN(name) + ap->patlen + 1));
 		if (sourcing_name != NULL)

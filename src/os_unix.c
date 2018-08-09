@@ -1227,7 +1227,23 @@ deathtrap SIGDEFARG(sigarg)
     SIGRETURN;
 }
 
-#if defined(_REENTRANT) && defined(SIGCONT)
+    static void
+after_sigcont(void)
+{
+# ifdef FEAT_TITLE
+    // Set oldtitle to NULL, so the current title is obtained again.
+    VIM_CLEAR(oldtitle);
+# endif
+    settmode(TMODE_RAW);
+    need_check_timestamps = TRUE;
+    did_check_timestamps = FALSE;
+}
+
+#if defined(SIGCONT)
+static RETSIGTYPE sigcont_handler SIGPROTOARG;
+static int in_mch_suspend = FALSE;
+
+# if defined(_REENTRANT) && defined(SIGCONT)
 /*
  * On Solaris with multi-threading, suspending might not work immediately.
  * Catch the SIGCONT signal, which will be used as an indication whether the
@@ -1239,7 +1255,7 @@ deathtrap SIGDEFARG(sigarg)
  * volatile because it is used in signal handler sigcont_handler().
  */
 static volatile int sigcont_received;
-static RETSIGTYPE sigcont_handler SIGPROTOARG;
+# endif
 
 /*
  * signal handler for SIGCONT
@@ -1247,7 +1263,38 @@ static RETSIGTYPE sigcont_handler SIGPROTOARG;
     static RETSIGTYPE
 sigcont_handler SIGDEFARG(sigarg)
 {
-    sigcont_received = TRUE;
+    if (in_mch_suspend)
+    {
+# if defined(_REENTRANT) && defined(SIGCONT)
+	sigcont_received = TRUE;
+# endif
+    }
+    else
+    {
+	// We didn't suspend ourselves, assume we were stopped by a SIGSTOP
+	// signal (which can't be intercepted) and get a SIGCONT.  Need to get
+	// back to a sane mode and redraw.
+	after_sigcont();
+
+	update_screen(CLEAR);
+	if (State & CMDLINE)
+	    redrawcmdline();
+	else if (State == HITRETURN || State == SETWSIZE || State == ASKMORE
+		|| State == EXTERNCMD || State == CONFIRM || exmode_active)
+	    repeat_message();
+	else if (redrawing())
+	    setcursor();
+#if defined(FEAT_INS_EXPAND)
+	if (pum_visible())
+	{
+	    redraw_later(NOT_VALID);
+	    ins_compl_show_pum();
+	}
+#endif
+	cursor_on_force();
+	out_flush();
+    }
+
     SIGRETURN;
 }
 #endif
@@ -1330,6 +1377,8 @@ mch_suspend(void)
 {
     /* BeOS does have SIGTSTP, but it doesn't work. */
 #if defined(SIGTSTP) && !defined(__BEOS__)
+    in_mch_suspend = TRUE;
+
     out_flush();	    /* needed to make cursor visible on some systems */
     settmode(TMODE_COOK);
     out_flush();	    /* needed to disable mouse on some systems */
@@ -1361,16 +1410,9 @@ mch_suspend(void)
 	    mch_delay(wait_time, FALSE);
     }
 # endif
+    in_mch_suspend = FALSE;
 
-# ifdef FEAT_TITLE
-    /*
-     * Set oldtitle to NULL, so the current title is obtained again.
-     */
-    VIM_CLEAR(oldtitle);
-# endif
-    settmode(TMODE_RAW);
-    need_check_timestamps = TRUE;
-    did_check_timestamps = FALSE;
+    after_sigcont();
 #else
     suspend_shell();
 #endif
@@ -1410,7 +1452,7 @@ set_signals(void)
 #ifdef SIGTSTP
     signal(SIGTSTP, restricted ? SIG_IGN : SIG_DFL);
 #endif
-#if defined(_REENTRANT) && defined(SIGCONT)
+#if defined(SIGCONT)
     signal(SIGCONT, sigcont_handler);
 #endif
 
@@ -2294,17 +2336,21 @@ mch_settitle(char_u *title, char_u *icon)
 /*
  * Restore the window/icon title.
  * "which" is one of:
- *  1  only restore title
- *  2  only restore icon
- *  3  restore title and icon
+ *  SAVE_RESTORE_TITLE only restore title
+ *  SAVE_RESTORE_ICON  only restore icon
+ *  SAVE_RESTORE_BOTH  restore title and icon
  */
     void
 mch_restore_title(int which)
 {
     /* only restore the title or icon when it has been set */
-    mch_settitle(((which & 1) && did_set_title) ?
+    mch_settitle(((which & SAVE_RESTORE_TITLE) && did_set_title) ?
 			(oldtitle ? oldtitle : p_titleold) : NULL,
-			      ((which & 2) && did_set_icon) ? oldicon : NULL);
+	       ((which & SAVE_RESTORE_ICON) && did_set_icon) ? oldicon : NULL);
+
+    // pop and push from/to the stack
+    term_pop_title(which);
+    term_push_title(which);
 }
 
 #endif /* FEAT_TITLE */
@@ -3370,7 +3416,9 @@ mch_exit(int r)
     {
 	settmode(TMODE_COOK);
 #ifdef FEAT_TITLE
-	mch_restore_title(3);	/* restore xterm title and icon name */
+	// restore xterm title and icon name
+	mch_restore_title(SAVE_RESTORE_BOTH);
+	term_pop_title(SAVE_RESTORE_BOTH);
 #endif
 	/*
 	 * When t_ti is not empty but it doesn't cause swapping terminal
@@ -4159,7 +4207,11 @@ wait4pid(pid_t child, waitstatus *status)
  * Set the environment for a child process.
  */
     static void
-set_child_environment(long rows, long columns, char *term)
+set_child_environment(
+	long	rows,
+	long	columns,
+	char	*term,
+	int	is_terminal UNUSED)
 {
 # ifdef HAVE_SETENV
     char	envbuf[50];
@@ -4169,6 +4221,9 @@ set_child_environment(long rows, long columns, char *term)
     static char	envbuf_Lines[20];
     static char	envbuf_Columns[20];
     static char	envbuf_Colors[20];
+#  ifdef FEAT_TERMINAL
+    static char	envbuf_Version[20];
+#  endif
 #  ifdef FEAT_CLIENTSERVER
     static char	envbuf_Servername[60];
 #  endif
@@ -4189,6 +4244,13 @@ set_child_environment(long rows, long columns, char *term)
     setenv("COLUMNS", (char *)envbuf, 1);
     sprintf((char *)envbuf, "%ld", colors);
     setenv("COLORS", (char *)envbuf, 1);
+#  ifdef FEAT_TERMINAL
+    if (is_terminal)
+    {
+	sprintf((char *)envbuf, "%ld",  (long)get_vim_var_nr(VV_VERSION));
+	setenv("VIM_TERMINAL", (char *)envbuf, 1);
+    }
+#  endif
 #  ifdef FEAT_CLIENTSERVER
     setenv("VIM_SERVERNAME", serverName == NULL ? "" : (char *)serverName, 1);
 #  endif
@@ -4209,6 +4271,14 @@ set_child_environment(long rows, long columns, char *term)
     putenv(envbuf_Columns);
     vim_snprintf(envbuf_Colors, sizeof(envbuf_Colors), "COLORS=%ld", colors);
     putenv(envbuf_Colors);
+#  ifdef FEAT_TERMINAL
+    if (is_terminal)
+    {
+	vim_snprintf(envbuf_Version, sizeof(envbuf_Version),
+			 "VIM_TERMINAL=%ld", (long)get_vim_var_nr(VV_VERSION));
+	putenv(envbuf_Version);
+    }
+#  endif
 #  ifdef FEAT_CLIENTSERVER
     vim_snprintf(envbuf_Servername, sizeof(envbuf_Servername),
 	    "VIM_SERVERNAME=%s", serverName == NULL ? "" : (char *)serverName);
@@ -4218,9 +4288,9 @@ set_child_environment(long rows, long columns, char *term)
 }
 
     static void
-set_default_child_environment(void)
+set_default_child_environment(int is_terminal)
 {
-    set_child_environment(Rows, Columns, "dumb");
+    set_child_environment(Rows, Columns, "dumb", is_terminal);
 }
 #endif
 
@@ -4343,6 +4413,7 @@ mch_call_shell_terminal(
     char_u	*tofree2 = NULL;
     int		retval = -1;
     buf_T	*buf;
+    job_T	*job;
     aco_save_T	aco;
     oparg_T	oa;		/* operator arguments */
 
@@ -4352,6 +4423,11 @@ mch_call_shell_terminal(
     init_job_options(&opt);
     ch_log(NULL, "starting terminal for system command '%s'", cmd);
     buf = term_start(NULL, argv, &opt, TERM_START_SYSTEM);
+    if (buf == NULL)
+	goto theend;
+
+    job = term_getjob(buf->b_term);
+    ++job->jv_refcount;
 
     /* Find a window to make "buf" curbuf. */
     aucmd_prepbuf(&aco, buf);
@@ -4369,8 +4445,10 @@ mch_call_shell_terminal(
 	else
 	    normal_cmd(&oa, TRUE);
     }
-    retval = 0;
+    retval = job->jv_exitval;
     ch_log(NULL, "system command finished");
+
+    job_unref(job);
 
     /* restore curwin/curbuf and a few other things */
     aucmd_restbuf(&aco);
@@ -4683,7 +4761,7 @@ mch_call_shell_fork(
 #  endif
 		}
 # endif
-		set_default_child_environment();
+		set_default_child_environment(FALSE);
 
 		/*
 		 * stderr is only redirected when using the GUI, so that a
@@ -5361,7 +5439,7 @@ mch_call_shell(
 
 #if defined(FEAT_JOB_CHANNEL) || defined(PROTO)
     void
-mch_job_start(char **argv, job_T *job, jobopt_T *options)
+mch_job_start(char **argv, job_T *job, jobopt_T *options, int is_terminal)
 {
     pid_t	pid;
     int		fd_in[2] = {-1, -1};	/* for stdin */
@@ -5509,11 +5587,12 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options)
 	    set_child_environment(
 		    (long)options->jo_term_rows,
 		    (long)options->jo_term_cols,
-		    term);
+		    term,
+		    is_terminal);
 	}
 	else
 # endif
-	    set_default_child_environment();
+	    set_default_child_environment(is_terminal);
 
 	if (options->jo_env != NULL)
 	{

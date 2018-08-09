@@ -208,6 +208,21 @@ func Test_simplify()
   call assert_fails('call simplify(1.2)', 'E806:')
 endfunc
 
+func Test_pathshorten()
+  call assert_equal('', pathshorten(''))
+  call assert_equal('foo', pathshorten('foo'))
+  call assert_equal('/foo', pathshorten('/foo'))
+  call assert_equal('f/', pathshorten('foo/'))
+  call assert_equal('f/bar', pathshorten('foo/bar'))
+  call assert_equal('f/b/foobar', pathshorten('foo/bar/foobar'))
+  call assert_equal('/f/b/foobar', pathshorten('/foo/bar/foobar'))
+  call assert_equal('.f/bar', pathshorten('.foo/bar'))
+  call assert_equal('~f/bar', pathshorten('~foo/bar'))
+  call assert_equal('~.f/bar', pathshorten('~.foo/bar'))
+  call assert_equal('.~f/bar', pathshorten('.~foo/bar'))
+  call assert_equal('~/f/bar', pathshorten('~/foo/bar'))
+endfunc
+
 func Test_strpart()
   call assert_equal('de', strpart('abcdefg', 3, 2))
   call assert_equal('ab', strpart('abcdefg', -2, 4))
@@ -463,6 +478,18 @@ func Test_mode()
 
   call assert_equal('n', mode(0))
   call assert_equal('n', mode(1))
+
+  " i_CTRL-O
+  exe "normal i\<C-O>:call Save_mode()\<Cr>\<Esc>"
+  call assert_equal("n-niI", g:current_modes)
+
+  " R_CTRL-O
+  exe "normal R\<C-O>:call Save_mode()\<Cr>\<Esc>"
+  call assert_equal("n-niR", g:current_modes)
+
+  " gR_CTRL-O
+  exe "normal gR\<C-O>:call Save_mode()\<Cr>\<Esc>"
+  call assert_equal("n-niV", g:current_modes)
 
   " How to test operator-pending mode?
 
@@ -810,6 +837,17 @@ func Test_col()
   bw!
 endfunc
 
+func Test_inputlist()
+  call feedkeys(":let c = inputlist(['Select color:', '1. red', '2. green', '3. blue'])\<cr>1\<cr>", 'tx')
+  call assert_equal(1, c)
+  call feedkeys(":let c = inputlist(['Select color:', '1. red', '2. green', '3. blue'])\<cr>2\<cr>", 'tx')
+  call assert_equal(2, c)
+  call feedkeys(":let c = inputlist(['Select color:', '1. red', '2. green', '3. blue'])\<cr>3\<cr>", 'tx')
+  call assert_equal(3, c)
+
+  call assert_fails('call inputlist("")', 'E686:')
+endfunc
+
 func Test_balloon_show()
   if has('balloon_eval')
     " This won't do anything but must not crash either.
@@ -947,4 +985,56 @@ func Test_reg_executing_and_recording()
   bwipe!
   delfunc s:save_reg_stat
   unlet s:reg_stat
+endfunc
+
+func Test_libcall_libcallnr()
+  if !has('libcall')
+    return
+  endif
+
+  if has('win32')
+    let libc = 'msvcrt.dll'
+  elseif has('mac')
+    let libc = 'libSystem.B.dylib'
+  else
+    " On Unix, libc.so can be in various places.
+    " Interestingly, using an empty string for the 1st argument of libcall
+    " allows to call functions from libc which is not documented.
+    let libc = ''
+  endif
+
+  if has('win32')
+    call assert_equal($USERPROFILE, libcall(libc, 'getenv', 'USERPROFILE'))
+  else
+    call assert_equal($HOME, libcall(libc, 'getenv', 'HOME'))
+  endif
+
+  " If function returns NULL, libcall() should return an empty string.
+  call assert_equal('', libcall(libc, 'getenv', 'X_ENV_DOES_NOT_EXIT'))
+
+  " Test libcallnr() with string and integer argument.
+  call assert_equal(4, libcallnr(libc, 'strlen', 'abcd'))
+  call assert_equal(char2nr('A'), libcallnr(libc, 'toupper', char2nr('a')))
+
+  call assert_fails("call libcall(libc, 'Xdoesnotexist_', '')", 'E364:')
+  call assert_fails("call libcallnr(libc, 'Xdoesnotexist_', '')", 'E364:')
+
+  call assert_fails("call libcall('Xdoesnotexist_', 'getenv', 'HOME')", 'E364:')
+  call assert_fails("call libcallnr('Xdoesnotexist_', 'strlen', 'abcd')", 'E364:')
+endfunc
+
+sandbox function Fsandbox()
+  normal ix
+endfunc
+
+func Test_func_sandbox()
+  sandbox let F = {-> 'hello'}
+  call assert_equal('hello', F())
+
+  sandbox let F = {-> execute("normal ix\<Esc>")}
+  call assert_fails('call F()', 'E48:')
+  unlet F
+
+  call assert_fails('call Fsandbox()', 'E48:')
+  delfunc Fsandbox
 endfunc

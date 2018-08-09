@@ -384,7 +384,8 @@ endfunc
 func s:get_sleep_cmd()
   if s:python != ''
     let cmd = s:python . " test_short_sleep.py"
-    let waittime = 500
+    " 500 was not enough for Travis
+    let waittime = 900
   else
     echo 'This will take five seconds...'
     let waittime = 2000
@@ -481,18 +482,25 @@ func Test_terminal_servername()
   if !has('clientserver')
     return
   endif
+  call s:test_environment("VIM_SERVERNAME", v:servername)
+endfunc
+
+func Test_terminal_version()
+  call s:test_environment("VIM_TERMINAL", string(v:version))
+endfunc
+
+func s:test_environment(name, value)
   let buf = Run_shell_in_terminal({})
   " Wait for the shell to display a prompt
   call WaitForAssert({-> assert_notequal('', term_getline(buf, 1))})
   if has('win32')
-    call term_sendkeys(buf, "echo %VIM_SERVERNAME%\r")
+    call term_sendkeys(buf, "echo %" . a:name . "%\r")
   else
-    call term_sendkeys(buf, "echo $VIM_SERVERNAME\r")
+    call term_sendkeys(buf, "echo $" . a:name . "\r")
   endif
   call term_wait(buf)
   call Stop_shell_in_terminal(buf)
-  call WaitFor('getline(2) == v:servername')
-  call assert_equal(v:servername, getline(2))
+  call WaitForAssert({-> assert_equal(a:value, getline(2))})
 
   exe buf . 'bwipe'
   unlet buf
@@ -512,29 +520,6 @@ func Test_terminal_env()
   call WaitForAssert({-> assert_equal('correct', getline(2))})
 
   exe buf . 'bwipe'
-endfunc
-
-" must be last, we can't go back from GUI to terminal
-func Test_zz_terminal_in_gui()
-  if !CanRunGui()
-    return
-  endif
-
-  " Ignore the "failed to create input context" error.
-  call test_ignore_error('E285:')
-
-  gui -f
-
-  call assert_equal(1, winnr('$'))
-  let buf = Run_shell_in_terminal({'term_finish': 'close'})
-  call Stop_shell_in_terminal(buf)
-  call term_wait(buf)
-
-  " closing window wipes out the terminal buffer a with finished job
-  call WaitForAssert({-> assert_equal(1, winnr('$'))})
-  call assert_equal("", bufname(buf))
-
-  unlet g:job
 endfunc
 
 func Test_terminal_list_args()
@@ -579,6 +564,10 @@ endfunc
 func Test_terminal_write_stdin()
   if !executable('wc')
     throw 'skipped: wc command not available'
+  endif
+  if has('win32')
+    " TODO: enable once writing to stdin works on MS-Windows
+    return
   endif
   new
   call setline(1, ['one', 'two', 'three'])
@@ -1498,8 +1487,9 @@ func Test_terminal_out_err()
 
   let outfile = 'Xtermstdout'
   let buf = term_start(['./Xechoerrout.sh'], {'out_io': 'file', 'out_name': outfile})
-  call WaitForAssert({-> assert_inrange(1, 2, len(readfile(outfile)))})
-  call assert_equal("this is standard out", readfile(outfile)[0])
+
+  call WaitFor({-> !empty(readfile(outfile)) && !empty(term_getline(buf, 1))})
+  call assert_equal(['this is standard out'], readfile(outfile))
   call assert_equal('this is standard error', term_getline(buf, 1))
 
   call WaitForAssert({-> assert_equal('dead', job_status(term_getjob(buf)))})
@@ -1533,4 +1523,113 @@ func Test_terminwinscroll()
   endfor
 
   exe buf . 'bwipe!'
+endfunc
+
+" Resizing the terminal window caused an ml_get error.
+" TODO: This does not reproduce the original problem.
+func Test_terminal_resize()
+  set statusline=x
+  terminal
+  call assert_equal(2, winnr('$'))
+
+  " Fill the terminal with text.
+  if has('win32')
+    call feedkeys("dir\<CR>", 'xt')
+  else
+    call feedkeys("ls\<CR>", 'xt')
+  endif
+  " Go to Terminal-Normal mode for a moment.
+  call feedkeys("\<C-W>N", 'xt')
+  " Open a new window
+  call feedkeys("i\<C-W>n", 'xt')
+  call assert_equal(3, winnr('$'))
+  redraw
+
+  close
+  call assert_equal(2, winnr('$'))
+  call feedkeys("exit\<CR>", 'xt')
+  set statusline&
+endfunc
+
+" must be nearly the last, we can't go back from GUI to terminal
+func Test_zz1_terminal_in_gui()
+  if !CanRunGui()
+    return
+  endif
+
+  " Ignore the "failed to create input context" error.
+  call test_ignore_error('E285:')
+
+  gui -f
+
+  call assert_equal(1, winnr('$'))
+  let buf = Run_shell_in_terminal({'term_finish': 'close'})
+  call Stop_shell_in_terminal(buf)
+  call term_wait(buf)
+
+  " closing window wipes out the terminal buffer a with finished job
+  call WaitForAssert({-> assert_equal(1, winnr('$'))})
+  call assert_equal("", bufname(buf))
+
+  unlet g:job
+endfunc
+
+func Test_zz2_terminal_guioptions_bang()
+  if !has('gui_running')
+    return
+  endif
+  set guioptions+=!
+
+  let filename = 'Xtestscript'
+  if has('win32')
+    let filename .= '.bat'
+    let prefix = ''
+    let contents = ['@echo off', 'exit %1']
+  else
+    let filename .= '.sh'
+    let prefix = './'
+    let contents = ['#!/bin/sh', 'exit $1']
+  endif
+  call writefile(contents, filename)
+  call setfperm(filename, 'rwxrwx---')
+
+  " Check if v:shell_error is equal to the exit status.
+  let exitval = 0
+  execute printf(':!%s%s %d', prefix, filename, exitval)
+  call assert_equal(exitval, v:shell_error)
+
+  let exitval = 9
+  execute printf(':!%s%s %d', prefix, filename, exitval)
+  call assert_equal(exitval, v:shell_error)
+
+  set guioptions&
+  call delete(filename)
+endfunc
+
+func Test_terminal_hidden()
+  if !has('unix')
+    return
+  endif
+  term ++hidden cat
+  let bnr = bufnr('$')
+  call assert_equal('terminal', getbufvar(bnr, '&buftype'))
+  exe 'sbuf ' . bnr
+  call assert_equal('terminal', &buftype)
+  call term_sendkeys(bnr, "asdf\<CR>")
+  call WaitForAssert({-> assert_match('asdf', term_getline(bnr, 2))})
+  call term_sendkeys(bnr, "\<C-D>")
+  call WaitForAssert({-> assert_equal('finished', term_getstatus(bnr))})
+  bwipe!
+endfunc
+
+func Test_terminal_hidden_and_close()
+  if !has('unix')
+    return
+  endif
+  call assert_equal(1, winnr('$'))
+  term ++hidden ++close ls
+  let bnr = bufnr('$')
+  call assert_equal('terminal', getbufvar(bnr, '&buftype'))
+  call WaitForAssert({-> assert_false(bufexists(bnr))})
+  call assert_equal(1, winnr('$'))
 endfunc

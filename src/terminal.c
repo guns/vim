@@ -529,6 +529,8 @@ term_start(
 
     set_string_option_direct((char_u *)"buftype", -1,
 				  (char_u *)"terminal", OPT_FREE|OPT_LOCAL, 0);
+    // Avoid that 'buftype' is reset when this buffer is entered.
+    curbuf->b_p_initialized = TRUE;
 
     /* Mark the buffer as not modifiable. It can only be made modifiable after
      * the job finished. */
@@ -973,11 +975,13 @@ write_to_term(buf_T *buffer, char_u *msg, channel_T *channel)
      * contents, thus no screen update is needed. */
     if (!term->tl_normal_mode)
     {
-	/* TODO: only update once in a while. */
+	// Don't use update_screen() when editing the command line, it gets
+	// cleared.
+	// TODO: only update once in a while.
 	ch_log(term->tl_job->jv_channel, "updating screen");
-	if (buffer == curbuf)
+	if (buffer == curbuf && (State & CMDLINE) == 0)
 	{
-	    update_screen(0);
+	    update_screen(VALID_NO_UPDATE);
 	    /* update_screen() can be slow, check the terminal wasn't closed
 	     * already */
 	    if (buffer == curbuf && curbuf->b_term != NULL)
@@ -2107,7 +2111,11 @@ terminal_loop(int blocking)
     in_terminal_loop = curbuf->b_term;
 
     if (*curwin->w_p_twk != NUL)
+    {
 	termwinkey = string_to_key(curwin->w_p_twk, TRUE);
+	if (termwinkey == Ctrl_W)
+	    termwinkey = 0;
+    }
     position_cursor(curwin, &curbuf->b_term->tl_cursor_pos);
     may_set_cursor_props(curbuf->b_term);
 
@@ -2203,12 +2211,13 @@ terminal_loop(int blocking)
 		/* "CTRL-W CTRL-C" or 'termwinkey' CTRL-C: end the job */
 		mch_signal_job(curbuf->b_term->tl_job, (char_u *)"kill");
 	    }
-	    else if (termwinkey == 0 && c == '.')
+	    else if (c == '.')
 	    {
 		/* "CTRL-W .": send CTRL-W to the job */
-		c = Ctrl_W;
+		/* "'termwinkey' .": send 'termwinkey' to the job */
+		c = termwinkey == 0 ? Ctrl_W : termwinkey;
 	    }
-	    else if (termwinkey == 0 && c == Ctrl_BSL)
+	    else if (c == Ctrl_BSL)
 	    {
 		/* "CTRL-W CTRL-\": send CTRL-\ to the job */
 		c = Ctrl_BSL;
@@ -2809,11 +2818,17 @@ term_after_channel_closed(term_T *term)
 	if (term->tl_finish == TL_FINISH_CLOSE)
 	{
 	    aco_save_T	aco;
+	    int		do_set_w_closing = term->tl_buffer->b_nwindows == 0;
 
-	    /* ++close or term_finish == "close" */
+	    // ++close or term_finish == "close"
 	    ch_log(NULL, "terminal job finished, closing window");
 	    aucmd_prepbuf(&aco, term->tl_buffer);
+	    // Avoid closing the window if we temporarily use it.
+	    if (do_set_w_closing)
+		curwin->w_closing = TRUE;
 	    do_bufdel(DOBUF_WIPE, (char_u *)"", 1, fnum, fnum, FALSE);
+	    if (do_set_w_closing)
+		curwin->w_closing = FALSE;
 	    aucmd_restbuf(&aco);
 	    return TRUE;
 	}
@@ -3127,13 +3142,16 @@ term_update_window(win_T *wp)
 
     if (term->tl_rows != newrows || term->tl_cols != newcols)
     {
-
-
 	term->tl_vterm_size_changed = TRUE;
 	vterm_set_size(vterm, newrows, newcols);
 	ch_log(term->tl_job->jv_channel, "Resizing terminal to %d lines",
 								      newrows);
 	term_report_winsize(term, newrows, newcols);
+
+	// Updating the terminal size will cause the snapshot to be cleared.
+	// When not in terminal_loop() we need to restore it.
+	if (term != in_terminal_loop)
+	    may_move_terminal_to_buffer(term, FALSE);
     }
 
     /* The cursor may have been moved when resizing. */
@@ -4722,11 +4740,11 @@ f_term_getcursor(typval_T *argvars, typval_T *rettv)
     d = dict_alloc();
     if (d != NULL)
     {
-	dict_add_nr_str(d, "visible", term->tl_cursor_visible, NULL);
-	dict_add_nr_str(d, "blink", blink_state_is_inverted()
-		       ? !term->tl_cursor_blink : term->tl_cursor_blink, NULL);
-	dict_add_nr_str(d, "shape", term->tl_cursor_shape, NULL);
-	dict_add_nr_str(d, "color", 0L, cursor_color_get(term->tl_cursor_color));
+	dict_add_number(d, "visible", term->tl_cursor_visible);
+	dict_add_number(d, "blink", blink_state_is_inverted()
+			    ? !term->tl_cursor_blink : term->tl_cursor_blink);
+	dict_add_number(d, "shape", term->tl_cursor_shape);
+	dict_add_string(d, "color", cursor_color_get(term->tl_cursor_color));
 	list_append_dict(l, d);
     }
 }
@@ -5052,18 +5070,17 @@ f_term_scrape(typval_T *argvars, typval_T *rettv)
 	    break;
 	list_append_dict(l, dcell);
 
-	dict_add_nr_str(dcell, "chars", 0, mbs);
+	dict_add_string(dcell, "chars", mbs);
 
 	vim_snprintf((char *)rgb, 8, "#%02x%02x%02x",
 				     fg.red, fg.green, fg.blue);
-	dict_add_nr_str(dcell, "fg", 0, rgb);
+	dict_add_string(dcell, "fg", rgb);
 	vim_snprintf((char *)rgb, 8, "#%02x%02x%02x",
 				     bg.red, bg.green, bg.blue);
-	dict_add_nr_str(dcell, "bg", 0, rgb);
+	dict_add_string(dcell, "bg", rgb);
 
-	dict_add_nr_str(dcell, "attr",
-				cell2attr(attrs, fg, bg), NULL);
-	dict_add_nr_str(dcell, "width", width, NULL);
+	dict_add_number(dcell, "attr", cell2attr(attrs, fg, bg));
+	dict_add_number(dcell, "width", width);
 
 	++pos.col;
 	if (width == 2)
@@ -5094,8 +5111,19 @@ f_term_sendkeys(typval_T *argvars, typval_T *rettv)
 
     while (*msg != NUL)
     {
-	send_keys_to_term(term, PTR2CHAR(msg), FALSE);
-	msg += MB_CPTR2LEN(msg);
+	int c;
+
+	if (*msg == K_SPECIAL && msg[1] != NUL && msg[2] != NUL)
+	{
+	    c = TO_SPECIAL(msg[1], msg[2]);
+	    msg += 3;
+	}
+	else
+	{
+	    c = PTR2CHAR(msg);
+	    msg += MB_CPTR2LEN(msg);
+	}
+	send_keys_to_term(term, c, FALSE);
     }
 }
 
@@ -5316,6 +5344,12 @@ term_send_eof(channel_T *ch)
 		channel_send(ch, PART_IN, (char_u *)"\004\r", 2, NULL);
 # endif
 	}
+}
+
+    job_T *
+term_getjob(term_T *term)
+{
+    return term != NULL ? term->tl_job : NULL;
 }
 
 # if defined(WIN3264) || defined(PROTO)
@@ -5758,7 +5792,7 @@ term_and_job_init(
 #endif
 
     /* This may change a string in "argvar". */
-    term->tl_job = job_start(argvar, argv, opt);
+    term->tl_job = job_start(argvar, argv, opt, TRUE);
     if (term->tl_job != NULL)
 	++term->tl_job->jv_refcount;
 

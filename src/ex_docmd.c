@@ -3764,7 +3764,7 @@ set_one_cmd_context(
 	     * A full match ~user<Tab> will be replaced by user's home
 	     * directory i.e. something like ~user<Tab> -> /home/user/ */
 	    if (*p == NUL && p > xp->xp_pattern + 1
-				       && match_user(xp->xp_pattern + 1) == 1)
+				       && match_user(xp->xp_pattern + 1) >= 1)
 	    {
 		xp->xp_context = EXPAND_USER;
 		++xp->xp_pattern;
@@ -4056,8 +4056,16 @@ set_one_cmd_context(
 	case CMD_unlet:
 	    while ((xp->xp_pattern = vim_strchr(arg, ' ')) != NULL)
 		arg = xp->xp_pattern + 1;
+
 	    xp->xp_context = EXPAND_USER_VARS;
 	    xp->xp_pattern = arg;
+
+	    if (*xp->xp_pattern == '$')
+	    {
+		xp->xp_context = EXPAND_ENV_VARS;
+		++xp->xp_pattern;
+	    }
+
 	    break;
 
 	case CMD_function:
@@ -5318,7 +5326,9 @@ get_bad_opt(char_u *p, exarg_T *eap)
 	eap->bad_char = BAD_DROP;
     else if (MB_BYTE2LEN(*p) == 1 && p[1] == NUL)
 	eap->bad_char = *p;
-    return FAIL;
+    else
+	return FAIL;
+    return OK;
 }
 #endif
 
@@ -5481,7 +5491,7 @@ ex_abclear(exarg_T *eap)
 ex_autocmd(exarg_T *eap)
 {
     /*
-     * Disallow auto commands from .exrc and .vimrc in current
+     * Disallow autocommands from .exrc and .vimrc in current
      * directory for security reasons.
      */
     if (secure)
@@ -7341,7 +7351,8 @@ ex_close(exarg_T *eap)
 	{
 	    if (eap->addr_count == 0)
 		ex_win_close(eap->forceit, curwin, NULL);
-	    else {
+	    else
+	    {
 		FOR_ALL_WINDOWS(win)
 		{
 		    winnr++;
@@ -7739,7 +7750,7 @@ ex_stop(exarg_T *eap)
 	stoptermcap();
 	out_flush();		/* needed for SUN to restore xterm buffer */
 #ifdef FEAT_TITLE
-	mch_restore_title(3);	/* restore window titles */
+	mch_restore_title(SAVE_RESTORE_BOTH);	/* restore window titles */
 #endif
 	ui_suspend();		/* call machine specific function */
 #ifdef FEAT_TITLE
@@ -7848,57 +7859,37 @@ ex_shell(exarg_T *eap UNUSED)
     do_shell(NULL, 0);
 }
 
-#if defined(HAVE_DROP_FILE) \
-	|| (defined(FEAT_GUI_GTK) && defined(FEAT_DND)) \
-	|| defined(FEAT_GUI_MSWIN) \
-	|| defined(FEAT_GUI_MAC) \
-	|| defined(PROTO)
+#if defined(HAVE_DROP_FILE) || defined(PROTO)
 
-/*
- * Handle a file drop. The code is here because a drop is *nearly* like an
- * :args command, but not quite (we have a list of exact filenames, so we
- * don't want to (a) parse a command line, or (b) expand wildcards. So the
- * code is very similar to :args and hence needs access to a lot of the static
- * functions in this file.
- *
- * The list should be allocated using alloc(), as should each item in the
- * list. This function takes over responsibility for freeing the list.
- *
- * XXX The list is made into the argument list. This is freed using
- * FreeWild(), which does a series of vim_free() calls.
- */
-    void
-handle_drop(
-    int		filec,		/* the number of files dropped */
-    char_u	**filev,	/* the list of files dropped */
-    int		split)		/* force splitting the window */
+static int drop_busy = FALSE;
+static int drop_filec;
+static char_u **drop_filev = NULL;
+static int drop_split;
+static void (*drop_callback)(void *);
+static void *drop_cookie;
+
+    static void
+handle_drop_internal(void)
 {
     exarg_T	ea;
     int		save_msg_scroll = msg_scroll;
 
-    /* Postpone this while editing the command line. */
-    if (text_locked())
-	return;
-    if (curbuf_locked())
-	return;
-
-    /* When the screen is being updated we should not change buffers and
-     * windows structures, it may cause freed memory to be used. */
-    if (updating_screen)
-	return;
+    // Setting the argument list may cause screen updates and being called
+    // recursively.  Avoid that by setting drop_busy.
+    drop_busy = TRUE;
 
     /* Check whether the current buffer is changed. If so, we will need
      * to split the current window or data could be lost.
      * We don't need to check if the 'hidden' option is set, as in this
      * case the buffer won't be lost.
      */
-    if (!buf_hide(curbuf) && !split)
+    if (!buf_hide(curbuf) && !drop_split)
     {
 	++emsg_off;
-	split = check_changed(curbuf, CCGD_AW);
+	drop_split = check_changed(curbuf, CCGD_AW);
 	--emsg_off;
     }
-    if (split)
+    if (drop_split)
     {
 	if (win_split(0, 0) == FAIL)
 	    return;
@@ -7913,7 +7904,7 @@ handle_drop(
     /*
      * Set up the new argument list.
      */
-    alist_set(ALIST(curwin), filec, filev, FALSE, NULL, 0);
+    alist_set(ALIST(curwin), drop_filec, drop_filev, FALSE, NULL, 0);
 
     /*
      * Move to the first file.
@@ -7931,6 +7922,78 @@ handle_drop(
      * unexpectedly.  The screen will be redrawn by the caller, thus
      * msg_scroll being set by displaying a message is irrelevant. */
     msg_scroll = save_msg_scroll;
+
+    if (drop_callback != NULL)
+	drop_callback(drop_cookie);
+
+    drop_filev = NULL;
+    drop_busy = FALSE;
+}
+
+/*
+ * Handle a file drop. The code is here because a drop is *nearly* like an
+ * :args command, but not quite (we have a list of exact filenames, so we
+ * don't want to (a) parse a command line, or (b) expand wildcards. So the
+ * code is very similar to :args and hence needs access to a lot of the static
+ * functions in this file.
+ *
+ * The "filev" list must have been allocated using alloc(), as should each item
+ * in the list. This function takes over responsibility for freeing the "filev"
+ * list.
+ */
+    void
+handle_drop(
+    int		filec,		// the number of files dropped
+    char_u	**filev,	// the list of files dropped
+    int		split,		// force splitting the window
+    void	(*callback)(void *), // to be called after setting the argument
+				     // list
+    void	*cookie)	// argument for "callback" (allocated)
+{
+    // Cannot handle recursive drops, finish the pending one.
+    if (drop_busy)
+    {
+	FreeWild(filec, filev);
+	vim_free(cookie);
+	return;
+    }
+
+    // When calling handle_drop() more than once in a row we only use the last
+    // one.
+    if (drop_filev != NULL)
+    {
+	FreeWild(drop_filec, drop_filev);
+	vim_free(drop_cookie);
+    }
+
+    drop_filec = filec;
+    drop_filev = filev;
+    drop_split = split;
+    drop_callback = callback;
+    drop_cookie = cookie;
+
+    // Postpone this when:
+    // - editing the command line
+    // - not possible to change the current buffer
+    // - updating the screen
+    // As it may change buffers and window structures that are in use and cause
+    // freed memory to be used.
+    if (text_locked() || curbuf_locked() || updating_screen)
+	return;
+
+    handle_drop_internal();
+}
+
+/*
+ * To be called when text is unlocked, curbuf is unlocked or updating_screen is
+ * reset: Handle a postponed drop.
+ */
+    void
+handle_any_postponed_drop(void)
+{
+    if (!drop_busy && drop_filev != NULL
+		     && !text_locked() && !curbuf_locked() && !updating_screen)
+	handle_drop_internal();
 }
 #endif
 
@@ -8189,6 +8252,9 @@ ex_splitview(exarg_T *eap)
 #ifdef FEAT_BROWSE
     int		browse_flag = cmdmod.browse;
 #endif
+    int		use_tab = eap->cmdidx == CMD_tabedit
+		       || eap->cmdidx == CMD_tabfind
+		       || eap->cmdidx == CMD_tabnew;
 
 #ifdef FEAT_GUI
     need_mouse_correct = TRUE;
@@ -8237,7 +8303,9 @@ ex_splitview(exarg_T *eap)
 	}
 	else
 	{
-	    fname = do_browse(0, (char_u *)_("Edit File in new window"),
+	    fname = do_browse(0, (char_u *)(use_tab
+			? _("Edit File in new tab page")
+			: _("Edit File in new window")),
 					  eap->arg, NULL, NULL, NULL, curbuf);
 	    if (fname == NULL)
 		goto theend;
@@ -8250,9 +8318,7 @@ ex_splitview(exarg_T *eap)
     /*
      * Either open new tab page or split the window.
      */
-    if (eap->cmdidx == CMD_tabedit
-	    || eap->cmdidx == CMD_tabfind
-	    || eap->cmdidx == CMD_tabnew)
+    if (use_tab)
     {
 	if (win_new_tabpage(cmdmod.tab != 0 ? cmdmod.tab
 			 : eap->addr_count == 0 ? 0
@@ -9143,6 +9209,11 @@ do_sleep(long msec)
 	parse_queued_messages();
 #endif
     }
+
+    // If CTRL-C was typed to interrupt the sleep, drop the CTRL-C from the
+    // input buffer, otherwise a following call to input() fails.
+    if (got_int)
+	(void)vpeekc();
 }
 
     static void
@@ -10637,6 +10708,7 @@ eval_vars(
     int		valid = VALID_HEAD + VALID_PATH;    /* assume valid result */
     int		spec_idx;
 #ifdef FEAT_MODIFY_FNAME
+    int		tilde_file = FALSE;
     int		skip_mod = FALSE;
 #endif
     char_u	strbuf[30];
@@ -10701,7 +10773,12 @@ eval_vars(
 		    valid = 0;	    /* Must have ":p:h" to be valid */
 		}
 		else
+		{
 		    result = curbuf->b_fname;
+#ifdef FEAT_MODIFY_FNAME
+		    tilde_file = STRCMP(result, "~") == 0;
+#endif
+		}
 		break;
 
 	case SPEC_HASH:		/* '#' or "#99": alternate file */
@@ -10765,7 +10842,12 @@ eval_vars(
 			valid = 0;	    /* Must have ":p:h" to be valid */
 		    }
 		    else
+		    {
 			result = buf->b_fname;
+#ifdef FEAT_MODIFY_FNAME
+			tilde_file = STRCMP(result, "~") == 0;
+#endif
+		    }
 		}
 		break;
 
@@ -10858,7 +10940,7 @@ eval_vars(
 #ifdef FEAT_MODIFY_FNAME
 	else if (!skip_mod)
 	{
-	    valid |= modify_fname(src, usedlen, &result, &resultbuf,
+	    valid |= modify_fname(src, tilde_file, usedlen, &result, &resultbuf,
 								  &resultlen);
 	    if (result == NULL)
 	    {
@@ -10924,7 +11006,7 @@ arg_all(void)
 #ifndef BACKSLASH_IN_FILENAME
 			    || *p == '\\'
 #endif
-			    )
+			    || *p == '`')
 		    {
 			/* insert a backslash */
 			if (retval != NULL)
@@ -11066,9 +11148,12 @@ makeopens(
 #endif
 
     /*
-     * Close all windows but one.
+     * Close all windows and tabs but one.
      */
     if (put_line(fd, "silent only") == FAIL)
+	return FAIL;
+    if ((ssop_flags & SSOP_TABPAGES)
+	    && put_line(fd, "silent tabonly") == FAIL)
 	return FAIL;
 
     /*
@@ -11179,9 +11264,33 @@ makeopens(
      */
     tab_firstwin = firstwin;	/* first window in tab page "tabnr" */
     tab_topframe = topframe;
+    if ((ssop_flags & SSOP_TABPAGES))
+    {
+	int	num_tabs;
+
+	/*
+	 * Similar to ses_win_rec() below, populate the tab pages first so
+	 * later local options won't be copied to the new tabs.
+	 */
+	for (tabnr = 1; ; ++tabnr)
+	{
+	    tabpage_T *tp = find_tabpage(tabnr);
+
+	    if (tp == NULL)	/* done all tab pages */
+		break;
+
+	    if (tabnr > 1 && put_line(fd, "tabnew") == FAIL)
+		return FAIL;
+	}
+
+	num_tabs = tabnr - 1;
+	if (num_tabs > 1 && (fprintf(fd, "tabnext -%d", num_tabs - 1) < 0
+						       || put_eol(fd) == FAIL))
+	    return FAIL;
+    }
     for (tabnr = 1; ; ++tabnr)
     {
-	int	need_tabnew = FALSE;
+	int	need_tabnext = FALSE;
 	int	cnr = 1;
 
 	if ((ssop_flags & SSOP_TABPAGES))
@@ -11201,7 +11310,7 @@ makeopens(
 		tab_topframe = tp->tp_topframe;
 	    }
 	    if (tabnr > 1)
-		need_tabnew = TRUE;
+		need_tabnext = TRUE;
 	}
 
 	/*
@@ -11219,11 +11328,14 @@ makeopens(
 #endif
 		    )
 	    {
-		if (fputs(need_tabnew ? "tabedit " : "edit ", fd) < 0
+		if (need_tabnext && put_line(fd, "tabnext") == FAIL)
+		    return FAIL;
+		need_tabnext = FALSE;
+
+		if (fputs("edit ", fd) < 0
 			      || ses_fname(fd, wp->w_buffer, &ssop_flags, TRUE)
 								       == FAIL)
 		    return FAIL;
-		need_tabnew = FALSE;
 		if (!wp->w_arg_idx_invalid)
 		    edited_win = wp;
 		break;
@@ -11231,7 +11343,7 @@ makeopens(
 	}
 
 	/* If no file got edited create an empty tab page. */
-	if (need_tabnew && put_line(fd, "tabnew") == FAIL)
+	if (need_tabnext && put_line(fd, "tabnext") == FAIL)
 	    return FAIL;
 
 	/*
@@ -11274,7 +11386,10 @@ makeopens(
 	 * winminheight and winminwidth need to be set to avoid an error if the
 	 * user has set winheight or winwidth.
 	 */
-	if (put_line(fd, "set winminheight=1 winheight=1 winminwidth=1 winwidth=1") == FAIL)
+	if (put_line(fd, "set winminheight=0") == FAIL
+		|| put_line(fd, "set winheight=1") == FAIL
+		|| put_line(fd, "set winminwidth=0") == FAIL
+		|| put_line(fd, "set winwidth=1") == FAIL)
 	    return FAIL;
 	if (nr > 1 && ses_winsizes(fd, restore_size, tab_firstwin) == FAIL)
 	    return FAIL;
@@ -11331,7 +11446,7 @@ makeopens(
     /*
      * Wipe out an empty unnamed buffer we started in.
      */
-    if (put_line(fd, "if exists('s:wipebuf') && s:wipebuf != bufnr('%')")
+    if (put_line(fd, "if exists('s:wipebuf') && len(win_findbuf(s:wipebuf)) == 0")
 								       == FAIL)
 	return FAIL;
     if (put_line(fd, "  silent exe 'bwipe ' . s:wipebuf") == FAIL)
@@ -11653,7 +11768,7 @@ put_view(
      */
     if ((*flagp & SSOP_FOLDS)
 	    && wp->w_buffer->b_ffname != NULL
-	    && (*wp->w_buffer->b_p_bt == NUL || bt_help(wp->w_buffer)))
+	    && (bt_normal(wp->w_buffer) || bt_help(wp->w_buffer)))
     {
 	if (put_folds(fd, wp) == FAIL)
 	    return FAIL;

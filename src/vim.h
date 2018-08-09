@@ -675,10 +675,8 @@ extern int (*dyn_libintl_putenv)(const char *envstring);
 
 #define REPLACE_FLAG	0x40	/* Replace mode flag */
 #define REPLACE		(REPLACE_FLAG + INSERT)
-#ifdef FEAT_VREPLACE
-# define VREPLACE_FLAG	0x80	/* Virtual-replace mode flag */
-# define VREPLACE	(REPLACE_FLAG + VREPLACE_FLAG + INSERT)
-#endif
+#define VREPLACE_FLAG	0x80	/* Virtual-replace mode flag */
+#define VREPLACE	(REPLACE_FLAG + VREPLACE_FLAG + INSERT)
 #define LREPLACE	(REPLACE_FLAG + LANGMAP)
 
 #define NORMAL_BUSY	(0x100 + NORMAL) /* Normal mode, busy with a command */
@@ -1013,6 +1011,7 @@ extern int (*dyn_libintl_putenv)(const char *envstring);
 /* values for reg_do_extmatch */
 # define REX_SET	1	/* to allow \z\(...\), */
 # define REX_USE	2	/* to allow \z\1 et al. */
+# define REX_ALL	(REX_SET | REX_USE)
 #endif
 
 /* Return values for fullpathcmp() */
@@ -2548,5 +2547,10 @@ typedef enum {
 #define TERM_START_NOJOB	1
 #define TERM_START_FORCEIT	2
 #define TERM_START_SYSTEM	4
+
+// Used for icon/title save and restore.
+#define SAVE_RESTORE_TITLE	1
+#define SAVE_RESTORE_ICON	2
+#define SAVE_RESTORE_BOTH	(SAVE_RESTORE_TITLE | SAVE_RESTORE_ICON)
 
 #endif /* VIM__H */

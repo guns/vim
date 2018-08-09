@@ -2695,7 +2695,7 @@ mch_exit(int r)
     if (g_fWindInitCalled)
     {
 #ifdef FEAT_TITLE
-	mch_restore_title(3);
+	mch_restore_title(SAVE_RESTORE_BOTH);
 	/*
 	 * Restore both the small and big icons of the console window to
 	 * what they were at startup.  Don't do this when the window is
@@ -3967,6 +3967,48 @@ mch_get_shellsize(void)
 }
 
 /*
+ * Resize console buffer to 'COORD'
+ */
+    static void
+ResizeConBuf(
+    HANDLE  hConsole,
+    COORD   coordScreen)
+{
+    if (!SetConsoleScreenBufferSize(hConsole, coordScreen))
+    {
+#ifdef MCH_WRITE_DUMP
+	if (fdDump)
+	{
+	    fprintf(fdDump, "SetConsoleScreenBufferSize failed: %lx\n",
+		    GetLastError());
+	    fflush(fdDump);
+	}
+#endif
+    }
+}
+
+/*
+ * Resize console window size to 'srWindowRect'
+ */
+    static void
+ResizeWindow(
+    HANDLE     hConsole,
+    SMALL_RECT srWindowRect)
+{
+    if (!SetConsoleWindowInfo(hConsole, TRUE, &srWindowRect))
+    {
+#ifdef MCH_WRITE_DUMP
+	if (fdDump)
+	{
+	    fprintf(fdDump, "SetConsoleWindowInfo failed: %lx\n",
+		    GetLastError());
+	    fflush(fdDump);
+	}
+#endif
+    }
+}
+
+/*
  * Set a console window to `xSize' * `ySize'
  */
     static void
@@ -4019,32 +4061,20 @@ ResizeConBufAndWindow(
 	}
     }
 
-    if (!SetConsoleWindowInfo(g_hConOut, TRUE, &srWindowRect))
-    {
-#ifdef MCH_WRITE_DUMP
-	if (fdDump)
-	{
-	    fprintf(fdDump, "SetConsoleWindowInfo failed: %lx\n",
-		    GetLastError());
-	    fflush(fdDump);
-	}
-#endif
-    }
-
-    /* define the new console buffer size */
+    // define the new console buffer size
     coordScreen.X = xSize;
     coordScreen.Y = ySize;
 
-    if (!SetConsoleScreenBufferSize(hConsole, coordScreen))
+    // In the new console call API in reverse order
+    if (!vtp_working)
     {
-#ifdef MCH_WRITE_DUMP
-	if (fdDump)
-	{
-	    fprintf(fdDump, "SetConsoleScreenBufferSize failed: %lx\n",
-		    GetLastError());
-	    fflush(fdDump);
-	}
-#endif
+	ResizeWindow(hConsole, srWindowRect);
+	ResizeConBuf(hConsole, coordScreen);
+    }
+    else
+    {
+	ResizeConBuf(hConsole, coordScreen);
+	ResizeWindow(hConsole, srWindowRect);
     }
 }
 
@@ -4796,6 +4826,7 @@ mch_call_shell_terminal(
     long_u	cmdlen;
     int		retval = -1;
     buf_T	*buf;
+    job_T	*job;
     aco_save_T	aco;
     oparg_T	oa;		/* operator arguments */
 
@@ -4826,6 +4857,9 @@ mch_call_shell_terminal(
     if (buf == NULL)
 	return 255;
 
+    job = term_getjob(buf->b_term);
+    ++job->jv_refcount;
+
     /* Find a window to make "buf" curbuf. */
     aucmd_prepbuf(&aco, buf);
 
@@ -4842,8 +4876,10 @@ mch_call_shell_terminal(
 	else
 	    normal_cmd(&oa, TRUE);
     }
-    retval = 0;
+    retval = job->jv_exitval;
     ch_log(NULL, "system command finished");
+
+    job_unref(job);
 
     /* restore curwin/curbuf and a few other things */
     aucmd_restbuf(&aco);
@@ -5275,22 +5311,51 @@ win32_build_env(dict_T *env, garray_T *gap, int is_terminal)
 	}
     }
 
-# ifdef FEAT_CLIENTSERVER
-    if (is_terminal)
+# if defined(FEAT_CLIENTSERVER) || defined(FEAT_TERMINAL)
     {
+#  ifdef FEAT_CLIENTSERVER
 	char_u	*servername = get_vim_var_str(VV_SEND_SERVER);
-	size_t	lval = STRLEN(servername);
-	size_t	n;
+	size_t	servername_len = STRLEN(servername);
+#  endif
+#  ifdef FEAT_TERMINAL
+	char_u	*version = get_vim_var_str(VV_VERSION);
+	size_t	version_len = STRLEN(version);
+#  endif
+	// size of "VIM_SERVERNAME=" and value,
+	// plus "VIM_TERMINAL=" and value,
+	// plus two terminating NULs
+	size_t	n = 0
+#  ifdef FEAT_CLIENTSERVER
+		    + 15 + servername_len
+#  endif
+#  ifdef FEAT_TERMINAL
+		    + 13 + version_len + 2
+#  endif
+		    ;
 
-	if (ga_grow(gap, (int)(14 + lval + 2)) == OK)
+	if (ga_grow(gap, (int)n) == OK)
 	{
+#  ifdef FEAT_CLIENTSERVER
 	    for (n = 0; n < 15; n++)
 		*((WCHAR*)gap->ga_data + gap->ga_len++) =
 		    (WCHAR)"VIM_SERVERNAME="[n];
-	    for (n = 0; n < lval; n++)
+	    for (n = 0; n < servername_len; n++)
 		*((WCHAR*)gap->ga_data + gap->ga_len++) =
 		    (WCHAR)servername[n];
 	    *((WCHAR*)gap->ga_data + gap->ga_len++) = L'\0';
+#  endif
+#  ifdef FEAT_TERMINAL
+	    if (is_terminal)
+	    {
+		for (n = 0; n < 13; n++)
+		    *((WCHAR*)gap->ga_data + gap->ga_len++) =
+			(WCHAR)"VIM_TERMINAL="[n];
+		for (n = 0; n < version_len; n++)
+		    *((WCHAR*)gap->ga_data + gap->ga_len++) =
+			(WCHAR)version[n];
+		*((WCHAR*)gap->ga_data + gap->ga_len++) = L'\0';
+	    }
+#  endif
 	}
     }
 # endif
