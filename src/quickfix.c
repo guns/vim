@@ -159,6 +159,11 @@ static qf_info_T *ll_get_or_alloc_list(win_T *);
 #define IS_QF_WINDOW(wp) (bt_quickfix(wp->w_buffer) && wp->w_llist_ref == NULL)
 /* Location list window check helper macro */
 #define IS_LL_WINDOW(wp) (bt_quickfix(wp->w_buffer) && wp->w_llist_ref != NULL)
+
+// Quickfix and location list stack check helper macros
+#define IS_QF_STACK(qi)		(qi == &ql_info)
+#define IS_LL_STACK(qi)		(qi != &ql_info)
+
 /*
  * Return location list for window 'wp'
  * For location list window, return the referenced location list
@@ -1506,7 +1511,6 @@ qf_list_empty(qf_info_T *qi, int qf_idx)
     return qi->qf_lists[qf_idx].qf_count <= 0;
 }
 
-
 /*
  * Allocate the fields used for parsing lines and populating a quickfix list.
  */
@@ -1941,7 +1945,7 @@ qf_add_entry(
 	qfp->qf_fnum = bufnum;
 	if (buf != NULL)
 	    buf->b_has_qf_entry |=
-		(qi == &ql_info) ? BUF_HAS_QF_ENTRY : BUF_HAS_LL_ENTRY;
+		IS_QF_STACK(qi) ? BUF_HAS_QF_ENTRY : BUF_HAS_LL_ENTRY;
     }
     else
 	qfp->qf_fnum = qf_get_fnum(qi, qf_idx, dir, fname);
@@ -2012,13 +2016,9 @@ ll_new_list(void)
 {
     qf_info_T *qi;
 
-    qi = (qf_info_T *)alloc((unsigned)sizeof(qf_info_T));
+    qi = (qf_info_T *)alloc_clear((unsigned)sizeof(qf_info_T));
     if (qi != NULL)
-    {
-	vim_memset(qi, 0, (size_t)(sizeof(qf_info_T)));
 	qi->qf_refcount++;
-    }
-
     return qi;
 }
 
@@ -2229,7 +2229,7 @@ qf_get_fnum(qf_info_T *qi, int qf_idx, char_u *directory, char_u *fname)
 	return 0;
 
     buf->b_has_qf_entry =
-			(qi == &ql_info) ? BUF_HAS_QF_ENTRY : BUF_HAS_LL_ENTRY;
+			IS_QF_STACK(qi) ? BUF_HAS_QF_ENTRY : BUF_HAS_LL_ENTRY;
     return buf->b_fnum;
 }
 
@@ -2636,7 +2636,7 @@ jump_to_help_window(qf_info_T *qi, int *opened_window)
 	if (cmdmod.split == 0 && curwin->w_width != Columns
 		&& curwin->w_width < 80)
 	    flags |= WSP_TOP;
-	if (qi != &ql_info)
+	if (IS_LL_STACK(qi))
 	    flags |= WSP_NEWLOC;  /* don't copy the location list */
 
 	if (win_split(0, flags) == FAIL)
@@ -2647,7 +2647,7 @@ jump_to_help_window(qf_info_T *qi, int *opened_window)
 	if (curwin->w_height < p_hh)
 	    win_setheight((int)p_hh);
 
-	if (qi != &ql_info)	    /* not a quickfix list */
+	if (IS_LL_STACK(qi))		// not a quickfix list
 	{
 	    /* The new window should use the supplied location list */
 	    curwin->w_llist = qi;
@@ -2923,7 +2923,7 @@ qf_jump_edit_buffer(
 	retval = buflist_getfile(qf_ptr->qf_fnum,
 		(linenr_T)1, GETF_SETMARK | GETF_SWITCH, forceit);
 
-	if (qi != &ql_info)
+	if (IS_LL_STACK(qi))
 	{
 	    /*
 	     * Location list. Check whether the associated window is still
@@ -2944,7 +2944,7 @@ qf_jump_edit_buffer(
 	else if (old_qf_curlist != qi->qf_curlist
 		|| !is_qf_entry_present(qi, qf_ptr))
 	{
-	    if (qi == &ql_info)
+	    if (IS_QF_STACK(qi))
 		EMSG(_("E925: Current quickfix was changed"));
 	    else
 		EMSG(_(e_loc_list_changed));
@@ -3015,6 +3015,7 @@ qf_jump_goto_line(
 			++screen_col;
 		}
 	    }
+	    curwin->w_set_curswant = TRUE;
 	    check_cursor();
 	}
 	else
@@ -3335,7 +3336,7 @@ qf_list(exarg_T *eap)
 						   recognised errors */
     qf_info_T	*qi = &ql_info;
 
-    if (eap->cmdidx == CMD_llist)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -3483,7 +3484,7 @@ qf_age(exarg_T *eap)
     qf_info_T	*qi = &ql_info;
     int		count;
 
-    if (eap->cmdidx == CMD_lolder || eap->cmdidx == CMD_lnewer)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -3531,7 +3532,7 @@ qf_history(exarg_T *eap)
     qf_info_T	*qi = &ql_info;
     int		i;
 
-    if (eap->cmdidx == CMD_lhistory)
+    if (is_loclist_cmd(eap->cmdidx))
 	qi = GET_LOC_LIST(curwin);
     if (qi == NULL || (qi->qf_listcount == 0
 				&& qf_list_empty(qi, qi->qf_curlist)))
@@ -3717,7 +3718,7 @@ qf_view_result(int split)
     if (IS_LL_WINDOW(curwin))
 	qi = GET_LOC_LIST(curwin);
 
-    if (qi == NULL || qi->qf_lists[qi->qf_curlist].qf_count == 0)
+    if (qf_list_empty(qi, qi->qf_curlist))
     {
 	EMSG(_(e_quickfix));
 	return;
@@ -3750,7 +3751,7 @@ ex_cwindow(exarg_T *eap)
     qf_info_T	*qi = &ql_info;
     win_T	*win;
 
-    if (eap->cmdidx == CMD_lwindow)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -3786,7 +3787,7 @@ ex_cclose(exarg_T *eap)
     win_T	*win = NULL;
     qf_info_T	*qi = &ql_info;
 
-    if (eap->cmdidx == CMD_lclose || eap->cmdidx == CMD_lwindow)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -3813,7 +3814,7 @@ ex_copen(exarg_T *eap)
     buf_T	*qf_buf;
     win_T	*oldwin = curwin;
 
-    if (eap->cmdidx == CMD_lopen || eap->cmdidx == CMD_lwindow)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -3958,12 +3959,12 @@ qf_win_goto(win_T *win, linenr_T lnum)
  * :cbottom/:lbottom commands.
  */
     void
-ex_cbottom(exarg_T *eap UNUSED)
+ex_cbottom(exarg_T *eap)
 {
     qf_info_T	*qi = &ql_info;
     win_T	*win;
 
-    if (eap->cmdidx == CMD_lbottom)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -4044,8 +4045,8 @@ is_qf_win(win_T *win, qf_info_T *qi)
      * pointing to the location list.
      */
     if (bt_quickfix(win->w_buffer))
-	if ((qi == &ql_info && win->w_llist_ref == NULL)
-		|| (qi != &ql_info && win->w_llist_ref == qi))
+	if ((IS_QF_STACK(qi) && win->w_llist_ref == NULL)
+		|| (IS_LL_STACK(qi) && win->w_llist_ref == qi))
 	    return TRUE;
 
     return FALSE;
@@ -4340,16 +4341,39 @@ qf_id2nr(qf_info_T *qi, int_u qfid)
 }
 
 /*
+ * If the current list is not "save_qfid" and we can find the list with that ID
+ * then make it the current list.
+ * This is used when autocommands may have changed the current list.
+ * Returns OK if successfully restored the list. Returns FAIL if the list with
+ * the specified identifier (save_qfid) is not found in the stack.
+ */
+    static int
+qf_restore_list(qf_info_T *qi, int_u save_qfid)
+{
+    int curlist;
+
+    if (qi->qf_lists[qi->qf_curlist].qf_id != save_qfid)
+    {
+	curlist = qf_id2nr(qi, save_qfid);
+	if (curlist < 0)
+	    // list is not present
+	    return FAIL;
+	qi->qf_curlist = curlist;
+    }
+    return OK;
+}
+
+/*
  * Jump to the first entry if there is one.
  */
     static void
 qf_jump_first(qf_info_T *qi, int_u save_qfid, int forceit)
 {
-    // If autocommands changed the current list, then restore it
-    if (qi->qf_lists[qi->qf_curlist].qf_id != save_qfid)
-	qi->qf_curlist = qf_id2nr(qi, save_qfid);
+    if (qf_restore_list(qi, save_qfid) == FAIL)
+	return;
 
-    if (qi->qf_lists[qi->qf_curlist].qf_count > 0)
+    // Autocommands might have cleared the list, check for that.
+    if (!qf_list_empty(qi, qi->qf_curlist))
 	qf_jump(qi, 0, 0, forceit);
 }
 
@@ -4412,8 +4436,7 @@ ex_make(exarg_T *eap)
     enc = (*curbuf->b_p_menc != NUL) ? curbuf->b_p_menc : p_menc;
 #endif
 
-    if (eap->cmdidx == CMD_lmake || eap->cmdidx == CMD_lgrep
-	|| eap->cmdidx == CMD_lgrepadd)
+    if (is_loclist_cmd(eap->cmdidx))
 	wp = curwin;
 
     autowrite_all();
@@ -4552,7 +4575,7 @@ qf_get_size(exarg_T *eap)
     int		i, sz = 0;
     int		prev_fnum = 0;
 
-    if (eap->cmdidx == CMD_ldo || eap->cmdidx == CMD_lfdo)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	/* Location list */
 	qi = GET_LOC_LIST(curwin);
@@ -4589,7 +4612,7 @@ qf_get_cur_idx(exarg_T *eap)
 {
     qf_info_T	*qi = &ql_info;
 
-    if (eap->cmdidx == CMD_ldo || eap->cmdidx == CMD_lfdo)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	/* Location list */
 	qi = GET_LOC_LIST(curwin);
@@ -4613,7 +4636,7 @@ qf_get_cur_valid_idx(exarg_T *eap)
     int		i, eidx = 0;
     int		prev_fnum = 0;
 
-    if (eap->cmdidx == CMD_ldo || eap->cmdidx == CMD_lfdo)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	/* Location list */
 	qi = GET_LOC_LIST(curwin);
@@ -4706,12 +4729,7 @@ ex_cc(exarg_T *eap)
     qf_info_T	*qi = &ql_info;
     int		errornr;
 
-    if (eap->cmdidx == CMD_ll
-	    || eap->cmdidx == CMD_lrewind
-	    || eap->cmdidx == CMD_lfirst
-	    || eap->cmdidx == CMD_llast
-	    || eap->cmdidx == CMD_ldo
-	    || eap->cmdidx == CMD_lfdo)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -4725,13 +4743,18 @@ ex_cc(exarg_T *eap)
 	errornr = (int)eap->line2;
     else
     {
-	if (eap->cmdidx == CMD_cc || eap->cmdidx == CMD_ll)
-	    errornr = 0;
-	else if (eap->cmdidx == CMD_crewind || eap->cmdidx == CMD_lrewind
-		|| eap->cmdidx == CMD_cfirst || eap->cmdidx == CMD_lfirst)
-	    errornr = 1;
-	else
-	    errornr = 32767;
+	switch (eap->cmdidx)
+	{
+	    case CMD_cc: case CMD_ll:
+		errornr = 0;
+		break;
+	    case CMD_crewind: case CMD_lrewind: case CMD_cfirst:
+	    case CMD_lfirst:
+		errornr = 1;
+		break;
+	    default:
+		errornr = 32767;
+	}
     }
 
     /* For cdo and ldo commands, jump to the nth valid error.
@@ -4756,15 +4779,9 @@ ex_cnext(exarg_T *eap)
 {
     qf_info_T	*qi = &ql_info;
     int		errornr;
+    int		dir;
 
-    if (eap->cmdidx == CMD_lnext
-	    || eap->cmdidx == CMD_lNext
-	    || eap->cmdidx == CMD_lprevious
-	    || eap->cmdidx == CMD_lnfile
-	    || eap->cmdidx == CMD_lNfile
-	    || eap->cmdidx == CMD_lpfile
-	    || eap->cmdidx == CMD_ldo
-	    || eap->cmdidx == CMD_lfdo)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = GET_LOC_LIST(curwin);
 	if (qi == NULL)
@@ -4781,17 +4798,28 @@ ex_cnext(exarg_T *eap)
     else
 	errornr = 1;
 
-    qf_jump(qi, (eap->cmdidx == CMD_cnext || eap->cmdidx == CMD_lnext
-		|| eap->cmdidx == CMD_cdo || eap->cmdidx == CMD_ldo)
-	    ? FORWARD
-	    : (eap->cmdidx == CMD_cnfile || eap->cmdidx == CMD_lnfile
-		|| eap->cmdidx == CMD_cfdo || eap->cmdidx == CMD_lfdo)
-		? FORWARD_FILE
-		: (eap->cmdidx == CMD_cpfile || eap->cmdidx == CMD_lpfile
-		   || eap->cmdidx == CMD_cNfile || eap->cmdidx == CMD_lNfile)
-		    ? BACKWARD_FILE
-		    : BACKWARD,
-	    errornr, eap->forceit);
+    // Depending on the command jump to either next or previous entry/file.
+    switch (eap->cmdidx)
+    {
+	case CMD_cnext: case CMD_lnext: case CMD_cdo: case CMD_ldo:
+	    dir = FORWARD;
+	    break;
+	case CMD_cprevious: case CMD_lprevious: case CMD_cNext:
+	case CMD_lNext:
+	    dir = BACKWARD;
+	    break;
+	case CMD_cnfile: case CMD_lnfile: case CMD_cfdo: case CMD_lfdo:
+	    dir = FORWARD_FILE;
+	    break;
+	case CMD_cpfile: case CMD_lpfile: case CMD_cNfile: case CMD_lNfile:
+	    dir = BACKWARD_FILE;
+	    break;
+	default:
+	    dir = FORWARD;
+	    break;
+    }
+
+    qf_jump(qi, dir, errornr, eap->forceit);
 }
 
 /*
@@ -4839,9 +4867,7 @@ ex_cfile(exarg_T *eap)
     if (*eap->arg != NUL)
 	set_string_option_direct((char_u *)"ef", -1, eap->arg, OPT_FREE, 0);
 
-    if (eap->cmdidx == CMD_lfile
-	    || eap->cmdidx == CMD_lgetfile
-	    || eap->cmdidx == CMD_laddfile)
+    if (is_loclist_cmd(eap->cmdidx))
 	wp = curwin;
 
     /*
@@ -4873,10 +4899,8 @@ ex_cfile(exarg_T *eap)
     // free the list.
     if (res > 0 && (eap->cmdidx == CMD_cfile || eap->cmdidx == CMD_lfile)
 	    && qflist_valid(wp, save_qfid))
-    {
 	// display the first error
 	qf_jump_first(qi, save_qfid, eap->forceit);
-    }
 }
 
 /*
@@ -5014,10 +5038,8 @@ vgr_qflist_valid(
 	}
     }
 
-    if (qi->qf_lists[qi->qf_curlist].qf_id != qfid)
-	/* Autocommands changed the quickfix list.  Find the one we were
-	 * using and restore it. */
-	qi->qf_curlist = qf_id2nr(qi, qfid);
+    if (qf_restore_list(qi, qfid) == FAIL)
+	return FALSE;
 
     return TRUE;
 }
@@ -5164,10 +5186,7 @@ ex_vimgrep(exarg_T *eap)
 #endif
     }
 
-    if (eap->cmdidx == CMD_lgrep
-	    || eap->cmdidx == CMD_lvimgrep
-	    || eap->cmdidx == CMD_lgrepadd
-	    || eap->cmdidx == CMD_lvimgrepadd)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = ll_get_or_alloc_list(curwin);
 	if (qi == NULL)
@@ -5363,9 +5382,8 @@ ex_vimgrep(exarg_T *eap)
     if (!qflist_valid(wp, save_qfid))
 	goto theend;
 
-    // If autocommands changed the current list, then restore it
-    if (qi->qf_lists[qi->qf_curlist].qf_id != save_qfid)
-	qi->qf_curlist = qf_id2nr(qi, save_qfid);
+    if (qf_restore_list(qi, save_qfid) == FAIL)
+	goto theend;
 
     /* Jump to first match. */
     if (!qf_list_empty(qi, qi->qf_curlist))
@@ -5686,12 +5704,9 @@ qf_get_list_from_lines(dict_T *what, dictitem_T *di, dict_T *retdict)
 	if (l == NULL)
 	    return FAIL;
 
-	qi = (qf_info_T *)alloc((unsigned)sizeof(qf_info_T));
+	qi = ll_new_list();
 	if (qi != NULL)
 	{
-	    vim_memset(qi, 0, (size_t)(sizeof(qf_info_T)));
-	    qi->qf_refcount++;
-
 	    if (qf_init_ext(qi, 0, NULL, NULL, &di->di_tv, errorformat,
 			TRUE, (linenr_T)0, (linenr_T)0, NULL, NULL) > 0)
 	    {
@@ -6515,9 +6530,7 @@ ex_cbuffer(exarg_T *eap)
     }
 
     /* Must come after autocommands. */
-    if (eap->cmdidx == CMD_lbuffer
-	    || eap->cmdidx == CMD_lgetbuffer
-	    || eap->cmdidx == CMD_laddbuffer)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = ll_get_or_alloc_list(curwin);
 	if (qi == NULL)
@@ -6581,10 +6594,8 @@ ex_cbuffer(exarg_T *eap)
 	    if (res > 0 && (eap->cmdidx == CMD_cbuffer ||
 						eap->cmdidx == CMD_lbuffer)
 		    && qflist_valid(wp, save_qfid))
-	    {
 		// display the first error
 		qf_jump_first(qi, save_qfid, eap->forceit);
-	    }
 	}
     }
 }
@@ -6623,9 +6634,7 @@ ex_cexpr(exarg_T *eap)
 #endif
     }
 
-    if (eap->cmdidx == CMD_lexpr
-	    || eap->cmdidx == CMD_lgetexpr
-	    || eap->cmdidx == CMD_laddexpr)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = ll_get_or_alloc_list(curwin);
 	if (qi == NULL)
@@ -6661,10 +6670,8 @@ ex_cexpr(exarg_T *eap)
 	    if (res > 0 && (eap->cmdidx == CMD_cexpr
 						   || eap->cmdidx == CMD_lexpr)
 		    && qflist_valid(wp, save_qfid))
-	    {
 		// display the first error
 		qf_jump_first(qi, save_qfid, eap->forceit);
-	    }
 	}
 	else
 	    EMSG(_("E777: String or List expected"));
@@ -6916,7 +6923,7 @@ ex_helpgrep(exarg_T *eap)
     save_cpo = p_cpo;
     p_cpo = empty_option;
 
-    if (eap->cmdidx == CMD_lhelpgrep)
+    if (is_loclist_cmd(eap->cmdidx))
     {
 	qi = hgr_get_ll(&new_qi);
 	if (qi == NULL)
@@ -6953,7 +6960,7 @@ ex_helpgrep(exarg_T *eap)
     {
 	apply_autocmds(EVENT_QUICKFIXCMDPOST, au_name,
 					       curbuf->b_fname, TRUE, curbuf);
-	if (!new_qi && qi != &ql_info && qf_find_buf(qi) == NULL)
+	if (!new_qi && IS_LL_STACK(qi) && qf_find_buf(qi) == NULL)
 	    /* autocommands made "qi" invalid */
 	    return;
     }
