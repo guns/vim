@@ -1966,7 +1966,6 @@ cmdline_changed:
 	if (p_is && !cmd_silent && (firstc == '/' || firstc == '?'))
 	{
 	    pos_T	end_pos;
-	    char_u      *pat;
 #ifdef FEAT_RELTIME
 	    proftime_T	tm;
 #endif
@@ -1977,10 +1976,6 @@ cmdline_changed:
 		incsearch_postponed = TRUE;
 		continue;
 	    }
-	    if (firstc == ccline.cmdbuff[0])
-		pat = last_search_pattern();
-	    else
-		pat = ccline.cmdbuff;
 	    incsearch_postponed = FALSE;
 	    curwin->w_cursor = search_start;  /* start at old position */
 	    save_last_search_pattern();
@@ -2029,15 +2024,6 @@ cmdline_changed:
 	    else
 		highlight_match = FALSE;	/* remove highlight */
 
-	    /* If the pattern is zerowidth, do not highlight anything, because
-	     * Vim will go flashing the screen */
-	    ++emsg_off;
-	    if (is_zero_width(pat, firstc))
-	    {
-		highlight_match = FALSE;
-		set_no_hlsearch(TRUE); /* turn off previous highlight */
-	    }
-	    --emsg_off;
 	    /* first restore the old curwin values, so the screen is
 	     * positioned in the same way as the actual search command */
 	    restore_viewstate(&old_viewstate);
