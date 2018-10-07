@@ -744,11 +744,6 @@ static long_u mem_peak;
 static long_u num_alloc;
 static long_u num_freed;
 
-static void mem_pre_alloc_s(size_t *sizep);
-static void mem_pre_alloc_l(long_u *sizep);
-static void mem_post_alloc(void **pp, size_t size);
-static void mem_pre_free(void **pp);
-
     static void
 mem_pre_alloc_s(size_t *sizep)
 {
@@ -840,8 +835,6 @@ vim_mem_profile_dump(void)
 #endif /* MEM_PROFILE */
 
 #ifdef FEAT_EVAL
-static int alloc_does_fail(long_u size);
-
     static int
 alloc_does_fail(long_u size)
 {
@@ -4035,9 +4028,6 @@ static int ff_check_visited(ff_visited_T **, char_u *);
 static void vim_findfile_free_visited_list(ff_visited_list_hdr_T **list_headp);
 static void ff_free_visited_list(ff_visited_T *vl);
 static ff_visited_list_hdr_T* ff_get_visited_list(char_u *, ff_visited_list_hdr_T **list_headp);
-#ifdef FEAT_PATH_EXTRA
-static int ff_wc_equal(char_u *s1, char_u *s2);
-#endif
 
 static void ff_push(ff_search_ctx_T *search_ctx, ff_stack_T *stack_ptr);
 static ff_stack_T *ff_pop(ff_search_ctx_T *search_ctx);
@@ -6364,33 +6354,38 @@ parse_queued_messages(void)
 {
     win_T *old_curwin = curwin;
 
-    /* For Win32 mch_breakcheck() does not check for input, do it here. */
+    // Do not handle messages while redrawing, because it may cause buffers to
+    // change or be wiped while they are being redrawn.
+    if (updating_screen)
+	return;
+
+    // For Win32 mch_breakcheck() does not check for input, do it here.
 # if defined(WIN32) && defined(FEAT_JOB_CHANNEL)
     channel_handle_events(FALSE);
 # endif
 
 # ifdef FEAT_NETBEANS_INTG
-    /* Process the queued netbeans messages. */
+    // Process the queued netbeans messages.
     netbeans_parse_messages();
 # endif
 # ifdef FEAT_JOB_CHANNEL
-    /* Write any buffer lines still to be written. */
+    // Write any buffer lines still to be written.
     channel_write_any_lines();
 
-    /* Process the messages queued on channels. */
+    // Process the messages queued on channels.
     channel_parse_messages();
 # endif
 # if defined(FEAT_CLIENTSERVER) && defined(FEAT_X11)
-    /* Process the queued clientserver messages. */
+    // Process the queued clientserver messages.
     server_parse_messages();
 # endif
 # ifdef FEAT_JOB_CHANNEL
-    /* Check if any jobs have ended. */
+    // Check if any jobs have ended.
     job_check_ended();
 # endif
 
-    /* If the current window changed we need to bail out of the waiting loop.
-     * E.g. when a job exit callback closes the terminal window. */
+    // If the current window changed we need to bail out of the waiting loop.
+    // E.g. when a job exit callback closes the terminal window.
     if (curwin != old_curwin)
 	ins_char_typebuf(K_IGNORE);
 }

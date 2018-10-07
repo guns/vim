@@ -3871,6 +3871,11 @@ f_term_dumpwrite(typval_T *argvars, typval_T *rettv UNUSED)
     if (buf == NULL)
 	return;
     term = buf->b_term;
+    if (term->tl_vterm == NULL)
+    {
+	EMSG(_("E958: Job already finished"));
+	return;
+    }
 
     if (argvars[2].v_type != VAR_UNKNOWN)
     {
@@ -3939,9 +3944,9 @@ f_term_dumpwrite(typval_T *argvars, typval_T *rettv UNUSED)
 		    c = (c == NUL) ? ' ' : c;
 		    pc = (pc == NUL) ? ' ' : pc;
 		}
-		if (cell.chars[i] != prev_cell.chars[i])
+		if (c != pc)
 		    same_chars = FALSE;
-		if (cell.chars[i] == NUL || prev_cell.chars[i] == NUL)
+		if (c == NUL || pc == NUL)
 		    break;
 	    }
 	    same_attr = vtermAttr2hl(cell.attrs)

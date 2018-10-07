@@ -168,28 +168,12 @@ static int g_fCBrkPressed = FALSE;  /* set by ctrl-break interrupt */
 static int g_fCtrlCPressed = FALSE; /* set when ctrl-C or ctrl-break detected */
 static int g_fForceExit = FALSE;    /* set when forcefully exiting */
 
-static void termcap_mode_start(void);
-static void termcap_mode_end(void);
-static void clear_chars(COORD coord, DWORD n);
-static void clear_screen(void);
-static void clear_to_end_of_display(void);
-static void clear_to_end_of_line(void);
 static void scroll(unsigned cLines);
 static void set_scroll_region(unsigned left, unsigned top,
 			      unsigned right, unsigned bottom);
-static void insert_lines(unsigned cLines);
 static void delete_lines(unsigned cLines);
 static void gotoxy(unsigned x, unsigned y);
-static void normvideo(void);
-static void textattr(WORD wAttr);
-static void textcolor(WORD wAttr);
-static void textbackground(WORD wAttr);
 static void standout(void);
-static void standend(void);
-static void visual_bell(void);
-static void cursor_visible(BOOL fVisible);
-static DWORD write_chars(char_u *pchBuf, DWORD cbToWrite);
-static void create_conin(void);
 static int s_cursor_visible = TRUE;
 static int did_create_conin = FALSE;
 #else
@@ -212,6 +196,14 @@ static void vtp_sgr_bulks(int argc, int *argv);
 
 static guicolor_T save_console_bg_rgb;
 static guicolor_T save_console_fg_rgb;
+
+static int g_color_index_bg = 0;
+static int g_color_index_fg = 7;
+
+# ifdef FEAT_TERMGUICOLORS
+static int default_console_color_bg = 0x000000; // black
+static int default_console_color_fg = 0xc0c0c0; // white
+# endif
 
 # ifdef FEAT_TERMGUICOLORS
 #  define USE_VTP		(vtp_working && is_term_win32() && (p_tgc || (!p_tgc && t_colors >= 256)))
@@ -581,7 +573,8 @@ get_dll_import_func(HINSTANCE hInst, const char *funcname)
 #if defined(DYNAMIC_GETTEXT) || defined(PROTO)
 # ifndef GETTEXT_DLL
 #  define GETTEXT_DLL "libintl.dll"
-#  define GETTEXT_DLL_ALT "libintl-8.dll"
+#  define GETTEXT_DLL_ALT1 "libintl-8.dll"
+#  define GETTEXT_DLL_ALT2 "intl.dll"
 # endif
 /* Dummy functions */
 static char *null_libintl_gettext(const char *);
@@ -622,14 +615,18 @@ dyn_libintl_init(void)
     };
     HINSTANCE hmsvcrt;
 
-    /* No need to initialize twice. */
-    if (hLibintlDLL)
+    // No need to initialize twice.
+    if (hLibintlDLL != NULL)
 	return 1;
-    /* Load gettext library (libintl.dll) */
+    // Load gettext library (libintl.dll and other names).
     hLibintlDLL = vimLoadLib(GETTEXT_DLL);
-#ifdef GETTEXT_DLL_ALT
+#ifdef GETTEXT_DLL_ALT1
     if (!hLibintlDLL)
-	hLibintlDLL = vimLoadLib(GETTEXT_DLL_ALT);
+	hLibintlDLL = vimLoadLib(GETTEXT_DLL_ALT1);
+#endif
+#ifdef GETTEXT_DLL_ALT2
+    if (!hLibintlDLL)
+	hLibintlDLL = vimLoadLib(GETTEXT_DLL_ALT2);
 #endif
     if (!hLibintlDLL)
     {
@@ -855,8 +852,7 @@ static const struct
     int	    chAlt;
 } VirtKeyMap[] =
 {
-
-/*    Key	ANSI	alone	shift	ctrl	    alt */
+//    Key	ANSI	alone	shift	ctrl	    alt
     { VK_ESCAPE,FALSE,	ESC,	ESC,	ESC,	    ESC,    },
 
     { VK_F1,	TRUE,	';',	'T',	'^',	    'h', },
@@ -874,19 +870,19 @@ static const struct
 
     { VK_HOME,	TRUE,	'G',	'\302',	'w',	    '\303', },
     { VK_UP,	TRUE,	'H',	'\304',	'\305',	    '\306', },
-    { VK_PRIOR,	TRUE,	'I',	'\307',	'\204',	    '\310', }, /*PgUp*/
+    { VK_PRIOR,	TRUE,	'I',	'\307',	'\204',	    '\310', }, // PgUp
     { VK_LEFT,	TRUE,	'K',	'\311',	's',	    '\312', },
     { VK_RIGHT,	TRUE,	'M',	'\313',	't',	    '\314', },
     { VK_END,	TRUE,	'O',	'\315',	'u',	    '\316', },
     { VK_DOWN,	TRUE,	'P',	'\317',	'\320',	    '\321', },
-    { VK_NEXT,	TRUE,	'Q',	'\322',	'v',	    '\323', }, /*PgDn*/
+    { VK_NEXT,	TRUE,	'Q',	'\322',	'v',	    '\323', }, // PgDn
     { VK_INSERT,TRUE,	'R',	'\324',	'\325',	    '\326', },
     { VK_DELETE,TRUE,	'S',	'\327',	'\330',	    '\331', },
 
-    { VK_SNAPSHOT,TRUE,	0,	0,	0,	    'r', }, /*PrtScrn*/
+    { VK_SNAPSHOT,TRUE,	0,	0,	0,	    'r', }, // PrtScrn
 
 #if 0
-    /* Most people don't have F13-F20, but what the hell... */
+    // Most people don't have F13-F20, but what the hell...
     { VK_F13,	TRUE,	'\332',	'\333',	'\334',	    '\335', },
     { VK_F14,	TRUE,	'\336',	'\337',	'\340',	    '\341', },
     { VK_F15,	TRUE,	'\342',	'\343',	'\344',	    '\345', },
@@ -896,10 +892,10 @@ static const struct
     { VK_F19,	TRUE,	'\362',	'\363',	'\364',	    '\365', },
     { VK_F20,	TRUE,	'\366',	'\367',	'\370',	    '\371', },
 #endif
-    { VK_ADD,	TRUE,   'N',    'N',    'N',	'N',	}, /* keyp '+' */
-    { VK_SUBTRACT, TRUE,'J',	'J',    'J',	'J',	}, /* keyp '-' */
- /* { VK_DIVIDE,   TRUE,'N',	'N',    'N',	'N',	},    keyp '/' */
-    { VK_MULTIPLY, TRUE,'7',	'7',    '7',	'7',	}, /* keyp '*' */
+    { VK_ADD,	TRUE,   'N',    'N',    'N',	'N',	}, // keyp '+'
+    { VK_SUBTRACT, TRUE,'J',	'J',    'J',	'J',	}, // keyp '-'
+ // { VK_DIVIDE,   TRUE,'N',	'N',    'N',	'N',	}, // keyp '/'
+    { VK_MULTIPLY, TRUE,'7',	'7',    '7',	'7',	}, // keyp '*'
 
     { VK_NUMPAD0,TRUE,  '\332',	'\333',	'\334',	    '\335', },
     { VK_NUMPAD1,TRUE,  '\336',	'\337',	'\340',	    '\341', },
@@ -910,7 +906,7 @@ static const struct
     { VK_NUMPAD6,TRUE,  '\362',	'\363',	'\364',	    '\365', },
     { VK_NUMPAD7,TRUE,  '\366',	'\367',	'\370',	    '\371', },
     { VK_NUMPAD8,TRUE,  '\372',	'\373',	'\374',	    '\375', },
-    /* Sorry, out of number space! <negri>*/
+    // Sorry, out of number space! <negri>
     { VK_NUMPAD9,TRUE,  '\376',	'\377',	'\377',	    '\367', },
 
 };
@@ -1521,15 +1517,19 @@ WaitForChar(long msec, int ignore_input)
      */
     for (;;)
     {
+	// Only process messages when waiting.
+	if (msec != 0)
+	{
 #ifdef MESSAGE_QUEUE
-	parse_queued_messages();
+	    parse_queued_messages();
 #endif
 #ifdef FEAT_MZSCHEME
-	mzvim_check_threads();
+	    mzvim_check_threads();
 #endif
 #ifdef FEAT_CLIENTSERVER
-	serverProcessPendingMessages();
+	    serverProcessPendingMessages();
 #endif
+	}
 
 	if (0
 #ifdef FEAT_MOUSE
@@ -1915,11 +1915,24 @@ mch_inchar(
 		    typeahead[typeaheadlen] = c;
 		if (ch2 != NUL)
 		{
-		    if (c == K_NUL && (ch2 & 0xff00) != 0)
+		    if (c == K_NUL)
 		    {
-			/* fAnsiKey with modifier keys */
-			typeahead[typeaheadlen + n] = (char_u)ch2;
-			n++;
+			switch (ch2)
+			{
+			case (WCHAR)'\324': // SHIFT+Insert
+			case (WCHAR)'\325': // CTRL+Insert
+			case (WCHAR)'\327': // SHIFT+Delete
+			case (WCHAR)'\330': // CTRL+Delete
+			    typeahead[typeaheadlen + n] = (char_u)ch2;
+			    n++;
+			    break;
+
+			default:
+			    typeahead[typeaheadlen + n] = 3;
+			    typeahead[typeaheadlen + n + 1] = (char_u)ch2;
+			    n += 2;
+			    break;
+			}
 		    }
 		    else
 		    {
@@ -2627,6 +2640,10 @@ mch_init(void)
 	cterm_normal_fg_color = (g_attrCurrent & 0xf) + 1;
     if (cterm_normal_bg_color == 0)
 	cterm_normal_bg_color = ((g_attrCurrent >> 4) & 0xf) + 1;
+
+    // Fg and Bg color index nunmber at startup
+    g_color_index_fg = g_attrDefault & 0xf;
+    g_color_index_bg = (g_attrDefault >> 4) & 0xf;
 
     /* set termcap codes to current text attributes */
     update_tcap(g_attrCurrent);
@@ -3471,8 +3488,7 @@ win32_getattrs(char_u *name)
  *
  * return -1 for failure, 0 otherwise
  */
-    static
-    int
+    static int
 win32_setattrs(char_u *name, int attrs)
 {
     int res;
@@ -3497,8 +3513,7 @@ win32_setattrs(char_u *name, int attrs)
 /*
  * Set archive flag for "name".
  */
-    static
-    int
+    static int
 win32_set_archive(char_u *name)
 {
     int attrs = win32_getattrs(name);
@@ -3534,21 +3549,44 @@ mch_can_exe(char_u *name, char_u **path, int use_path)
 {
     char_u	buf[_MAX_PATH];
     int		len = (int)STRLEN(name);
-    char_u	*p;
+    char_u	*p, *saved;
 
     if (len >= _MAX_PATH)	/* safety check */
 	return FALSE;
 
-    /* If there already is an extension try using the name directly.  Also do
-     * this with a Unix-shell like 'shell'. */
-    if (vim_strchr(gettail(name), '.') != NULL
-			       || strstr((char *)gettail(p_sh), "sh") != NULL)
+    /* Ty using the name directly when a Unix-shell like 'shell'. */
+    if (strstr((char *)gettail(p_sh), "sh") != NULL)
 	if (executable_exists((char *)name, path, use_path))
 	    return TRUE;
 
     /*
      * Loop over all extensions in $PATHEXT.
      */
+    p = mch_getenv("PATHEXT");
+    if (p == NULL)
+	p = (char_u *)".com;.exe;.bat;.cmd";
+    saved = vim_strsave(p);
+    if (saved == NULL)
+	return FALSE;
+    p = saved;
+    while (*p)
+    {
+	char_u	*tmp = vim_strchr(p, ';');
+
+	if (tmp != NULL)
+	    *tmp = NUL;
+	if (_stricoll((char *)name + len - STRLEN(p), (char *)p) == 0
+			    && executable_exists((char *)name, path, use_path))
+	{
+	    vim_free(saved);
+	    return TRUE;
+	}
+	if (tmp == NULL)
+	    break;
+	p = tmp + 1;
+    }
+    vim_free(saved);
+
     vim_strncpy(buf, name, _MAX_PATH - 1);
     p = mch_getenv("PATHEXT");
     if (p == NULL)
@@ -4046,6 +4084,7 @@ ResizeConBufAndWindow(
     CONSOLE_SCREEN_BUFFER_INFO csbi;	/* hold current console buffer info */
     SMALL_RECT	    srWindowRect;	/* hold the new console size */
     COORD	    coordScreen;
+    static int	    resized = FALSE;
 
 #ifdef MCH_WRITE_DUMP
     if (fdDump)
@@ -4091,8 +4130,8 @@ ResizeConBufAndWindow(
     coordScreen.X = xSize;
     coordScreen.Y = ySize;
 
-    // In the new console call API in reverse order
-    if (!vtp_working)
+    // In the new console call API, only the first time in reverse order
+    if (!vtp_working || resized)
     {
 	ResizeWindow(hConsole, srWindowRect);
 	ResizeConBuf(hConsole, coordScreen);
@@ -4101,6 +4140,7 @@ ResizeConBufAndWindow(
     {
 	ResizeConBuf(hConsole, coordScreen);
 	ResizeWindow(hConsole, srWindowRect);
+	resized = TRUE;
     }
 }
 
@@ -4370,7 +4410,8 @@ sub_process_writer(LPVOID param)
 		    && (lnum != curbuf->b_ml.ml_line_count
 			|| curbuf->b_p_eol)))
 	    {
-		WriteFile(g_hChildStd_IN_Wr, "\n", 1, (LPDWORD)&ignored, NULL);
+		WriteFile(g_hChildStd_IN_Wr, "\n", 1,
+						  (LPDWORD)&vim_ignored, NULL);
 	    }
 
 	    ++lnum;
@@ -7662,6 +7703,9 @@ vtp_init(void)
     DWORD   ver, mode;
     HMODULE hKerneldll;
     DYN_CONSOLE_SCREEN_BUFFER_INFOEX csbi;
+# ifdef FEAT_TERMGUICOLORS
+    COLORREF fg, bg;
+# endif
 
     ver = get_build_number();
     vtp_working = (ver >= VTP_FIRST_SUPPORT_BUILD) ? 1 : 0;
@@ -7688,8 +7732,17 @@ vtp_init(void)
     csbi.cbSize = sizeof(csbi);
     if (has_csbiex)
 	pGetConsoleScreenBufferInfoEx(g_hConOut, &csbi);
-    save_console_bg_rgb = (guicolor_T)csbi.ColorTable[0];
-    save_console_fg_rgb = (guicolor_T)csbi.ColorTable[7];
+    save_console_bg_rgb = (guicolor_T)csbi.ColorTable[g_color_index_bg];
+    save_console_fg_rgb = (guicolor_T)csbi.ColorTable[g_color_index_fg];
+
+# ifdef FEAT_TERMGUICOLORS
+    bg = (COLORREF)csbi.ColorTable[g_color_index_bg];
+    fg = (COLORREF)csbi.ColorTable[g_color_index_fg];
+    bg = (GetRValue(bg) << 16) | (GetGValue(bg) << 8) | GetBValue(bg);
+    fg = (GetRValue(fg) << 16) | (GetGValue(fg) << 8) | GetBValue(fg);
+    default_console_color_bg = bg;
+    default_console_color_fg = fg;
+#endif
 
     set_console_color_rgb();
 }
@@ -7786,14 +7839,16 @@ set_console_color_rgb(void)
 	ctermfg = -1;
 	if (id > 0)
 	    syn_id2cterm_bg(id, &ctermfg, &ctermbg);
-	fg = ctermfg != -1 ? ctermtoxterm(ctermfg) : 0xc0c0c0; /* white */
+	fg = ctermfg != -1 ? ctermtoxterm(ctermfg) : default_console_color_fg;
+	cterm_normal_fg_gui_color = fg;
     }
     if (bg == INVALCOLOR)
     {
 	ctermbg = -1;
 	if (id > 0)
 	    syn_id2cterm_bg(id, &ctermfg, &ctermbg);
-	bg = ctermbg != -1 ? ctermtoxterm(ctermbg) : 0x000000; /* black */
+	bg = ctermbg != -1 ? ctermtoxterm(ctermbg) : default_console_color_bg;
+	cterm_normal_bg_gui_color = bg;
     }
     fg = (GetRValue(fg) << 16) | (GetGValue(fg) << 8) | GetBValue(fg);
     bg = (GetRValue(bg) << 16) | (GetGValue(bg) << 8) | GetBValue(bg);
@@ -7805,8 +7860,8 @@ set_console_color_rgb(void)
     csbi.cbSize = sizeof(csbi);
     csbi.srWindow.Right += 1;
     csbi.srWindow.Bottom += 1;
-    csbi.ColorTable[0] = (COLORREF)bg;
-    csbi.ColorTable[7] = (COLORREF)fg;
+    csbi.ColorTable[g_color_index_bg] = (COLORREF)bg;
+    csbi.ColorTable[g_color_index_fg] = (COLORREF)fg;
     if (has_csbiex)
 	pSetConsoleScreenBufferInfoEx(g_hConOut, &csbi);
 # endif
@@ -7825,8 +7880,8 @@ reset_console_color_rgb(void)
     csbi.cbSize = sizeof(csbi);
     csbi.srWindow.Right += 1;
     csbi.srWindow.Bottom += 1;
-    csbi.ColorTable[0] = (COLORREF)save_console_bg_rgb;
-    csbi.ColorTable[7] = (COLORREF)save_console_fg_rgb;
+    csbi.ColorTable[g_color_index_bg] = (COLORREF)save_console_bg_rgb;
+    csbi.ColorTable[g_color_index_fg] = (COLORREF)save_console_fg_rgb;
     if (has_csbiex)
 	pSetConsoleScreenBufferInfoEx(g_hConOut, &csbi);
 # endif

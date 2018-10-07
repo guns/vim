@@ -51,10 +51,6 @@ static void	clear_wininfo(buf_T *buf);
 # define dev_T unsigned
 #endif
 
-#if defined(FEAT_SIGNS)
-static void insert_sign(buf_T *buf, signlist_T *prev, signlist_T *next, int id, linenr_T lnum, int typenr);
-#endif
-
 #if defined(FEAT_QUICKFIX)
 static char *msg_loclist = N_("[Location List]");
 static char *msg_qflist = N_("[Quickfix List]");
@@ -412,7 +408,31 @@ buf_hashtab_remove(buf_T *buf)
 	hash_remove(&buf_hashtab, hi);
 }
 
-static char *e_buflocked = N_("E937: Attempt to delete a buffer that is in use");
+/*
+ * Return TRUE when buffer "buf" can be unloaded.
+ * Give an error message and return FALSE when the buffer is locked or the
+ * screen is being redrawn and the buffer is in a window.
+ */
+    static int
+can_unload_buffer(buf_T *buf)
+{
+    int	    can_unload = !buf->b_locked;
+
+    if (can_unload && updating_screen)
+    {
+	win_T	*wp;
+
+	FOR_ALL_WINDOWS(wp)
+	    if (wp->w_buffer == buf)
+	    {
+		can_unload = FALSE;
+		break;
+	    }
+    }
+    if (!can_unload)
+	EMSG(_("E937: Attempt to delete a buffer that is in use"));
+    return can_unload;
+}
 
 /*
  * Close the link to a buffer.
@@ -474,11 +494,9 @@ close_buffer(
 	{
 	    if (wipe_buf || unload_buf)
 	    {
-		if (buf->b_locked)
-		{
-		    EMSG(_(e_buflocked));
+		if (!can_unload_buffer(buf))
 		    return;
-		}
+
 		/* Wiping out or unloading a terminal buffer kills the job. */
 		free_terminal(buf);
 	    }
@@ -501,11 +519,8 @@ close_buffer(
 
     /* Disallow deleting the buffer when it is locked (already being closed or
      * halfway a command that relies on it). Unloading is allowed. */
-    if (buf->b_locked > 0 && (del_buf || wipe_buf))
-    {
-	EMSG(_(e_buflocked));
+    if ((del_buf || wipe_buf) && !can_unload_buffer(buf))
 	return;
-    }
 
     /* check no autocommands closed the window */
     if (win != NULL && win_valid_any_tab(win))
@@ -1035,7 +1050,14 @@ handle_swap_exists(bufref_T *old_curbuf)
 	    buf = old_curbuf->br_buf;
 	if (buf != NULL)
 	{
+	    int old_msg_silent = msg_silent;
+
+	    if (shortmess(SHM_FILEINFO))
+		msg_silent = 1;  // prevent fileinfo message
 	    enter_buffer(buf);
+	    // restore msg_silent, so that the command line will be shown
+	    msg_silent = old_msg_silent;
+
 # ifdef FEAT_SYN_HL
 	    if (old_tw != curbuf->b_p_tw)
 		check_colorcolumn(curwin);
@@ -1174,34 +1196,20 @@ do_bufdel(
 	else if (deleted >= p_report)
 	{
 	    if (command == DOBUF_UNLOAD)
-	    {
-		if (deleted == 1)
-		    MSG(_("1 buffer unloaded"));
-		else
-		    smsg((char_u *)_("%d buffers unloaded"), deleted);
-	    }
+		smsg((char_u *)NGETTEXT("%d buffer unloaded",
+			    "%d buffers unloaded", deleted), deleted);
 	    else if (command == DOBUF_DEL)
-	    {
-		if (deleted == 1)
-		    MSG(_("1 buffer deleted"));
-		else
-		    smsg((char_u *)_("%d buffers deleted"), deleted);
-	    }
+		smsg((char_u *)NGETTEXT("%d buffer deleted",
+			    "%d buffers deleted", deleted), deleted);
 	    else
-	    {
-		if (deleted == 1)
-		    MSG(_("1 buffer wiped out"));
-		else
-		    smsg((char_u *)_("%d buffers wiped out"), deleted);
-	    }
+		smsg((char_u *)NGETTEXT("%d buffer wiped out",
+			    "%d buffers wiped out", deleted), deleted);
 	}
     }
 
 
     return errormsg;
 }
-
-static int	empty_curbuf(int close_others, int forceit, int action);
 
 /*
  * Make the current buffer empty.
@@ -1243,6 +1251,7 @@ empty_curbuf(
 	need_fileinfo = FALSE;
     return retval;
 }
+
 /*
  * Implementation of the commands for the buffer list.
  *
@@ -1364,11 +1373,8 @@ do_buffer(
 	int	forward;
 	bufref_T bufref;
 
-	if (buf->b_locked)
-	{
-	    EMSG(_(e_buflocked));
+	if (!can_unload_buffer(buf))
 	    return FAIL;
-	}
 
 	set_bufref(&bufref, buf);
 
@@ -1734,6 +1740,9 @@ enter_buffer(buf_T *buf)
 
     /* mark cursor position as being invalid */
     curwin->w_valid = 0;
+
+    buflist_setfpos(curbuf, curwin, curbuf->b_last_cursor.lnum,
+					      curbuf->b_last_cursor.col, TRUE);
 
     /* Make sure the buffer is loaded. */
     if (curbuf->b_ml.ml_mfp == NULL)	/* need to load the file */
@@ -2826,8 +2835,6 @@ buflist_setfpos(
 }
 
 #ifdef FEAT_DIFF
-static int wininfo_other_tab_diff(wininfo_T *wip);
-
 /*
  * Return TRUE when "wip" has 'diff' set and the diff is only for another tab
  * page.  That's because a diff is local to a tab page.
@@ -3485,19 +3492,14 @@ fileinfo(
 	n = (int)(((long)curwin->w_cursor.lnum * 100L) /
 					    (long)curbuf->b_ml.ml_line_count);
     if (curbuf->b_ml.ml_flags & ML_EMPTY)
-    {
 	vim_snprintf_add((char *)buffer, IOSIZE, "%s", _(no_lines_msg));
-    }
 #ifdef FEAT_CMDL_INFO
     else if (p_ru)
-    {
 	/* Current line and column are already on the screen -- webb */
-	if (curbuf->b_ml.ml_line_count == 1)
-	    vim_snprintf_add((char *)buffer, IOSIZE, _("1 line --%d%%--"), n);
-	else
-	    vim_snprintf_add((char *)buffer, IOSIZE, _("%ld lines --%d%%--"),
-					 (long)curbuf->b_ml.ml_line_count, n);
-    }
+	vim_snprintf_add((char *)buffer, IOSIZE,
+		NGETTEXT("%ld line --%d%%--", "%ld lines --%d%%--",
+						   curbuf->b_ml.ml_line_count),
+		(long)curbuf->b_ml.ml_line_count, n);
 #endif
     else
     {
@@ -5410,7 +5412,7 @@ chk_modeline(
     char_u	*save_sourcing_name;
     linenr_T	save_sourcing_lnum;
 #ifdef FEAT_EVAL
-    scid_T	save_SID;
+    sctx_T	save_current_sctx;
 #endif
 
     prev = -1;
@@ -5495,12 +5497,13 @@ chk_modeline(
 	    if (*s != NUL)		/* skip over an empty "::" */
 	    {
 #ifdef FEAT_EVAL
-		save_SID = current_SID;
-		current_SID = SID_MODELINE;
+		save_current_sctx = current_sctx;
+		current_sctx.sc_sid = SID_MODELINE;
+		current_sctx.sc_lnum = 0;
 #endif
 		retval = do_set(s, OPT_MODELINE | OPT_LOCAL | flags);
 #ifdef FEAT_EVAL
-		current_SID = save_SID;
+		current_sctx = save_current_sctx;
 #endif
 		if (retval == FAIL)		/* stop if error found */
 		    break;
@@ -5853,11 +5856,9 @@ insert_sign(
 	newsign->lnum = lnum;
 	newsign->typenr = typenr;
 	newsign->next = next;
-#ifdef FEAT_NETBEANS_INTG
 	newsign->prev = prev;
 	if (next != NULL)
 	    next->prev = newsign;
-#endif
 
 	if (prev == NULL)
 	{
@@ -5902,38 +5903,29 @@ buf_addsign(
 	    sign->typenr = typenr;
 	    return;
 	}
-	else if (
-#ifndef FEAT_NETBEANS_INTG  /* keep signs sorted by lnum */
-		   id < 0 &&
-#endif
-			     lnum < sign->lnum)
+	else if (lnum < sign->lnum)
 	{
-#ifdef FEAT_NETBEANS_INTG /* insert new sign at head of list for this lnum */
-	    /* XXX - GRP: Is this because of sign slide problem? Or is it
-	     * really needed? Or is it because we allow multiple signs per
-	     * line? If so, should I add that feature to FEAT_SIGNS?
-	     */
+	    // keep signs sorted by lnum: insert new sign at head of list for
+	    // this lnum
 	    while (prev != NULL && prev->lnum == lnum)
 		prev = prev->prev;
 	    if (prev == NULL)
 		sign = buf->b_signlist;
 	    else
 		sign = prev->next;
-#endif
 	    insert_sign(buf, prev, sign, id, lnum, typenr);
 	    return;
 	}
 	prev = sign;
     }
-#ifdef FEAT_NETBEANS_INTG /* insert new sign at head of list for this lnum */
-    /* XXX - GRP: See previous comment */
+
+    // insert new sign at head of list for this lnum
     while (prev != NULL && prev->lnum == lnum)
 	prev = prev->prev;
     if (prev == NULL)
 	sign = buf->b_signlist;
     else
 	sign = prev->next;
-#endif
     insert_sign(buf, prev, sign, id, lnum, typenr);
 
     return;
@@ -6005,10 +5997,8 @@ buf_delsign(
 	if (sign->id == id)
 	{
 	    *lastp = next;
-#ifdef FEAT_NETBEANS_INTG
 	    if (next != NULL)
 		next->prev = sign->prev;
-#endif
 	    lnum = sign->lnum;
 	    vim_free(sign);
 	    break;
@@ -6064,7 +6054,9 @@ buf_findsign_id(
 
 
 # if defined(FEAT_NETBEANS_INTG) || defined(PROTO)
-/* see if a given type of sign exists on a specific line */
+/*
+ * See if a given type of sign exists on a specific line.
+ */
     int
 buf_findsigntype_id(
     buf_T	*buf,		/* buffer whose sign we are searching for */
@@ -6082,7 +6074,9 @@ buf_findsigntype_id(
 
 
 #  if defined(FEAT_SIGN_ICONS) || defined(PROTO)
-/* return the number of icons on the given line */
+/*
+ * Return the number of icons on the given line.
+ */
     int
 buf_signcount(buf_T *buf, linenr_T lnum)
 {

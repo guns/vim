@@ -44,13 +44,12 @@ struct cmdline_info
 # endif
 };
 
-/* The current cmdline_info.  It is initialized in getcmdline() and after that
- * used by other functions.  When invoking getcmdline() recursively it needs
- * to be saved with save_cmdline() and restored with restore_cmdline().
- * TODO: make it local to getcmdline() and pass it around. */
+// The current cmdline_info.  It is initialized in getcmdline() and after that
+// used by other functions.  When invoking getcmdline() recursively it needs
+// to be saved with save_cmdline() and restored with restore_cmdline().
 static struct cmdline_info ccline;
 
-static int	cmd_showtail;		/* Only show path tail in lists ? */
+static int	cmd_showtail;	/* Only show path tail in lists ? */
 
 #ifdef FEAT_EVAL
 static int	new_cmdpos;	/* position set by set_cmdline_pos() */
@@ -76,11 +75,6 @@ static int	hisnum[HIST_COUNT] = {0, 0, 0, 0, 0};
 static int	hislen = 0;		/* actual length of history tables */
 
 static int	hist_char2type(int c);
-
-static int	in_history(int, char_u *, int, int, int);
-# ifdef FEAT_EVAL
-static int	calc_hist_idx(int histype, int num);
-# endif
 #endif
 
 #ifdef FEAT_RIGHTLEFT
@@ -91,6 +85,7 @@ static int	cmd_hkmap = 0;	/* Hebrew mapping during command line */
 static int	cmd_fkmap = 0;	/* Farsi mapping during command line */
 #endif
 
+static char_u	*getcmdline_int(int firstc, long count, int indent, int init_ccline);
 static int	cmdline_charsize(int idx);
 static void	set_cmdspos(void);
 static void	set_cmdspos_cursor(void);
@@ -103,9 +98,6 @@ static void	draw_cmdline(int start, int len);
 static void	save_cmdline(struct cmdline_info *ccp);
 static void	restore_cmdline(struct cmdline_info *ccp);
 static int	cmdline_paste(int regname, int literally, int remcr);
-#if defined(FEAT_XIM) && defined(FEAT_GUI_GTK)
-static void	redrawcmd_preedit(void);
-#endif
 #ifdef FEAT_WILDMENU
 static void	cmdline_del(int from);
 #endif
@@ -271,6 +263,7 @@ set_search_match(pos_T *t)
 /*
  * Return TRUE when 'incsearch' highlighting is to be done.
  * Sets search_first_line and search_last_line to the address range.
+ * May change the last search pattern.
  */
     static int
 do_incsearch_highlighting(int firstc, incsearch_state_T *is_state,
@@ -285,6 +278,7 @@ do_incsearch_highlighting(int firstc, incsearch_state_T *is_state,
     char_u	*dummy;
     exarg_T	ea;
     pos_T	save_cursor;
+    int		use_last_pat;
 
     *skiplen = 0;
     *patlen = ccline.cmdlen;
@@ -361,17 +355,32 @@ do_incsearch_highlighting(int firstc, incsearch_state_T *is_state,
     delim = (delim_optional && vim_isIDc(*p)) ? ' ' : *p++;
     end = skip_regexp(p, delim, p_magic, NULL);
 
-    if (end == p && *end != delim)
-	return FALSE;
-    // found a non-empty pattern or //
+    use_last_pat = end == p && *end == delim;
 
+    if (end == p && !use_last_pat)
+	return FALSE;
+
+    // Don't do 'hlsearch' highlighting if the pattern matches everything.
+    if (!use_last_pat)
+    {
+	char c = *end;
+	int  empty;
+
+	*end = NUL;
+	empty = empty_pattern(p);
+	*end = c;
+	if (empty)
+	    return FALSE;
+    }
+
+    // found a non-empty pattern or //
     *skiplen = (int)(p - ccline.cmdbuff);
     *patlen = (int)(end - p);
 
     // parse the address range
     save_cursor = curwin->w_cursor;
     curwin->w_cursor = is_state->search_start;
-    parse_cmd_address(&ea, &dummy);
+    parse_cmd_address(&ea, &dummy, TRUE);
     if (ea.addr_count > 0)
     {
 	// Allow for reverse match.
@@ -420,12 +429,17 @@ finish_incsearch_highlighting(
 	}
 	restore_viewstate(&is_state->old_viewstate);
 	highlight_match = FALSE;
+
+	// by default search all lines
+	search_first_line = 0;
+	search_last_line = MAXLNUM;
+
+	p_magic = is_state->magic_save;
+
 	validate_cursor();	/* needed for TAB */
+	redraw_all_later(SOME_VALID);
 	if (call_update_screen)
 	    update_screen(SOME_VALID);
-	else
-	    redraw_all_later(SOME_VALID);
-	p_magic = is_state->magic_save;
     }
 }
 
@@ -439,17 +453,20 @@ may_do_incsearch_highlighting(
 	incsearch_state_T   *is_state)
 {
     int		skiplen, patlen;
-    int		i;
+    int		found;  // do_search() result
     pos_T	end_pos;
-    struct cmdline_info	save_ccline;
 #ifdef FEAT_RELTIME
     proftime_T	tm;
 #endif
     int		next_char;
     int		use_last_pat;
 
+    // Parsing range may already set the last search pattern.
+    save_last_search_pattern();
+
     if (!do_incsearch_highlighting(firstc, is_state, &skiplen, &patlen))
     {
+	restore_last_search_pattern();
 	finish_incsearch_highlighting(FALSE, is_state, TRUE);
 	return;
     }
@@ -457,6 +474,7 @@ may_do_incsearch_highlighting(
     // If there is a character waiting, search and redraw later.
     if (char_avail())
     {
+	restore_last_search_pattern();
 	is_state->incsearch_postponed = TRUE;
 	return;
     }
@@ -471,7 +489,6 @@ may_do_incsearch_highlighting(
 	curwin->w_cursor.lnum = search_first_line;
 	curwin->w_cursor.col = 0;
     }
-    save_last_search_pattern();
 
     // Use the previous pattern for ":s//".
     next_char = ccline.cmdbuff[skiplen + patlen];
@@ -481,7 +498,7 @@ may_do_incsearch_highlighting(
     // If there is no pattern, don't do anything.
     if (patlen == 0 && !use_last_pat)
     {
-	i = 0;
+	found = 0;
 	set_no_hlsearch(TRUE); // turn off previous highlight
 	redraw_all_later(SOME_VALID);
     }
@@ -501,7 +518,7 @@ may_do_incsearch_highlighting(
 	if (search_first_line != 0)
 	    search_flags += SEARCH_START;
 	ccline.cmdbuff[skiplen + patlen] = NUL;
-	i = do_search(NULL, firstc == ':' ? '/' : firstc,
+	found = do_search(NULL, firstc == ':' ? '/' : firstc,
 				 ccline.cmdbuff + skiplen, count, search_flags,
 #ifdef FEAT_RELTIME
 		&tm, NULL
@@ -516,7 +533,7 @@ may_do_incsearch_highlighting(
 		|| curwin->w_cursor.lnum > search_last_line)
 	{
 	    // match outside of address range
-	    i = 0;
+	    found = 0;
 	    curwin->w_cursor = is_state->search_start;
 	}
 
@@ -525,13 +542,13 @@ may_do_incsearch_highlighting(
 	{
 	    (void)vpeekc();	// remove <C-C> from input stream
 	    got_int = FALSE;	// don't abandon the command line
-	    i = 0;
+	    found = 0;
 	}
 	else if (char_avail())
 	    // cancelled searching because a char was typed
 	    is_state->incsearch_postponed = TRUE;
     }
-    if (i != 0)
+    if (found != 0)
 	highlight_match = TRUE;		// highlight position
     else
 	highlight_match = FALSE;	// remove highlight
@@ -542,7 +559,7 @@ may_do_incsearch_highlighting(
     changed_cline_bef_curs();
     update_topline();
 
-    if (i != 0)
+    if (found != 0)
     {
 	pos_T	    save_pos = curwin->w_cursor;
 
@@ -562,8 +579,11 @@ may_do_incsearch_highlighting(
     {
 	next_char = ccline.cmdbuff[skiplen + patlen];
 	ccline.cmdbuff[skiplen + patlen] = NUL;
-	if (empty_pattern(ccline.cmdbuff))
+	if (empty_pattern(ccline.cmdbuff) && !no_hlsearch)
+	{
+	    redraw_all_later(SOME_VALID);
 	    set_no_hlsearch(TRUE);
+	}
 	ccline.cmdbuff[skiplen + patlen] = next_char;
     }
 
@@ -572,13 +592,14 @@ may_do_incsearch_highlighting(
     if (p_ru && curwin->w_status_height > 0)
 	curwin->w_redr_status = TRUE;
 
-    save_cmdline(&save_ccline);
     update_screen(SOME_VALID);
-    restore_cmdline(&save_ccline);
     restore_last_search_pattern();
 
-    // Leave it at the end to make CTRL-R CTRL-W work.
-    if (i != 0)
+    // Leave it at the end to make CTRL-R CTRL-W work.  But not when beyond the
+    // end of the pattern, e.g. for ":s/pat/".
+    if (ccline.cmdbuff[skiplen + patlen] != NUL)
+	curwin->w_cursor = is_state->search_start;
+    else if (found != 0)
 	curwin->w_cursor = end_pos;
 
     msg_starthere();
@@ -605,10 +626,19 @@ may_adjust_incsearch_highlighting(
     int	    i;
     int	    save;
 
+    // Parsing range may already set the last search pattern.
+    save_last_search_pattern();
+
     if (!do_incsearch_highlighting(firstc, is_state, &skiplen, &patlen))
+    {
+	restore_last_search_pattern();
 	return OK;
+    }
     if (patlen == 0 && ccline.cmdbuff[skiplen] == NUL)
+    {
+	restore_last_search_pattern();
 	return FAIL;
+    }
 
     if (firstc == ccline.cmdbuff[skiplen])
     {
@@ -619,7 +649,6 @@ may_adjust_incsearch_highlighting(
     else
 	pat = ccline.cmdbuff + skiplen;
 
-    save_last_search_pattern();
     cursor_off();
     out_flush();
     if (c == Ctrl_G)
@@ -699,8 +728,14 @@ may_add_char_to_search(int firstc, int *c, incsearch_state_T *is_state)
 {
     int		skiplen, patlen;
 
+    // Parsing range may already set the last search pattern.
+    save_last_search_pattern();
+
     if (!do_incsearch_highlighting(firstc, is_state, &skiplen, &patlen))
+    {
+	restore_last_search_pattern();
 	return FAIL;
+    }
 
     // Add a character from under the cursor for 'incsearch'.
     if (is_state->did_incsearch)
@@ -732,6 +767,12 @@ may_add_char_to_search(int firstc, int *c, incsearch_state_T *is_state)
 }
 #endif
 
+    void
+cmdline_init(void)
+{
+    vim_memset(&ccline, 0, sizeof(struct cmdline_info));
+}
+
 /*
  * getcmdline() - accept a command line starting with firstc.
  *
@@ -754,8 +795,18 @@ may_add_char_to_search(int firstc, int *c, incsearch_state_T *is_state)
     char_u *
 getcmdline(
     int		firstc,
-    long	count UNUSED,	/* only used for incremental search */
-    int		indent)		/* indent for inside conditionals */
+    long	count,		// only used for incremental search
+    int		indent)		// indent for inside conditionals
+{
+    return getcmdline_int(firstc, count, indent, TRUE);
+}
+
+    static char_u *
+getcmdline_int(
+    int		firstc,
+    long	count UNUSED,	// only used for incremental search
+    int		indent,		// indent for inside conditionals
+    int		init_ccline)	// clear ccline first
 {
     int		c;
     int		i;
@@ -786,13 +837,19 @@ getcmdline(
 #endif
     expand_T	xpc;
     long	*b_im_ptr = NULL;
-#if defined(FEAT_WILDMENU) || defined(FEAT_EVAL)
-    /* Everything that may work recursively should save and restore the
-     * current command line in save_ccline.  That includes update_screen(), a
-     * custom status line may invoke ":normal". */
     struct cmdline_info save_ccline;
-#endif
+    int		did_save_ccline = FALSE;
     int		cmdline_type;
+
+    if (ccline.cmdbuff != NULL)
+    {
+	// Being called recursively.  Since ccline is global, we need to save
+	// the current buffer and restore it when returning.
+	save_cmdline(&save_ccline);
+	did_save_ccline = TRUE;
+    }
+    if (init_ccline)
+	vim_memset(&ccline, 0, sizeof(struct cmdline_info));
 
 #ifdef FEAT_EVAL
     if (firstc == -1)
@@ -822,7 +879,7 @@ getcmdline(
     /* alloc initial ccline.cmdbuff */
     alloc_cmdbuff(exmode_active ? 250 : indent + 1);
     if (ccline.cmdbuff == NULL)
-	return NULL;			    /* out of memory */
+	goto theend;	// out of memory
     ccline.cmdlen = ccline.cmdpos = 0;
     ccline.cmdbuff[0] = NUL;
     sb_text_start_cmdline();
@@ -1079,9 +1136,7 @@ getcmdline(
 		    p_ls = save_p_ls;
 		    p_wmh = save_p_wmh;
 		    last_status(FALSE);
-		    save_cmdline(&save_ccline);
 		    update_screen(VALID);	/* redraw the screen NOW */
-		    restore_cmdline(&save_ccline);
 		    redrawcmd();
 		    save_p_ls = -1;
 		}
@@ -1262,7 +1317,11 @@ getcmdline(
 	    /* CTRL-\ e doesn't work when obtaining an expression, unless it
 	     * is in a mapping. */
 	    if (c != Ctrl_N && c != Ctrl_G && (c != 'e'
-				    || (ccline.cmdfirstc == '=' && KeyTyped)))
+				    || (ccline.cmdfirstc == '=' && KeyTyped)
+#ifdef FEAT_EVAL
+				    || cmdline_star > 0
+#endif
+				    ))
 	    {
 		vungetc(c);
 		c = Ctrl_BSL;
@@ -1283,19 +1342,15 @@ getcmdline(
 		else
 		    new_cmdpos = ccline.cmdpos;
 
-		save_cmdline(&save_ccline);
 		c = get_expr_register();
-		restore_cmdline(&save_ccline);
 		if (c == '=')
 		{
 		    /* Need to save and restore ccline.  And set "textlock"
 		     * to avoid nasty things like going to another buffer when
 		     * evaluating an expression. */
-		    save_cmdline(&save_ccline);
 		    ++textlock;
 		    p = get_expr_line();
 		    --textlock;
-		    restore_cmdline(&save_ccline);
 
 		    if (p != NULL)
 		    {
@@ -1755,17 +1810,14 @@ getcmdline(
 		new_cmdpos = -1;
 		if (c == '=')
 		{
-		    if (ccline.cmdfirstc == '=')/* can't do this recursively */
+		    if (ccline.cmdfirstc == '='  // can't do this recursively
+			    || cmdline_star > 0) // or when typing a password
 		    {
 			beep_flush();
 			c = ESC;
 		    }
 		    else
-		    {
-			save_cmdline(&save_ccline);
 			c = get_expr_register();
-			restore_cmdline(&save_ccline);
-		    }
 		}
 #endif
 		if (c != ESC)	    /* use ESC to cancel inserting register */
@@ -2136,7 +2188,7 @@ getcmdline(
 		    int		len;
 		    int		old_firstc;
 
-		    vim_free(ccline.cmdbuff);
+		    VIM_CLEAR(ccline.cmdbuff);
 		    xpc.xp_context = EXPAND_NOTHING;
 		    if (hiscnt == hislen)
 			p = lookfor;	/* back to the old one */
@@ -2435,11 +2487,14 @@ returncmd:
 #endif
     sb_text_end_cmdline();
 
+theend:
     {
 	char_u *p = ccline.cmdbuff;
 
-	/* Make ccline empty, getcmdline() may try to use it. */
-	ccline.cmdbuff = NULL;
+	if (did_save_ccline)
+	    restore_cmdline(&save_ccline);
+	else
+	    ccline.cmdbuff = NULL;
 	return p;
     }
 }
@@ -2461,10 +2516,18 @@ getcmdline_prompt(
 {
     char_u		*s;
     struct cmdline_info	save_ccline;
+    int			did_save_ccline = FALSE;
     int			msg_col_save = msg_col;
     int			msg_silent_save = msg_silent;
 
-    save_cmdline(&save_ccline);
+    if (ccline.cmdbuff != NULL)
+    {
+	// Save the values of the current cmdline and restore them below.
+	save_cmdline(&save_ccline);
+	did_save_ccline = TRUE;
+    }
+
+    vim_memset(&ccline, 0, sizeof(struct cmdline_info));
     ccline.cmdprompt = prompt;
     ccline.cmdattr = attr;
 # ifdef FEAT_EVAL
@@ -2473,8 +2536,11 @@ getcmdline_prompt(
     ccline.input_fn = (firstc == '@');
 # endif
     msg_silent = 0;
-    s = getcmdline(firstc, 1L, 0);
-    restore_cmdline(&save_ccline);
+    s = getcmdline_int(firstc, 1L, 0, FALSE);
+
+    if (did_save_ccline)
+	restore_cmdline(&save_ccline);
+
     msg_silent = msg_silent_save;
     /* Restore msg_col, the prompt from input() may have changed it.
      * But only if called recursively and the commandline is therefore being
@@ -3070,7 +3136,6 @@ redrawcmd_preedit(void)
 /*
  * Allocate a new command line buffer.
  * Assigns the new buffer to ccline.cmdbuff and ccline.cmdbufflen.
- * Returns the new value of ccline.cmdbuff and ccline.cmdbufflen.
  */
     static void
 alloc_cmdbuff(int len)
@@ -3491,9 +3556,7 @@ save_cmdline(struct cmdline_info *ccp)
     }
     *ccp = prev_ccline;
     prev_ccline = ccline;
-    ccline.cmdbuff = NULL;
-    ccline.cmdprompt = NULL;
-    ccline.xpc = NULL;
+    ccline.cmdbuff = NULL;  // signal that ccline is not in use
 }
 
 /*
@@ -3505,37 +3568,6 @@ restore_cmdline(struct cmdline_info *ccp)
     ccline = prev_ccline;
     prev_ccline = *ccp;
 }
-
-#if defined(FEAT_EVAL) || defined(PROTO)
-/*
- * Save the command line into allocated memory.  Returns a pointer to be
- * passed to restore_cmdline_alloc() later.
- * Returns NULL when failed.
- */
-    char_u *
-save_cmdline_alloc(void)
-{
-    struct cmdline_info *p;
-
-    p = (struct cmdline_info *)alloc((unsigned)sizeof(struct cmdline_info));
-    if (p != NULL)
-	save_cmdline(p);
-    return (char_u *)p;
-}
-
-/*
- * Restore the command line from the return value of save_cmdline_alloc().
- */
-    void
-restore_cmdline_alloc(char_u *p)
-{
-    if (p != NULL)
-    {
-	restore_cmdline((struct cmdline_info *)p);
-	vim_free(p);
-    }
-}
-#endif
 
 /*
  * Paste a yank register into the command line.
@@ -3555,7 +3587,6 @@ cmdline_paste(
     char_u		*arg;
     char_u		*p;
     int			allocated;
-    struct cmdline_info	save_ccline;
 
     /* check for valid regname; also accept special characters for CTRL-R in
      * the command line */
@@ -3574,13 +3605,11 @@ cmdline_paste(
     regname = may_get_selection(regname);
 #endif
 
-    /* Need to save and restore ccline.  And set "textlock" to avoid nasty
-     * things like going to another buffer when evaluating an expression. */
-    save_cmdline(&save_ccline);
+    // Need to  set "textlock" to avoid nasty things like going to another
+    // buffer when evaluating an expression.
     ++textlock;
     i = get_spec_reg(regname, &arg, &allocated, TRUE);
     --textlock;
-    restore_cmdline(&save_ccline);
 
     if (i)
     {
@@ -5012,8 +5041,6 @@ expand_cmdline(
  * Remove "@ab" if the top of 'helplang' is "ab" and the language of the first
  * tag matches it.  Otherwise remove "@en" if "en" is the only language.
  */
-static void	cleanup_help_tags(int num_file, char_u **file);
-
     static void
 cleanup_help_tags(int num_file, char_u **file)
 {
@@ -5547,10 +5574,9 @@ call_user_expand_func(
 {
     int		keep = 0;
     typval_T	args[4];
-    int		save_current_SID = current_SID;
+    sctx_T	save_current_sctx = current_sctx;
     char_u	*pat = NULL;
     void	*ret;
-    struct cmdline_info	    save_ccline;
 
     if (xp->xp_arg == NULL || xp->xp_arg[0] == '\0' || xp->xp_line == NULL)
 	return NULL;
@@ -5573,16 +5599,11 @@ call_user_expand_func(
     args[2].vval.v_number = xp->xp_col;
     args[3].v_type = VAR_UNKNOWN;
 
-    /* Save the cmdline, we don't know what the function may do. */
-    save_ccline = ccline;
-    ccline.cmdbuff = NULL;
-    ccline.cmdprompt = NULL;
-    current_SID = xp->xp_scriptID;
+    current_sctx = xp->xp_script_ctx;
 
     ret = user_expand_func(xp->xp_arg, 3, args);
 
-    ccline = save_ccline;
-    current_SID = save_current_SID;
+    current_sctx = save_current_sctx;
     if (ccline.cmdbuff != NULL)
 	ccline.cmdbuff[ccline.cmdlen] = keep;
 
@@ -6430,7 +6451,7 @@ remove_key_from_history(void)
 
 #if defined(FEAT_EVAL) || defined(FEAT_CMDWIN) || defined(PROTO)
 /*
- * Get pointer to the command line info to use. cmdline_paste() may clear
+ * Get pointer to the command line info to use. save_ccline() may clear
  * ccline and put the previous value in prev_ccline.
  */
     static struct cmdline_info *
@@ -6455,8 +6476,11 @@ get_ccline_ptr(void)
     char_u *
 get_cmdline_str(void)
 {
-    struct cmdline_info *p = get_ccline_ptr();
+    struct cmdline_info *p;
 
+    if (cmdline_star > 0)
+	return NULL;
+    p = get_ccline_ptr();
     if (p == NULL)
 	return NULL;
     return vim_strnsave(p->cmdbuff, p->cmdlen);
@@ -6672,8 +6696,6 @@ static histentry_T *viminfo_history[HIST_COUNT] =
 static int	viminfo_hisidx[HIST_COUNT] = {0, 0, 0, 0, 0};
 static int	viminfo_hislen[HIST_COUNT] = {0, 0, 0, 0, 0};
 static int	viminfo_add_at_front = FALSE;
-
-static int	hist_type2char(int type, int use_question);
 
 /*
  * Translate a history type number to the associated character.
@@ -7184,7 +7206,6 @@ cmd_gchar(int offset)
     static int
 open_cmdwin(void)
 {
-    struct cmdline_info	save_ccline;
     bufref_T		old_curbuf;
     win_T		*old_curwin = curwin;
     bufref_T		bufref;
@@ -7301,9 +7322,6 @@ open_cmdwin(void)
     invalidate_botline();
     redraw_later(SOME_VALID);
 
-    /* Save the command line info, can be used recursively. */
-    save_cmdline(&save_ccline);
-
     /* No Ex mode here! */
     exmode_active = 0;
 
@@ -7340,10 +7358,7 @@ open_cmdwin(void)
     KeyTyped = save_KeyTyped;
 # endif
 
-    /* Restore the command line info. */
-    restore_cmdline(&save_ccline);
     cmdwin_type = 0;
-
     exmode_active = save_exmode;
 
     /* Safety check: The old window or buffer was deleted: It's a bug when

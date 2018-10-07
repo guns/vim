@@ -649,7 +649,10 @@ ex_sort(exarg_T *eap)
     /* Adjust marks for deleted (or added) lines and prepare for displaying. */
     deleted = (long)(count - (lnum - eap->line2));
     if (deleted > 0)
+    {
 	mark_adjust(eap->line2 - deleted, eap->line2, (long)MAXLNUM, -deleted);
+	msgmore(-deleted);
+    }
     else if (deleted < 0)
 	mark_adjust(eap->line2, MAXLNUM, -deleted, 0L);
 
@@ -985,12 +988,8 @@ do_move(linenr_T line1, linenr_T line2, linenr_T dest)
 	ml_delete(line1 + extra, TRUE);
 
     if (!global_busy && num_lines > p_report)
-    {
-	if (num_lines == 1)
-	    MSG(_("1 line moved"));
-	else
-	    smsg((char_u *)_("%ld lines moved"), num_lines);
-    }
+	smsg((char_u *)NGETTEXT("%ld line moved", "%ld lines moved", num_lines),
+			(long)num_lines);
 
     /*
      * Leave the cursor on the last of the moved lines.
@@ -1819,7 +1818,6 @@ append_redir(
 
 #if defined(FEAT_VIMINFO) || defined(PROTO)
 
-static int no_viminfo(void);
 static int read_viminfo_barline(vir_T *virp, int got_encoding, int force, int writing);
 static void write_viminfo_version(FILE *fp_out);
 static void write_viminfo_barlines(vir_T *virp, FILE *fp_out);
@@ -2126,7 +2124,7 @@ write_viminfo(char_u *file, int forceit)
 		if (st_old.st_uid != tmp_st.st_uid)
 		    /* Changing the owner might fail, in which case the
 		     * file will now owned by the current user, oh well. */
-		    ignored = fchown(fileno(fp_out), st_old.st_uid, -1);
+		    vim_ignored = fchown(fileno(fp_out), st_old.st_uid, -1);
 		if (st_old.st_gid != tmp_st.st_gid
 			&& fchown(fileno(fp_out), -1, st_old.st_gid) == -1)
 		    /* can't set the group to what it should be, remove
@@ -5945,23 +5943,29 @@ do_sub_msg(
 		|| count_only)
 	    && messaging())
     {
+	char	*msg_single;
+	char	*msg_plural;
+
 	if (got_int)
 	    STRCPY(msg_buf, _("(Interrupted) "));
 	else
 	    *msg_buf = NUL;
-	if (sub_nsubs == 1)
-	    vim_snprintf_add((char *)msg_buf, sizeof(msg_buf),
-		    "%s", count_only ? _("1 match") : _("1 substitution"));
-	else
-	    vim_snprintf_add((char *)msg_buf, sizeof(msg_buf),
-		    count_only ? _("%ld matches") : _("%ld substitutions"),
-								   sub_nsubs);
-	if (sub_nlines == 1)
-	    vim_snprintf_add((char *)msg_buf, sizeof(msg_buf),
-		    "%s", _(" on 1 line"));
-	else
-	    vim_snprintf_add((char *)msg_buf, sizeof(msg_buf),
-		    _(" on %ld lines"), (long)sub_nlines);
+
+	msg_single = count_only
+		    ? NGETTEXT("%ld match on %ld line",
+					  "%ld matches on %ld line", sub_nsubs)
+		    : NGETTEXT("%ld substitution on %ld line",
+				   "%ld substitutions on %ld line", sub_nsubs);
+	msg_plural = count_only
+		    ? NGETTEXT("%ld match on %ld lines",
+					 "%ld matches on %ld lines", sub_nsubs)
+		    : NGETTEXT("%ld substitution on %ld lines",
+				  "%ld substitutions on %ld lines", sub_nsubs);
+
+	vim_snprintf_add((char *)msg_buf, sizeof(msg_buf),
+				 NGETTEXT(msg_single, msg_plural, sub_nlines),
+				 sub_nsubs, (long)sub_nlines);
+
 	if (msg(msg_buf))
 	    /* save message to display it after redraw */
 	    set_keep_msg(msg_buf, 0);
@@ -7568,7 +7572,6 @@ struct sign
 static sign_T	*first_sign = NULL;
 static int	next_sign_typenr = 1;
 
-static int sign_cmd_idx(char_u *begin_cmd, char_u *end_cmd);
 static void sign_list_defined(sign_T *sp);
 static void sign_undefine(sign_T *sp, sign_T *sp_prev);
 

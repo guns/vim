@@ -35,6 +35,9 @@ FEATURES=HUGE
 # set to yes for a debug build
 DEBUG=no
 
+# set to yes to create a mapfile
+# MAP=yes
+
 # set to SIZE for size, SPEED for speed, MAXSPEED for maximum optimization
 OPTIMIZE=MAXSPEED
 
@@ -166,6 +169,25 @@ else
 ifndef CROSS_COMPILE
 CROSS_COMPILE =
 endif
+
+# About the "sh.exe" condition, as explained by Ken Takata:
+#
+# If the makefile is executed with mingw32-make and sh.exe is not found in
+# $PATH, then $SHELL is set to "sh.exe" (without any path). In this case,
+# unix-like commands might not work and a dos-style path is needed.
+# 
+# If the makefile is executed with mingw32-make and sh.exe IS found in $PATH,
+# then $SHELL is set with the actual path of sh.exe (e.g.
+# "C:/msys64/usr/bin/sh.exe").  In this case, unix-like commands can be used.
+# 
+# If it is executed by the "make" command from cmd.exe, $SHELL is set to
+# "/bin/sh". If the "make" command is in the $PATH, other unix-like commands
+# might also work.
+# 
+# If it is executed by the "make" command from a unix-like shell,
+# $SHELL is set with the unix-style path (e.g. "/bin/bash").
+# In this case, unix-like commands can be used.
+#
 ifneq (sh.exe, $(SHELL))
 DEL = rm
 MKDIR = mkdir -p
@@ -225,6 +247,8 @@ endif
 
 #	Lua interface:
 #	  LUA=[Path to Lua directory] (Set inside Make_cyg.mak or Make_ming.mak)
+#	  LUA_LIBDIR=[Path to Lua library directory] (default: $LUA/lib)
+#	  LUA_INCDIR=[Path to Lua include directory] (default: $LUA/include)
 #	  DYNAMIC_LUA=yes (to load the Lua DLL dynamically)
 #	  LUA_VER=[Lua version, eg 51, 52] (default is 53)
 ifdef LUA
@@ -237,7 +261,8 @@ LUA_VER=53
 endif
 
 ifeq (no,$(DYNAMIC_LUA))
-LUA_LIB = -L$(LUA)/lib -llua
+LUA_LIBDIR = $(LUA)/lib
+LUA_LIB = -L$(LUA_LIBDIR) -llua
 endif
 
 endif
@@ -453,9 +478,10 @@ ifeq (19, $(word 1,$(sort 19 $(RUBY_VER))))
 RUBY_19_OR_LATER = 1
 endif
 
-RUBYINC = -I $(RUBY)/lib/ruby/$(RUBY_API_VER_LONG)/$(RUBY_PLATFORM)
 ifdef RUBY_19_OR_LATER
-RUBYINC += -I $(RUBY)/include/ruby-$(RUBY_API_VER_LONG) -I $(RUBY)/include/ruby-$(RUBY_API_VER_LONG)/$(RUBY_PLATFORM)
+RUBYINC = -I $(RUBY)/include/ruby-$(RUBY_API_VER_LONG) -I $(RUBY)/include/ruby-$(RUBY_API_VER_LONG)/$(RUBY_PLATFORM)
+else
+RUBYINC = -I $(RUBY)/lib/ruby/$(RUBY_API_VER_LONG)/$(RUBY_PLATFORM)
 endif
 ifeq (no, $(DYNAMIC_RUBY))
 RUBYLIB = -L$(RUBY)/lib -l$(RUBY_INSTALL_NAME)
@@ -505,7 +531,8 @@ endif
 endif
 
 ifdef LUA
-CFLAGS += -I$(LUA)/include -I$(LUA) -DFEAT_LUA
+LUA_INCDIR = $(LUA)/include
+CFLAGS += -I$(LUA_INCDIR) -I$(LUA) -DFEAT_LUA
 ifeq (yes, $(DYNAMIC_LUA))
 CFLAGS += -DDYNAMIC_LUA -DDYNAMIC_LUA_DLL=\"lua$(LUA_VER).dll\"
 endif
@@ -799,17 +826,34 @@ endif
 
 ifeq ($(TERMINAL),yes)
 OBJ += $(OUTDIR)/terminal.o \
-	$(OUTDIR)/term_encoding.o \
-	$(OUTDIR)/term_keyboard.o \
-	$(OUTDIR)/term_mouse.o \
-	$(OUTDIR)/term_parser.o \
-	$(OUTDIR)/term_pen.o \
-	$(OUTDIR)/term_screen.o \
-	$(OUTDIR)/term_state.o \
-	$(OUTDIR)/term_unicode.o \
-	$(OUTDIR)/term_vterm.o
+	$(OUTDIR)/encoding.o \
+	$(OUTDIR)/keyboard.o \
+	$(OUTDIR)/mouse.o \
+	$(OUTDIR)/parser.o \
+	$(OUTDIR)/pen.o \
+	$(OUTDIR)/termscreen.o \
+	$(OUTDIR)/state.o \
+	$(OUTDIR)/unicode.o \
+	$(OUTDIR)/vterm.o
 endif
 
+# Include xdiff
+OBJ +=  $(OUTDIR)/xdiffi.o \
+	$(OUTDIR)/xemit.o \
+	$(OUTDIR)/xprepare.o \
+	$(OUTDIR)/xutils.o \
+	$(OUTDIR)/xhistogram.o \
+	$(OUTDIR)/xpatience.o
+
+XDIFF_DEPS = \
+	xdiff/xdiff.h \
+	xdiff/xdiffi.h \
+	xdiff/xemit.h \
+	xdiff/xinclude.h \
+	xdiff/xmacros.h \
+	xdiff/xprepare.h \
+	xdiff/xtypes.h \
+	xdiff/xutils.h
 
 ifdef MZSCHEME
 MZSCHEME_SUFFIX = Z
@@ -893,6 +937,10 @@ endif
 
 ifeq (yes, $(STATIC_WINPTHREAD))
 LIB += -Wl,-Bstatic -lwinpthread -Wl,-Bdynamic
+endif
+
+ifeq (yes, $(MAP))
+LFLAGS += -Wl,-Map=$(TARGET).map
 endif
 
 all: $(TARGET) vimrun.exe xxd/xxd.exe install.exe uninstal.exe GvimExt/gvimext.dll
@@ -1028,33 +1076,50 @@ CCCTERM = $(CC) -c $(CFLAGS) -Ilibvterm/include -DINLINE="" \
 	  -DIS_COMBINING_FUNCTION=utf_iscomposing_uint \
 	  -DWCWIDTH_FUNCTION=utf_uint2cells
 
-$(OUTDIR)/term_encoding.o: libvterm/src/encoding.c $(TERM_DEPS)
+$(OUTDIR)/encoding.o: libvterm/src/encoding.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/encoding.c -o $@
 
-$(OUTDIR)/term_keyboard.o: libvterm/src/keyboard.c $(TERM_DEPS)
+$(OUTDIR)/keyboard.o: libvterm/src/keyboard.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/keyboard.c -o $@
 
-$(OUTDIR)/term_mouse.o: libvterm/src/mouse.c $(TERM_DEPS)
+$(OUTDIR)/mouse.o: libvterm/src/mouse.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/mouse.c -o $@
 
-$(OUTDIR)/term_parser.o: libvterm/src/parser.c $(TERM_DEPS)
+$(OUTDIR)/parser.o: libvterm/src/parser.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/parser.c -o $@
 
-$(OUTDIR)/term_pen.o: libvterm/src/pen.c $(TERM_DEPS)
+$(OUTDIR)/pen.o: libvterm/src/pen.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/pen.c -o $@
 
-$(OUTDIR)/term_screen.o: libvterm/src/screen.c $(TERM_DEPS)
-	$(CCCTERM) libvterm/src/screen.c -o $@
+$(OUTDIR)/termscreen.o: libvterm/src/termscreen.c $(TERM_DEPS)
+	$(CCCTERM) libvterm/src/termscreen.c -o $@
 
-$(OUTDIR)/term_state.o: libvterm/src/state.c $(TERM_DEPS)
+$(OUTDIR)/state.o: libvterm/src/state.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/state.c -o $@
 
-$(OUTDIR)/term_unicode.o: libvterm/src/unicode.c $(TERM_DEPS)
+$(OUTDIR)/unicode.o: libvterm/src/unicode.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/unicode.c -o $@
 
-$(OUTDIR)/term_vterm.o: libvterm/src/vterm.c $(TERM_DEPS)
+$(OUTDIR)/vterm.o: libvterm/src/vterm.c $(TERM_DEPS)
 	$(CCCTERM) libvterm/src/vterm.c -o $@
 
+$(OUTDIR)/xdiffi.o: xdiff/xdiffi.c $(XDIFF_DEPS)
+	$(CC) -c $(CFLAGS) xdiff/xdiffi.c -o $(OUTDIR)/xdiffi.o
+
+$(OUTDIR)/xemit.o: xdiff/xemit.c $(XDIFF_DEPS)
+	$(CC) -c $(CFLAGS) xdiff/xemit.c -o $(OUTDIR)/xemit.o
+
+$(OUTDIR)/xprepare.o: xdiff/xprepare.c $(XDIFF_DEPS)
+	$(CC) -c $(CFLAGS) xdiff/xprepare.c -o $(OUTDIR)/xprepare.o
+
+$(OUTDIR)/xutils.o: xdiff/xutils.c $(XDIFF_DEPS)
+	$(CC) -c $(CFLAGS) xdiff/xutils.c -o $(OUTDIR)/xutils.o
+
+$(OUTDIR)/xhistogram.o: xdiff/xhistogram.c $(XDIFF_DEPS)
+	$(CC) -c $(CFLAGS) xdiff/xhistogram.c -o $(OUTDIR)/xhistogram.o
+
+$(OUTDIR)/xpatience.o: xdiff/xpatience.c $(XDIFF_DEPS)
+	$(CC) -c $(CFLAGS) xdiff/xpatience.c -o $(OUTDIR)/xpatience.o
 
 pathdef.c: $(INCL)
 ifneq (sh.exe, $(SHELL))

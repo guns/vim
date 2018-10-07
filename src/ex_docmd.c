@@ -29,7 +29,7 @@ typedef struct ucmd
     int		uc_compl;	/* completion type */
     int		uc_addr_type;	/* The command's address type */
 # ifdef FEAT_EVAL
-    scid_T	uc_scriptID;	/* SID where the command was defined */
+    sctx_T	uc_script_ctx;	/* SCTX where the command was defined */
 #  ifdef FEAT_CMDL_COMPL
     char_u	*uc_compl_arg;	/* completion argument if any */
 #  endif
@@ -61,7 +61,6 @@ static char_u *get_user_command_name(int idx);
 # define IS_USER_CMDIDX(idx) (FALSE)
 #endif
 
-static int compute_buffer_local_count(int addr_type, int lnum, int local);
 #ifdef FEAT_EVAL
 static char_u	*do_one_cmd(char_u **, int, struct condstack *, char_u *(*fgetline)(int, void *, int), void *cookie);
 #else
@@ -116,8 +115,7 @@ static int	getargopt(exarg_T *eap);
 # define ex_cexpr		ex_ni
 #endif
 
-static int	check_more(int, int);
-static linenr_T get_address(exarg_T *, char_u **, int addr_type, int skip, int to_other_file, int address_count);
+static linenr_T get_address(exarg_T *, char_u **, int addr_type, int skip, int silent, int to_other_file, int address_count);
 static void	get_flags(exarg_T *eap);
 #if !defined(FEAT_PERL) \
 	|| !defined(FEAT_PYTHON) || !defined(FEAT_PYTHON3) \
@@ -497,9 +495,6 @@ struct dbg_stuff
     int		check_cstack;
     except_T	*current_exception;
 };
-
-static void save_dbg_stuff(struct dbg_stuff *dsp);
-static void restore_dbg_stuff(struct dbg_stuff *dsp);
 
     static void
 save_dbg_stuff(struct dbg_stuff *dsp)
@@ -1633,9 +1628,6 @@ compute_buffer_local_count(int addr_type, int lnum, int offset)
     return buf->b_fnum;
 }
 
-static int current_win_nr(win_T *win);
-static int current_tab_nr(tabpage_T *tab);
-
     static int
 current_win_nr(win_T *win)
 {
@@ -1766,28 +1758,6 @@ do_one_cmd(
     ea.skip = (if_level > 0);
 #endif
 
-#ifdef FEAT_EVAL
-# ifdef FEAT_PROFILE
-    /* Count this line for profiling if ea.skip is FALSE. */
-    if (do_profiling == PROF_YES && !ea.skip)
-    {
-	if (getline_equal(fgetline, cookie, get_func_line))
-	    func_line_exec(getline_cookie(fgetline, cookie));
-	else if (getline_equal(fgetline, cookie, getsourceline))
-	    script_line_exec();
-    }
-#endif
-
-    /* May go to debug mode.  If this happens and the ">quit" debug command is
-     * used, throw an interrupt exception and skip the next command. */
-    dbg_check_breakpoint(&ea);
-    if (!ea.skip && got_int)
-    {
-	ea.skip = TRUE;
-	(void)do_intthrow(cstack);
-    }
-#endif
-
 /*
  * 3. Skip over the range to find the command.  Let "p" point to after it.
  *
@@ -1798,6 +1768,51 @@ do_one_cmd(
     if (*ea.cmd == '*' && vim_strchr(p_cpo, CPO_STAR) == NULL)
 	ea.cmd = skipwhite(ea.cmd + 1);
     p = find_command(&ea, NULL);
+
+#ifdef FEAT_EVAL
+# ifdef FEAT_PROFILE
+    // Count this line for profiling if skip is TRUE.
+    if (do_profiling == PROF_YES
+	    && (!ea.skip || cstack->cs_idx == 0 || (cstack->cs_idx > 0
+		     && (cstack->cs_flags[cstack->cs_idx - 1] & CSF_ACTIVE))))
+    {
+	int skip = did_emsg || got_int || did_throw;
+
+	if (ea.cmdidx == CMD_catch)
+	    skip = !skip && !(cstack->cs_idx >= 0
+			  && (cstack->cs_flags[cstack->cs_idx] & CSF_THROWN)
+			  && !(cstack->cs_flags[cstack->cs_idx] & CSF_CAUGHT));
+	else if (ea.cmdidx == CMD_else || ea.cmdidx == CMD_elseif)
+	    skip = skip || !(cstack->cs_idx >= 0
+			  && !(cstack->cs_flags[cstack->cs_idx]
+						  & (CSF_ACTIVE | CSF_TRUE)));
+	else if (ea.cmdidx == CMD_finally)
+	    skip = FALSE;
+	else if (ea.cmdidx != CMD_endif
+		&& ea.cmdidx != CMD_endfor
+		&& ea.cmdidx != CMD_endtry
+		&& ea.cmdidx != CMD_endwhile)
+	    skip = ea.skip;
+
+	if (!skip)
+	{
+	    if (getline_equal(fgetline, cookie, get_func_line))
+		func_line_exec(getline_cookie(fgetline, cookie));
+	    else if (getline_equal(fgetline, cookie, getsourceline))
+		script_line_exec();
+	}
+    }
+# endif
+
+    /* May go to debug mode.  If this happens and the ">quit" debug command is
+     * used, throw an interrupt exception and skip the next command. */
+    dbg_check_breakpoint(&ea);
+    if (!ea.skip && got_int)
+    {
+	ea.skip = TRUE;
+	(void)do_intthrow(cstack);
+    }
+#endif
 
 /*
  * 4. parse a range specifier of the form: addr [,addr] [;addr] ..
@@ -1830,7 +1845,7 @@ do_one_cmd(
     }
 
     ea.cmd = cmd;
-    if (parse_cmd_address(&ea, &errormsg) == FAIL)
+    if (parse_cmd_address(&ea, &errormsg, FALSE) == FAIL)
 	goto doend;
 
 /*
@@ -2016,12 +2031,15 @@ do_one_cmd(
 	    errormsg = (char_u *)_(get_text_locked_msg());
 	    goto doend;
 	}
+
 	/* Disallow editing another buffer when "curbuf_lock" is set.
-	 * Do allow ":edit" (check for argument later).
-	 * Do allow ":checktime" (it's postponed). */
+	 * Do allow ":checktime" (it is postponed).
+	 * Do allow ":edit" (check for an argument later).
+	 * Do allow ":file" with no arguments (check for an argument later). */
 	if (!(ea.argt & CMDWIN)
-		&& ea.cmdidx != CMD_edit
 		&& ea.cmdidx != CMD_checktime
+		&& ea.cmdidx != CMD_edit
+		&& ea.cmdidx != CMD_file
 		&& !IS_USER_CMDIDX(ea.cmdidx)
 		&& curbuf_locked())
 	    goto doend;
@@ -2106,6 +2124,10 @@ do_one_cmd(
 	ea.arg = p;
     else
 	ea.arg = skipwhite(p);
+
+    // ":file" cannot be run with an argument when "curbuf_lock" is set
+    if (ea.cmdidx == CMD_file && *ea.arg != NUL && curbuf_locked())
+	goto doend;
 
     /*
      * Check for "++opt=val" argument.
@@ -2806,7 +2828,7 @@ parse_command_modifiers(exarg_T *eap, char_u **errormsg, int skip_only)
 	    case 't':	if (checkforcmd(&p, "tab", 3))
 			{
 			    long tabnr = get_address(eap, &eap->cmd, ADDR_TABS,
-							    eap->skip, FALSE, 1);
+					       eap->skip, skip_only, FALSE, 1);
 			    if (tabnr == MAXLNUM)
 				cmdmod.tab = tabpage_index(curtab) + 1;
 			    else
@@ -2881,10 +2903,11 @@ free_cmdmod(void)
 
 /*
  * Parse the address range, if any, in "eap".
+ * May set the last search pattern, unless "silent" is TRUE.
  * Return FAIL and set "errormsg" or return OK.
  */
     int
-parse_cmd_address(exarg_T *eap, char_u **errormsg)
+parse_cmd_address(exarg_T *eap, char_u **errormsg, int silent)
 {
     int		address_count = 1;
     linenr_T	lnum;
@@ -2924,7 +2947,7 @@ parse_cmd_address(exarg_T *eap, char_u **errormsg)
 #endif
 	}
 	eap->cmd = skipwhite(eap->cmd);
-	lnum = get_address(eap, &eap->cmd, eap->addr_type, eap->skip,
+	lnum = get_address(eap, &eap->cmd, eap->addr_type, eap->skip, silent,
 					eap->addr_count == 0, address_count++);
 	if (eap->cmd == NULL)	// error detected
 	    return FAIL;
@@ -3309,7 +3332,8 @@ find_ucmd(
 		    if (xp != NULL)
 		    {
 			xp->xp_arg = uc->uc_compl_arg;
-			xp->xp_scriptID = uc->uc_scriptID;
+			xp->xp_script_ctx = uc->uc_script_ctx;
+			xp->xp_script_ctx.sc_lnum += sourcing_lnum;
 		    }
 #  endif
 # endif
@@ -4406,10 +4430,11 @@ skip_range(
 }
 
 /*
- * get a single EX address
+ * Get a single EX address.
  *
  * Set ptr to the next character after the part that was interpreted.
  * Set ptr to NULL when an error is encountered.
+ * This may set the last used search pattern.
  *
  * Return MAXLNUM when no Ex address was found.
  */
@@ -4417,10 +4442,11 @@ skip_range(
 get_address(
     exarg_T	*eap UNUSED,
     char_u	**ptr,
-    int		addr_type,  /* flag: one of ADDR_LINES, ... */
-    int		skip,	    /* only skip the address, don't use it */
-    int		to_other_file,  /* flag: may jump to other file */
-    int		address_count UNUSED) /* 1 for first address, >1 after comma */
+    int		addr_type,	// flag: one of ADDR_LINES, ...
+    int		skip,		// only skip the address, don't use it
+    int		silent,		// no errors or side effects
+    int		to_other_file,  // flag: may jump to other file
+    int		address_count UNUSED) // 1 for first address, >1 after comma
 {
     int		c;
     int		i;
@@ -4566,28 +4592,28 @@ get_address(
 		}
 		else
 		{
-		    pos = curwin->w_cursor; /* save curwin->w_cursor */
-		    /*
-		     * When '/' or '?' follows another address, start
-		     * from there.
-		     */
+		    int flags;
+
+		    pos = curwin->w_cursor; // save curwin->w_cursor
+
+		    // When '/' or '?' follows another address, start from
+		    // there.
 		    if (lnum != MAXLNUM)
 			curwin->w_cursor.lnum = lnum;
-		    /*
-		     * Start a forward search at the end of the line (unless
-		     * before the first line).
-		     * Start a backward search at the start of the line.
-		     * This makes sure we never match in the current
-		     * line, and can match anywhere in the
-		     * next/previous line.
-		     */
+
+		    // Start a forward search at the end of the line (unless
+		    // before the first line).
+		    // Start a backward search at the start of the line.
+		    // This makes sure we never match in the current
+		    // line, and can match anywhere in the
+		    // next/previous line.
 		    if (c == '/' && curwin->w_cursor.lnum > 0)
 			curwin->w_cursor.col = MAXCOL;
 		    else
 			curwin->w_cursor.col = 0;
 		    searchcmdlen = 0;
-		    if (!do_search(NULL, c, cmd, 1L,
-					  SEARCH_HIS | SEARCH_MSG, NULL, NULL))
+		    flags = silent ? 0 : SEARCH_HIS | SEARCH_MSG;
+		    if (!do_search(NULL, c, cmd, 1L, flags, NULL, NULL))
 		    {
 			curwin->w_cursor = pos;
 			cmd = NULL;
@@ -4876,8 +4902,6 @@ correct_range(exarg_T *eap)
 }
 
 #ifdef FEAT_QUICKFIX
-static char_u	*skip_grep_pat(exarg_T *eap);
-
 /*
  * For a ":vimgrep" or ":vimgrepadd" command return a pointer past the
  * pattern.  Otherwise return eap->arg.
@@ -5749,22 +5773,16 @@ check_more(
 	    {
 		char_u	buff[DIALOG_MSG_SIZE];
 
-		if (n == 1)
-		    vim_strncpy(buff,
-			    (char_u *)_("1 more file to edit.  Quit anyway?"),
-							 DIALOG_MSG_SIZE - 1);
-		else
-		    vim_snprintf((char *)buff, DIALOG_MSG_SIZE,
-			      _("%d more files to edit.  Quit anyway?"), n);
+		vim_snprintf((char *)buff, DIALOG_MSG_SIZE,
+			NGETTEXT("%d more file to edit.  Quit anyway?",
+			    "%d more files to edit.  Quit anyway?", n), n);
 		if (vim_dialog_yesno(VIM_QUESTION, NULL, buff, 1) == VIM_YES)
 		    return OK;
 		return FAIL;
 	    }
 #endif
-	    if (n == 1)
-		EMSG(_("E173: 1 more file to edit"));
-	    else
-		EMSGN(_("E173: %ld more files to edit"), n);
+	    EMSGN(NGETTEXT("E173: %ld more file to edit",
+			"E173: %ld more files to edit", n), n);
 	    quitmore = 2;	    /* next try to quit is allowed */
 	}
 	return FAIL;
@@ -5790,12 +5808,6 @@ get_command_name(expand_T *xp UNUSED, int idx)
 #endif
 
 #if defined(FEAT_USR_CMDS) || defined(PROTO)
-static int	uc_add_command(char_u *name, size_t name_len, char_u *rep, long argt, long def, int flags, int compl, char_u *compl_arg, int addr_type, int force);
-static void	uc_list(char_u *name, size_t name_len);
-static int	uc_scan_attr(char_u *attr, size_t len, long *argt, long *def, int *flags, int *compl, char_u **compl_arg, int* attr_type_arg);
-static char_u	*uc_split_args(char_u *arg, size_t *lenp);
-static size_t	uc_check_code(char_u *code, size_t len, char_u *buf, ucmd_T *cmd, exarg_T *eap, char_u **split_buf, size_t *split_len);
-
     static int
 uc_add_command(
     char_u	*name,
@@ -5894,7 +5906,8 @@ uc_add_command(
     cmd->uc_def = def;
     cmd->uc_compl = compl;
 #ifdef FEAT_EVAL
-    cmd->uc_scriptID = current_SID;
+    cmd->uc_script_ctx = current_sctx;
+    cmd->uc_script_ctx.sc_lnum += sourcing_lnum;
 # ifdef FEAT_CMDL_COMPL
     cmd->uc_compl_arg = compl_arg;
 # endif
@@ -6115,7 +6128,7 @@ uc_list(char_u *name, size_t name_len)
 	    msg_outtrans_special(cmd->uc_rep, FALSE);
 #ifdef FEAT_EVAL
 	    if (p_verbose > 0)
-		last_set_msg(cmd->uc_scriptID);
+		last_set_msg(cmd->uc_script_ctx);
 #endif
 	    out_flush();
 	    ui_breakcheck();
@@ -6880,7 +6893,7 @@ do_ucmd(exarg_T *eap)
     char_u	*split_buf = NULL;
     ucmd_T	*cmd;
 #ifdef FEAT_EVAL
-    scid_T	save_current_SID = current_SID;
+    sctx_T	save_current_sctx = current_sctx;
 #endif
 
     if (eap->cmdidx == CMD_USER)
@@ -6981,12 +6994,12 @@ do_ucmd(exarg_T *eap)
     }
 
 #ifdef FEAT_EVAL
-    current_SID = cmd->uc_scriptID;
+    current_sctx.sc_sid = cmd->uc_script_ctx.sc_sid;
 #endif
     (void)do_cmdline(buf, eap->getline, eap->cookie,
 				   DOCMD_VERBOSE|DOCMD_NOWAIT|DOCMD_KEYTYPED);
 #ifdef FEAT_EVAL
-    current_SID = save_current_SID;
+    current_sctx = save_current_sctx;
 #endif
     vim_free(buf);
     vim_free(split_buf);
@@ -9243,7 +9256,7 @@ do_sleep(long msec)
     long	wait_now;
 
     cursor_on();
-    out_flush();
+    out_flush_cursor(FALSE, FALSE);
     for (done = 0; !got_int && done < msec; done += wait_now)
     {
 	wait_now = msec - done > 1000L ? 1000L : msec - done;
@@ -9501,7 +9514,7 @@ ex_copymove(exarg_T *eap)
 {
     long	n;
 
-    n = get_address(eap, &eap->arg, eap->addr_type, FALSE, FALSE, 1);
+    n = get_address(eap, &eap->arg, eap->addr_type, FALSE, FALSE, FALSE, 1);
     if (eap->arg == NULL)	    /* error detected */
     {
 	eap->nextcmd = NULL;
@@ -10458,21 +10471,24 @@ exec_normal_cmd(char_u *cmd, int remap, int silent)
 {
     /* Stuff the argument into the typeahead buffer. */
     ins_typebuf(cmd, remap, 0, TRUE, silent);
-    exec_normal(FALSE, FALSE);
+    exec_normal(FALSE, FALSE, FALSE);
 }
 
 /*
  * Execute normal_cmd() until there is no typeahead left.
+ * When "use_vpeekc" is TRUE use vpeekc() to check for available chars.
  */
     void
-exec_normal(int was_typed, int may_use_terminal_loop UNUSED)
+exec_normal(int was_typed, int use_vpeekc, int may_use_terminal_loop UNUSED)
 {
     oparg_T	oa;
 
     clear_oparg(&oa);
     finish_op = FALSE;
-    while ((!stuff_empty() || ((was_typed || !typebuf_typed())
-		    && typebuf.tb_len > 0)) && !got_int)
+    while ((!stuff_empty()
+		|| ((was_typed || !typebuf_typed()) && typebuf.tb_len > 0)
+		|| (use_vpeekc && vpeekc() != NUL))
+	    && !got_int)
     {
 	update_topline_cursor();
 #ifdef FEAT_TERMINAL
@@ -10710,14 +10726,16 @@ find_cmdline_var(char_u *src, int *usedlen)
 		    "<slnum>",		/* ":so" file line number */
 #define SPEC_SLNUM  (SPEC_SFILE + 1)
 		    "<afile>",		/* autocommand file name */
-#define SPEC_AFILE (SPEC_SLNUM + 1)
+#define SPEC_AFILE  (SPEC_SLNUM + 1)
 		    "<abuf>",		/* autocommand buffer number */
-#define SPEC_ABUF  (SPEC_AFILE + 1)
+#define SPEC_ABUF   (SPEC_AFILE + 1)
 		    "<amatch>",		/* autocommand match name */
 #define SPEC_AMATCH (SPEC_ABUF + 1)
+		    "<sflnum>",		/* script file line number */
+#define SPEC_SFLNUM  (SPEC_AMATCH + 1)
 #ifdef FEAT_CLIENTSERVER
 		    "<client>"
-# define SPEC_CLIENT (SPEC_AMATCH + 1)
+# define SPEC_CLIENT (SPEC_SFLNUM + 1)
 #endif
     };
 
@@ -10973,6 +10991,7 @@ eval_vars(
 		    return NULL;
 		}
 		break;
+
 	case SPEC_SLNUM:	/* line in file for ":so" command */
 		if (sourcing_name == NULL || sourcing_lnum == 0)
 		{
@@ -10982,13 +11001,28 @@ eval_vars(
 		sprintf((char *)strbuf, "%ld", (long)sourcing_lnum);
 		result = strbuf;
 		break;
-#if defined(FEAT_CLIENTSERVER)
+
+#ifdef FEAT_EVAL
+	case SPEC_SFLNUM:	/* line in script file */
+		if (current_sctx.sc_lnum + sourcing_lnum == 0)
+		{
+		    *errormsg = (char_u *)_("E961: no line number to use for \"<sflnum>\"");
+		    return NULL;
+		}
+		sprintf((char *)strbuf, "%ld",
+				 (long)(current_sctx.sc_lnum + sourcing_lnum));
+		result = strbuf;
+		break;
+#endif
+
+#ifdef FEAT_CLIENTSERVER
 	case SPEC_CLIENT:	/* Source of last submitted input */
 		sprintf((char *)strbuf, PRINTF_HEX_LONG_U,
 							(long_u)clientWindow);
 		result = strbuf;
 		break;
 #endif
+
 	default:
 		result = (char_u *)""; /* avoid gcc warning */
 		break;
@@ -11689,6 +11723,18 @@ ses_do_win(win_T *wp)
     return TRUE;
 }
 
+    static int
+put_view_curpos(FILE *fd, win_T *wp, char *spaces)
+{
+    int r;
+
+    if (wp->w_curswant == MAXCOL)
+	r = fprintf(fd, "%snormal! $", spaces);
+    else
+	r = fprintf(fd, "%snormal! 0%d|", spaces, wp->w_virtcol + 1);
+    return r < 0 || put_eol(fd) == FAIL ? FALSE : OK;
+}
+
 /*
  * Write commands to "fd" to restore the view of a window.
  * Caller must make sure 'scrolloff' is zero.
@@ -11880,17 +11926,12 @@ put_view(
 			    (long)wp->w_virtcol + 1) < 0
 			|| put_eol(fd) == FAIL
 			|| put_line(fd, "else") == FAIL
-			|| fprintf(fd, "  normal! 0%d|", wp->w_virtcol + 1) < 0
-			|| put_eol(fd) == FAIL
+			|| put_view_curpos(fd, wp, "  ") == FAIL
 			|| put_line(fd, "endif") == FAIL)
 		    return FAIL;
 	    }
-	    else
-	    {
-		if (fprintf(fd, "normal! 0%d|", wp->w_virtcol + 1) < 0
-			|| put_eol(fd) == FAIL)
-		    return FAIL;
-	    }
+	    else if (put_view_curpos(fd, wp, "") == FAIL)
+		return FAIL;
 	}
     }
 
@@ -12537,7 +12578,7 @@ ex_folddo(exarg_T *eap)
     int
 is_loclist_cmd(int cmdidx)
 {
-    if (cmdidx < 0 || cmdidx > CMD_SIZE)
+    if (cmdidx < 0 || cmdidx >= CMD_SIZE)
 	return FALSE;
     return cmdnames[cmdidx].cmd_name[0] == 'l';
 }

@@ -39,9 +39,6 @@ static void check_marks_read(void);
 #ifdef FEAT_CRYPT
 static char_u *check_for_cryptkey(char_u *cryptkey, char_u *ptr, long *sizep, off_T *filesizep, int newfile, char_u *fname, int *did_ask);
 #endif
-#ifdef UNIX
-static void set_file_time(char_u *fname, time_t atime, time_t mtime);
-#endif
 static int set_rw_fname(char_u *fname, char_u *sfname);
 static int msg_add_fileformat(int eol_type);
 static void msg_add_eol(void);
@@ -128,10 +125,6 @@ static int get_win_fio_flags(char_u *ptr);
 # ifdef MACOS_CONVERT
 static int get_mac_fio_flags(char_u *ptr);
 # endif
-#endif
-static int move_lines(buf_T *frombuf, buf_T *tobuf);
-#ifdef TEMPDIRNAMES
-static void vim_settempdir(char_u *tempdir);
 #endif
 static char *e_auchangedbuf = N_("E812: Autocommands changed buffer or buffer name");
 
@@ -2408,7 +2401,7 @@ failed:
     {
 	/* Use stderr for stdin, makes shell commands work. */
 	close(0);
-	ignored = dup(2);
+	vim_ignored = dup(2);
     }
 #endif
 
@@ -3751,7 +3744,7 @@ buf_write(
 		{
 # ifdef UNIX
 #  ifdef HAVE_FCHOWN
-		    ignored = fchown(fd, st_old.st_uid, st_old.st_gid);
+		    vim_ignored = fchown(fd, st_old.st_uid, st_old.st_gid);
 #  endif
 		    if (mch_stat((char *)IObuff, &st) < 0
 			    || st.st_uid != st_old.st_uid
@@ -4509,7 +4502,7 @@ restore_backup:
 #endif
 #ifdef HAVE_FTRUNCATE
 	    if (!append)
-		ignored = ftruncate(fd, (off_t)0);
+		vim_ignored = ftruncate(fd, (off_t)0);
 #endif
 
 #if defined(WIN3264)
@@ -4789,7 +4782,7 @@ restore_backup:
 		    || st.st_gid != st_old.st_gid)
 	    {
 		/* changing owner might not be possible */
-		ignored = fchown(fd, st_old.st_uid, -1);
+		vim_ignored = fchown(fd, st_old.st_uid, -1);
 		/* if changing group fails clear the group permissions */
 		if (fchown(fd, -1, st_old.st_gid) == -1 && perm > 0)
 		    perm &= ~070;
@@ -5349,16 +5342,11 @@ msg_add_lines(
 		"%ldL, %lldC", lnum, (long long)nchars);
     else
     {
-	if (lnum == 1)
-	    STRCPY(p, _("1 line, "));
-	else
-	    sprintf((char *)p, _("%ld lines, "), lnum);
+	sprintf((char *)p, NGETTEXT("%ld line, ", "%ld lines, ", lnum), lnum);
 	p += STRLEN(p);
-	if (nchars == 1)
-	    STRCPY(p, _("1 character"));
-	else
-	    vim_snprintf((char *)p, IOSIZE - (p - IObuff),
-		    _("%lld characters"), (long long)nchars);
+	vim_snprintf((char *)p, IOSIZE - (p - IObuff),
+		NGETTEXT("%lld character", "%lld characters", nchars),
+		(long long)nchars);
     }
 }
 
@@ -6487,9 +6475,9 @@ vim_fgets(char_u *buf, int size, FILE *fp)
 	{
 	    tbuf[FGETS_SIZE - 2] = NUL;
 #ifdef USE_CR
-	    ignoredp = fgets_cr((char *)tbuf, FGETS_SIZE, fp);
+	    vim_ignoredp = fgets_cr((char *)tbuf, FGETS_SIZE, fp);
 #else
-	    ignoredp = fgets((char *)tbuf, FGETS_SIZE, fp);
+	    vim_ignoredp = fgets((char *)tbuf, FGETS_SIZE, fp);
 #endif
 	} while (tbuf[FGETS_SIZE - 2] != NUL && tbuf[FGETS_SIZE - 2] != '\n');
     }
@@ -7705,7 +7693,7 @@ typedef struct AutoCmd
     char	    nested;		/* If autocommands nest here */
     char	    last;		/* last command in list */
 #ifdef FEAT_EVAL
-    scid_T	    scriptID;		/* script ID where defined */
+    sctx_T	    script_ctx;		/* script context where defined */
 #endif
     struct AutoCmd  *next;		/* Next AutoCmd in list */
 } AutoCmd;
@@ -7766,6 +7754,7 @@ static struct event_name
     {"CursorHoldI",	EVENT_CURSORHOLDI},
     {"CursorMoved",	EVENT_CURSORMOVED},
     {"CursorMovedI",	EVENT_CURSORMOVEDI},
+    {"DiffUpdated",	EVENT_DIFFUPDATED},
     {"DirChanged",	EVENT_DIRCHANGED},
     {"EncodingChanged",	EVENT_ENCODINGCHANGED},
     {"ExitPre",		EVENT_EXITPRE},
@@ -7888,16 +7877,7 @@ static int current_augroup = AUGROUP_DEFAULT;
 
 static int au_need_clean = FALSE;   /* need to delete marked patterns */
 
-static void show_autocmd(AutoPat *ap, event_T event);
-static void au_remove_pat(AutoPat *ap);
-static void au_remove_cmds(AutoPat *ap);
-static void au_cleanup(void);
-static int au_new_group(char_u *name);
-static void au_del_group(char_u *name);
-static event_T event_name2nr(char_u *start, char_u **end);
 static char_u *event_nr2name(event_T event);
-static char_u *find_end_event(char_u *arg, int have_group);
-static int event_ignored(event_T event);
 static int au_get_grouparg(char_u **argp);
 static int do_autocmd_event(event_T event, char_u *pat, int nested, char_u *cmd, int forceit, int group);
 static int apply_autocmds_group(event_T event, char_u *fname, char_u *fname_io, int force, int group, buf_T *buf, exarg_T *eap);
@@ -7967,7 +7947,7 @@ show_autocmd(AutoPat *ap, event_T event)
 	    msg_outtrans(ac->cmd);
 #ifdef FEAT_EVAL
 	    if (p_verbose > 0)
-		last_set_msg(ac->scriptID);
+		last_set_msg(ac->script_ctx);
 #endif
 	    if (got_int)
 		return;
@@ -8850,7 +8830,8 @@ do_autocmd_event(
 		return FAIL;
 	    ac->cmd = vim_strsave(cmd);
 #ifdef FEAT_EVAL
-	    ac->scriptID = current_SID;
+	    ac->script_ctx = current_sctx;
+	    ac->script_ctx.sc_lnum += sourcing_lnum;
 #endif
 	    if (ac->cmd == NULL)
 	    {
@@ -9417,7 +9398,7 @@ apply_autocmds_group(
     AutoPatCmd	patcmd;
     AutoPat	*ap;
 #ifdef FEAT_EVAL
-    scid_T	save_current_SID;
+    sctx_T	save_current_sctx;
     void	*save_funccalp;
     char_u	*save_cmdarg;
     long	save_cmdbang;
@@ -9626,7 +9607,7 @@ apply_autocmds_group(
     sourcing_lnum = 0;		/* no line number here */
 
 #ifdef FEAT_EVAL
-    save_current_SID = current_SID;
+    save_current_sctx = current_sctx;
 
 # ifdef FEAT_PROFILE
     if (do_profiling == PROF_YES)
@@ -9730,7 +9711,7 @@ apply_autocmds_group(
     autocmd_bufnr = save_autocmd_bufnr;
     autocmd_match = save_autocmd_match;
 #ifdef FEAT_EVAL
-    current_SID = save_current_SID;
+    current_sctx = save_current_sctx;
     restore_funccal(save_funccalp);
 # ifdef FEAT_PROFILE
     if (do_profiling == PROF_YES)
@@ -9954,7 +9935,7 @@ getnextac(int c UNUSED, void *cookie, int indent UNUSED)
     retval = vim_strsave(ac->cmd);
     autocmd_nested = ac->nested;
 #ifdef FEAT_EVAL
-    current_SID = ac->scriptID;
+    current_sctx = ac->script_ctx;
 #endif
     if (ac->last)
 	acp->nextcmd = NULL;
