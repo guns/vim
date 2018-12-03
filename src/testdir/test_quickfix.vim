@@ -558,6 +558,8 @@ func s:test_xhelpgrep(cchar)
 
   " Search for non existing help string
   call assert_fails('Xhelpgrep a1b2c3', 'E480:')
+  " Invalid regular expression
+  call assert_fails('Xhelpgrep \@<!', 'E480:')
 endfunc
 
 func Test_helpgrep()
@@ -2362,6 +2364,21 @@ func Test_vimgrep()
   call XvimgrepTests('l')
 endfunc
 
+" Test for incsearch highlighting of the :vimgrep pattern
+" This test used to cause "E315: ml_get: invalid lnum" errors.
+func Test_vimgrep_incsearch()
+  enew
+  set incsearch
+  call test_override("char_avail", 1)
+
+  call feedkeys(":2vimgrep assert test_quickfix.vim test_cdo.vim\<CR>", "ntx")
+  let l = getqflist()
+  call assert_equal(2, len(l))
+
+  call test_override("ALL", 0)
+  set noincsearch
+endfunc
+
 func XfreeTests(cchar)
   call s:setup_commands(a:cchar)
 
@@ -3218,7 +3235,28 @@ func Test_lexpr_crash()
   augroup QF_Test
     au!
   augroup END
+
   enew | only
+  augroup QF_Test
+    au!
+    au BufNew * call setloclist(0, [], 'f')
+  augroup END
+  lexpr 'x:1:x'
+  augroup QF_Test
+    au!
+  augroup END
+
+  enew | only
+  lexpr ''
+  lopen
+  augroup QF_Test
+    au!
+    au FileType * call setloclist(0, [], 'f')
+  augroup END
+  lexpr ''
+  augroup QF_Test
+    au!
+  augroup END
 endfunc
 
 " The following test used to crash Vim
@@ -3232,6 +3270,17 @@ func Test_lvimgrep_crash()
   augroup QF_Test
     au!
   augroup END
+
+  new | only
+  augroup QF_Test
+    au!
+    au BufEnter * call setloclist(0, [], 'r')
+  augroup END
+  call assert_fails('lvimgrep Test_lvimgrep_crash *', 'E926:')
+  augroup QF_Test
+    au!
+  augroup END
+
   enew | only
 endfunc
 
@@ -3314,6 +3363,37 @@ func Test_lhelpgrep_autocmd()
   call assert_equal('help', &filetype)
   call assert_equal(1, getloclist(0, {'nr' : '$'}).nr)
   au! QuickFixCmdPost
+
+  new | only
+  augroup QF_Test
+    au!
+    au BufEnter * call setqflist([], 'f')
+  augroup END
+  call assert_fails('helpgrep quickfix', 'E925:')
+  augroup QF_Test
+    au! BufEnter
+  augroup END
+
+  new | only
+  augroup QF_Test
+    au!
+    au BufEnter * call setqflist([], 'r')
+  augroup END
+  call assert_fails('helpgrep quickfix', 'E925:')
+  augroup QF_Test
+    au! BufEnter
+  augroup END
+
+  new | only
+  augroup QF_Test
+    au!
+    au BufEnter * call setloclist(0, [], 'r')
+  augroup END
+  call assert_fails('lhelpgrep quickfix', 'E926:')
+  augroup QF_Test
+    au! BufEnter
+  augroup END
+
   new | only
 endfunc
 
@@ -3637,4 +3717,50 @@ func Test_curswant()
   1cc
   call assert_equal(getcurpos()[4], virtcol('.'))
   cclose | helpclose
+endfunc
+
+" Test for opening a file from the quickfix window using CTRL-W <Enter>
+" doesn't leave an empty buffer around.
+func Test_splitview()
+  call s:create_test_file('Xtestfile1')
+  call s:create_test_file('Xtestfile2')
+  new | only
+  let last_bufnr = bufnr('Test_sv_1', 1)
+  let l = ['Xtestfile1:2:Line2', 'Xtestfile2:4:Line4']
+  cgetexpr l
+  copen
+  let numbufs = len(getbufinfo())
+  exe "normal \<C-W>\<CR>"
+  copen
+  exe "normal j\<C-W>\<CR>"
+  " Make sure new empty buffers are not created
+  call assert_equal(numbufs, len(getbufinfo()))
+  " Creating a new buffer should use the next available buffer number
+  call assert_equal(last_bufnr + 4, bufnr("Test_sv_2", 1))
+  bwipe Test_sv_1
+  bwipe Test_sv_2
+  new | only
+
+  " When split opening files from location list window, make sure that two
+  " windows doesn't refer to the same location list
+  lgetexpr l
+  let locid = getloclist(0, {'id' : 0}).id
+  lopen
+  exe "normal \<C-W>\<CR>"
+  call assert_notequal(locid, getloclist(0, {'id' : 0}).id)
+  call assert_equal(0, getloclist(0, {'winid' : 0}).winid)
+  new | only
+
+  " When split opening files from a helpgrep location list window, a new help
+  " window should be opend with a copy of the location list.
+  lhelpgrep window
+  let locid = getloclist(0, {'id' : 0}).id
+  lwindow
+  exe "normal j\<C-W>\<CR>"
+  call assert_notequal(locid, getloclist(0, {'id' : 0}).id)
+  call assert_equal(0, getloclist(0, {'winid' : 0}).winid)
+  new | only
+
+  call delete('Xtestfile1')
+  call delete('Xtestfile2')
 endfunc

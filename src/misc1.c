@@ -3825,7 +3825,7 @@ beep_flush(void)
 {
     if (emsg_silent == 0)
     {
-	flush_buffers(FALSE);
+	flush_buffers(FLUSH_MINIMAL);
 	vim_beep(BO_ERROR);
     }
 }
@@ -3905,6 +3905,8 @@ vim_beep(
  *  - do mch_dirname() to get the real name of that directory.
  *  This also works with mounts and links.
  *  Don't do this for MS-DOS, it will change the "current dir" for a drive.
+ * For Windows:
+ *  This code is duplicated in init_homedir() in dosinst.c.  Keep in sync!
  */
 static char_u	*homedir = NULL;
 

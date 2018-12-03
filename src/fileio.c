@@ -6187,7 +6187,8 @@ shorten_buf_fname(buf_T *buf, char_u *dirname, int force)
 		|| buf->b_sfname == NULL
 		|| mch_isFullName(buf->b_sfname)))
     {
-	VIM_CLEAR(buf->b_sfname);
+	if (buf->b_sfname != buf->b_ffname)
+	    VIM_CLEAR(buf->b_sfname);
 	p = shorten_fname(buf->b_ffname, dirname);
 	if (p != NULL)
 	{
@@ -8085,7 +8086,7 @@ aubuflocal_remove(buf_T *buf)
 
 /*
  * Add an autocmd group name.
- * Return it's ID.  Returns AUGROUP_ERROR (< 0) for error.
+ * Return its ID.  Returns AUGROUP_ERROR (< 0) for error.
  */
     static int
 au_new_group(char_u *name)
@@ -8152,7 +8153,7 @@ au_del_group(char_u *name)
 
 /*
  * Find the ID of an autocmd group name.
- * Return it's ID.  Returns AUGROUP_ERROR (< 0) for error.
+ * Return its ID.  Returns AUGROUP_ERROR (< 0) for error.
  */
     static int
 au_find_group(char_u *name)
@@ -9399,7 +9400,7 @@ apply_autocmds_group(
     AutoPat	*ap;
 #ifdef FEAT_EVAL
     sctx_T	save_current_sctx;
-    void	*save_funccalp;
+    funccal_entry_T funccal_entry;
     char_u	*save_cmdarg;
     long	save_cmdbang;
 #endif
@@ -9614,8 +9615,8 @@ apply_autocmds_group(
 	prof_child_enter(&wait_time); /* doesn't count for the caller itself */
 # endif
 
-    /* Don't use local function variables, if called from a function */
-    save_funccalp = save_funccal();
+    // Don't use local function variables, if called from a function.
+    save_funccal(&funccal_entry);
 #endif
 
     /*
@@ -9712,7 +9713,7 @@ apply_autocmds_group(
     autocmd_match = save_autocmd_match;
 #ifdef FEAT_EVAL
     current_sctx = save_current_sctx;
-    restore_funccal(save_funccalp);
+    restore_funccal();
 # ifdef FEAT_PROFILE
     if (do_profiling == PROF_YES)
 	prof_child_exit(&wait_time);

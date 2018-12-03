@@ -2998,6 +2998,7 @@ parse_cmd_address(exarg_T *eap, char_u **errormsg, int silent)
 			}
 			break;
 		    case ADDR_TABS_RELATIVE:
+		    case ADDR_OTHER:
 			*errormsg = (char_u *)_(e_invrange);
 			return FAIL;
 		    case ADDR_ARGUMENTS:
@@ -4283,6 +4284,7 @@ set_one_cmd_context(
 	case CMD_omenu:	    case CMD_onoremenu:	    case CMD_ounmenu:
 	case CMD_imenu:	    case CMD_inoremenu:	    case CMD_iunmenu:
 	case CMD_cmenu:	    case CMD_cnoremenu:	    case CMD_cunmenu:
+	case CMD_tlmenu:    case CMD_tlnoremenu:    case CMD_tlunmenu:
 	case CMD_tmenu:				    case CMD_tunmenu:
 	case CMD_popup:	    case CMD_tearoff:	    case CMD_emenu:
 	    return set_context_in_menu_cmd(xp, cmd, arg, forceit);
@@ -5939,6 +5941,7 @@ static struct
     {ADDR_BUFFERS, "buffers"},
     {ADDR_WINDOWS, "windows"},
     {ADDR_QUICKFIX, "quickfix"},
+    {ADDR_OTHER, "other"},
     {-1, NULL}
 };
 #endif

@@ -1592,6 +1592,15 @@ update_snapshot(term_T *term)
 	}
     }
 
+    // Add trailing empty lines.
+    for (pos.row = term->tl_scrollback.ga_len;
+	    pos.row < term->tl_scrollback_scrolled + term->tl_cursor_pos.row;
+	    ++pos.row)
+    {
+	if (add_empty_scrollback(term, &fill_attr, 0) == OK)
+	    add_scrollback_line_to_buffer(term, (char_u *)"", 0);
+    }
+
     term->tl_dirty_snapshot = FALSE;
 #ifdef FEAT_TIMERS
     term->tl_timer_set = FALSE;
@@ -1953,6 +1962,8 @@ term_get_cursor_shape(guicolor_T *fg, guicolor_T *bg)
 {
     term_T		 *term = in_terminal_loop;
     static cursorentry_T entry;
+    int			 id;
+    guicolor_T		term_fg, term_bg;
 
     vim_memset(&entry, 0, sizeof(entry));
     entry.shape = entry.mshape =
@@ -1966,9 +1977,24 @@ term_get_cursor_shape(guicolor_T *fg, guicolor_T *bg)
 	entry.blinkon = 400;
 	entry.blinkoff = 250;
     }
-    *fg = gui.back_pixel;
+
+    /* The "Terminal" highlight group overrules the defaults. */
+    id = syn_name2id((char_u *)"Terminal");
+    if (id != 0)
+    {
+	syn_id2colors(id, &term_fg, &term_bg);
+	*fg = term_bg;
+    }
+    else
+	*fg = gui.back_pixel;
+
     if (term->tl_cursor_color == NULL)
-	*bg = gui.norm_pixel;
+    {
+	if (id != 0)
+	    *bg = term_fg;
+	else
+	    *bg = gui.norm_pixel;
+    }
     else
 	*bg = color_name2handle(term->tl_cursor_color);
     entry.name = "n";
@@ -4077,7 +4103,12 @@ read_dump_file(FILE *fd, VTermPos *cursor_pos)
     {
 	if (c == EOF)
 	    break;
-	if (c == '\n')
+	if (c == '\r')
+	{
+	    // DOS line endings?  Ignore.
+	    c = fgetc(fd);
+	}
+	else if (c == '\n')
 	{
 	    /* End of a line: append it to the buffer. */
 	    if (ga_text.ga_data == NULL)

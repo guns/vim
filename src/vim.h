@@ -1270,7 +1270,7 @@ enum auto_event
     EVENT_BUFWRITECMD,		// write buffer using command
     EVENT_BUFWRITEPOST,		// after writing a buffer
     EVENT_BUFWRITEPRE,		// before writing a buffer
-    EVENT_CMDLINECHANGED,	// command line was modified*/
+    EVENT_CMDLINECHANGED,	// command line was modified
     EVENT_CMDLINEENTER,		// after entering the command line
     EVENT_CMDLINELEAVE,		// before leaving the command line
     EVENT_CMDUNDEFINED,		// command undefined
@@ -2107,6 +2107,13 @@ typedef enum {
     PASTE_EX,		/* ex mode line */
     PASTE_ONE_CHAR	/* return first character */
 } paste_mode_T;
+
+// Argument for flush_buffers().
+typedef enum {
+    FLUSH_MINIMAL,
+    FLUSH_TYPEAHEAD,	// flush current typebuf contents
+    FLUSH_INPUT		// flush typebuf and inchar() input
+} flush_buffers_T;
 
 #include "ex_cmds.h"	    /* Ex command defines */
 #include "spell.h"	    /* spell checking stuff */
