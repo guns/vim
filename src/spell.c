@@ -3320,7 +3320,7 @@ spell_suggest(int count)
 
     if (*curwin->w_s->b_p_spl == NUL)
     {
-	EMSG(_("E756: Spell checking is not possible"));
+	emsg(_("E756: Spell checking is not possible"));
 	return;
     }
 
