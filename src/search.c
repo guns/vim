@@ -156,9 +156,9 @@ search_regcomp(
 	if (spats[i].pat == NULL)	/* pattern was never defined */
 	{
 	    if (pat_use == RE_SUBST)
-		EMSG(_(e_nopresub));
+		emsg(_(e_nopresub));
 	    else
-		EMSG(_(e_noprevre));
+		emsg(_(e_noprevre));
 	    rc_did_emsg = TRUE;
 	    return FAIL;
 	}
@@ -369,7 +369,7 @@ static int	    saved_no_hlsearch = 0;
 save_last_search_pattern(void)
 {
     if (did_save_last_search_spat != 0)
-	IEMSG("did_save_last_search_spat is not zero");
+	iemsg("did_save_last_search_spat is not zero");
     else
 	++did_save_last_search_spat;
 
@@ -385,7 +385,7 @@ restore_last_search_pattern(void)
 {
     if (did_save_last_search_spat != 1)
     {
-	IEMSG("did_save_last_search_spat is not one");
+	iemsg("did_save_last_search_spat is not one");
 	return;
     }
     --did_save_last_search_spat;
@@ -610,8 +610,8 @@ last_pat_prog(regmmatch_T *regmatch)
 
 /*
  * Lowest level search function.
- * Search for 'count'th occurrence of pattern 'pat' in direction 'dir'.
- * Start at position 'pos' and return the found position in 'pos'.
+ * Search for 'count'th occurrence of pattern "pat" in direction "dir".
+ * Start at position "pos" and return the found position in "pos".
  *
  * if (options & SEARCH_MSG) == 0 don't give any messages
  * if (options & SEARCH_MSG) == SEARCH_NFMSG don't give 'notfound' messages
@@ -634,6 +634,7 @@ searchit(
 				   buffer without a window! */
     buf_T	*buf,
     pos_T	*pos,
+    pos_T	*end_pos,	// set to end of the match, unless NULL
     int		dir,
     char_u	*pat,
     long	count,
@@ -669,7 +670,7 @@ searchit(
 		   (options & (SEARCH_HIS + SEARCH_KEEP)), &regmatch) == FAIL)
     {
 	if ((options & SEARCH_MSG) && !rc_did_emsg)
-	    EMSG2(_("E383: Invalid search string: %s"), mr_pattern);
+	    semsg(_("E383: Invalid search string: %s"), mr_pattern);
 	return FAIL;
     }
 
@@ -1035,14 +1036,26 @@ searchit(
 			    }
 #endif
 			}
+			if (end_pos != NULL)
+			{
+			    end_pos->lnum = lnum + matchpos.lnum;
+			    end_pos->col = matchpos.col;
+			}
 		    }
 		    else
 		    {
 			pos->lnum = lnum + matchpos.lnum;
 			pos->col = matchpos.col;
+			if (end_pos != NULL)
+			{
+			    end_pos->lnum = lnum + endpos.lnum;
+			    end_pos->col = endpos.col;
+			}
 		    }
 #ifdef FEAT_VIRTUALEDIT
 		    pos->coladd = 0;
+		    if (end_pos != NULL)
+			end_pos->coladd = 0;
 #endif
 		    found = 1;
 		    first_match = FALSE;
@@ -1123,16 +1136,16 @@ searchit(
     if (!found)		    /* did not find it */
     {
 	if (got_int)
-	    EMSG(_(e_interr));
+	    emsg(_(e_interr));
 	else if ((options & SEARCH_MSG) == SEARCH_MSG)
 	{
 	    if (p_ws)
-		EMSG2(_(e_patnotf2), mr_pattern);
+		semsg(_(e_patnotf2), mr_pattern);
 	    else if (lnum == 0)
-		EMSG2(_("E384: search hit TOP without match for: %s"),
+		semsg(_("E384: search hit TOP without match for: %s"),
 								  mr_pattern);
 	    else
-		EMSG2(_("E385: search hit BOTTOM without match for: %s"),
+		semsg(_("E385: search hit BOTTOM without match for: %s"),
 								  mr_pattern);
 	}
 	return FAIL;
@@ -1311,7 +1324,7 @@ do_search(
 		searchstr = spats[RE_SUBST].pat;
 		if (searchstr == NULL)
 		{
-		    EMSG(_(e_noprevre));
+		    emsg(_(e_noprevre));
 		    retval = 0;
 		    goto end_do_search;
 		}
@@ -1496,7 +1509,7 @@ do_search(
 	     lrFswap(searchstr,0);
 #endif
 
-	c = searchit(curwin, curbuf, &pos, dirc == '/' ? FORWARD : BACKWARD,
+	c = searchit(curwin, curbuf, &pos, NULL, dirc == '/' ? FORWARD : BACKWARD,
 		searchstr, count, spats[0].off.end + (options &
 		       (SEARCH_KEEP + SEARCH_PEEK + SEARCH_HIS
 			+ SEARCH_MSG + SEARCH_START
@@ -1568,7 +1581,7 @@ do_search(
 	if (dirc != '?' && dirc != '/')
 	{
 	    retval = 0;
-	    EMSG(_("E386: Expected '?' or '/'  after ';'"));
+	    emsg(_("E386: Expected '?' or '/'  after ';'"));
 	    goto end_do_search;
 	}
 	++pat;
@@ -4665,20 +4678,19 @@ static int is_one_char(char_u *pattern, int move, pos_T *cur, int direction);
     int
 current_search(
     long	count,
-    int		forward)	/* move forward or backwards */
+    int		forward)	// TRUE for forward, FALSE for backward
 {
-    pos_T	start_pos;	/* position before the pattern */
-    pos_T	orig_pos;	/* position of the cursor at beginning */
-    pos_T	first_match;	/* position of first match */
-    pos_T	pos;		/* position after the pattern */
+    pos_T	start_pos;	// start position of the pattern match
+    pos_T	end_pos;	// end position of the pattern match
+    pos_T	orig_pos;	// position of the cursor at beginning
+    pos_T	pos;		// position after the pattern
     int		i;
     int		dir;
-    int		result;		/* result of various function calls */
+    int		result;		// result of various function calls
     char_u	old_p_ws = p_ws;
     int		flags = 0;
     pos_T	save_VIsual = VIsual;
     int		one_char;
-    int		direction = forward ? FORWARD : BACKWARD;
 
     /* wrapping should not occur */
     p_ws = FALSE;
@@ -4730,8 +4742,10 @@ current_search(
 	flags = 0;
 	if (!dir && !one_char)
 	    flags = SEARCH_END;
+	end_pos = pos;
 
-	result = searchit(curwin, curbuf, &pos, (dir ? FORWARD : BACKWARD),
+	result = searchit(curwin, curbuf, &pos, &end_pos,
+		(dir ? FORWARD : BACKWARD),
 		spats[last_idx].pat, (long) (i ? count : 1),
 		SEARCH_KEEP | flags, RE_SEARCH, 0, NULL, NULL);
 
@@ -4739,7 +4753,7 @@ current_search(
 	 * beginning of the file (cursor might be on the search match)
 	 * except when Visual mode is active, so that extending the visual
 	 * selection works. */
-	if (!result && i) /* not found, abort */
+	if (i == 1 && !result) /* not found, abort */
 	{
 	    curwin->w_cursor = orig_pos;
 	    if (VIsual_active)
@@ -4747,7 +4761,7 @@ current_search(
 	    p_ws = old_p_ws;
 	    return FAIL;
 	}
-	else if (!i && !result)
+	else if (i == 0 && !result)
 	{
 	    if (forward)
 	    {
@@ -4763,48 +4777,19 @@ current_search(
 				ml_get(curwin->w_buffer->b_ml.ml_line_count));
 	    }
 	}
-	if (i == 0)
-	    first_match = pos;
 	p_ws = old_p_ws;
     }
 
     start_pos = pos;
-    flags = forward ? SEARCH_END : SEARCH_START;
-
-    /* Check again from the current cursor position,
-     * since the next match might actually by only one char wide */
-    one_char = is_one_char(spats[last_idx].pat, FALSE, &pos, direction);
-    if (one_char < 0)
-	/* search failed, abort */
-	return FAIL;
-
-    /* move to match, except for zero-width matches, in which case, we are
-     * already on the next match */
-    if (!one_char)
-    {
-	p_ws = FALSE;
-	for (i = 0; i < 2; i++)
-	{
-	    result = searchit(curwin, curbuf, &pos, direction,
-		    spats[last_idx].pat, 0L, flags | SEARCH_KEEP, RE_SEARCH, 0,
-								   NULL, NULL);
-	    /* Search successfull, break out from the loop */
-	    if (result)
-		break;
-	    /* search failed, try again from the last search position match */
-	    pos = first_match;
-	}
-    }
-
     p_ws = old_p_ws;
-    /* not found */
-    if (!result)
-	return FAIL;
 
     if (!VIsual_active)
 	VIsual = start_pos;
 
-    curwin->w_cursor = pos;
+    // put cursor on last character of match
+    curwin->w_cursor = end_pos;
+    if (LT_POS(VIsual, end_pos))
+	dec_cursor();
     VIsual_active = TRUE;
     VIsual_mode = 'v';
 
@@ -4880,7 +4865,7 @@ is_one_char(char_u *pattern, int move, pos_T *cur, int direction)
 	flag = SEARCH_START;
     }
 
-    if (searchit(curwin, curbuf, &pos, direction, pattern, 1,
+    if (searchit(curwin, curbuf, &pos, NULL, direction, pattern, 1,
 			 SEARCH_KEEP + flag, RE_SEARCH, 0, NULL, NULL) != FAIL)
     {
 	/* Zero-width pattern should match somewhere, then we can check if
@@ -5234,7 +5219,7 @@ find_pattern_in_path(
 			 if (p_verbose >= 5)
 		    {
 			verbose_enter();
-			smsg((char_u *)_("Searching included file %s"),
+			smsg(_("Searching included file %s"),
 							   (char *)new_fname);
 			verbose_leave();
 		    }
@@ -5457,7 +5442,7 @@ search_line:
 						      && g_do_tagpreview == 0
 #endif
 						      )
-		    EMSG(_("E387: Match is on current line"));
+		    emsg(_("E387: Match is on current line"));
 		else if (action == ACTION_SHOW)
 		{
 		    show_pat_in_path(line, type, did_show, action,
@@ -5624,11 +5609,11 @@ exit_matched:
 #else
 	if (got_int)
 #endif
-	    EMSG(_(e_interr));
+	    emsg(_(e_interr));
 	else if (type == FIND_DEFINE)
-	    EMSG(_("E388: Couldn't find definition"));
+	    emsg(_("E388: Couldn't find definition"));
 	else
-	    EMSG(_("E389: Couldn't find pattern"));
+	    emsg(_("E389: Couldn't find pattern"));
     }
     if (action == ACTION_SHOW || action == ACTION_SHOW_ALL)
 	msg_end();

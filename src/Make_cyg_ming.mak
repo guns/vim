@@ -65,9 +65,6 @@ CROSS=no
 ICONV=yes
 GETTEXT=yes
 
-# Set to yes to include multibyte support.
-MBYTE=yes
-
 # Set to yes to include IME support.
 IME=yes
 DYNAMIC_IME=yes
@@ -699,6 +696,7 @@ CUIOBJ = $(OUTDIR)/iscygpty.o
 OBJ = \
 	$(OUTDIR)/arabic.o \
 	$(OUTDIR)/beval.o \
+	$(OUTDIR)/blob.o \
 	$(OUTDIR)/blowfish.o \
 	$(OUTDIR)/buffer.o \
 	$(OUTDIR)/charset.o \
@@ -746,11 +744,13 @@ OBJ = \
 	$(OUTDIR)/screen.o \
 	$(OUTDIR)/search.o \
 	$(OUTDIR)/sha256.o \
+	$(OUTDIR)/sign.o \
 	$(OUTDIR)/spell.o \
 	$(OUTDIR)/spellfile.o \
 	$(OUTDIR)/syntax.o \
 	$(OUTDIR)/tag.o \
 	$(OUTDIR)/term.o \
+	$(OUTDIR)/textprop.o \
 	$(OUTDIR)/ui.o \
 	$(OUTDIR)/undo.o \
 	$(OUTDIR)/userfunc.o \
@@ -909,10 +909,6 @@ OBJ += $(OUTDIR)/if_ole.o
 USE_STDCPLUS = yes
 endif
 
-ifeq (yes, $(MBYTE))
-DEFINES += -DFEAT_MBYTE
-endif
-
 ifeq (yes, $(IME))
 DEFINES += -DFEAT_MBYTE_IME
 ifeq (yes, $(DYNAMIC_IME))
@@ -982,11 +978,7 @@ GvimExt/gvimext.dll: GvimExt/gvimext.cpp GvimExt/gvimext.rc GvimExt/gvimext.h
 	$(MAKE) -C GvimExt -f Make_ming.mak CROSS=$(CROSS) CROSS_COMPILE=$(CROSS_COMPILE) CXX='$(CXX)' STATIC_STDCPLUS=$(STATIC_STDCPLUS)
 
 tags: notags
-	$(CTAGS) *.c *.cpp *.h
-ifdef PERL
-	$(CTAGS) --append=yes auto$(DIRSLASH)if_perl.c
-endif
-
+	$(CTAGS) $(TAGS_FILES)
 
 notags:
 	-$(DEL) tags
@@ -1089,6 +1081,9 @@ $(OUTDIR)/regexp.o:	regexp.c regexp_nfa.c $(INCL)
 
 $(OUTDIR)/terminal.o:	terminal.c $(INCL) $(TERM_DEPS)
 	$(CC) -c $(CFLAGS) terminal.c -o $(OUTDIR)/terminal.o
+
+$(OUTDIR)/textprop.o:	textprop.c $(INCL)
+	$(CC) -c $(CFLAGS) textprop.c -o $(OUTDIR)/textprop.o
 
 
 CCCTERM = $(CC) -c $(CFLAGS) -Ilibvterm/include -DINLINE="" \

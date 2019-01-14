@@ -456,7 +456,7 @@ EX(CMD_diffthis,	"diffthis",	ex_diffthis,
 			TRLBAR,
 			ADDR_LINES),
 EX(CMD_digraphs,	"digraphs",	ex_digraphs,
-			EXTRA|TRLBAR|CMDWIN,
+			BANG|EXTRA|TRLBAR|CMDWIN,
 			ADDR_LINES),
 EX(CMD_djump,		"djump",	ex_findpat,
 			BANG|RANGE|DFLALL|WHOLEFOLD|EXTRA,
@@ -1175,6 +1175,9 @@ EX(CMD_redraw,		"redraw",	ex_redraw,
 EX(CMD_redrawstatus,	"redrawstatus",	ex_redrawstatus,
 			BANG|TRLBAR|CMDWIN,
 			ADDR_LINES),
+EX(CMD_redrawtabline,	"redrawtabline", ex_redrawtabline,
+			TRLBAR|CMDWIN,
+			ADDR_LINES),
 EX(CMD_registers,	"registers",	ex_display,
 			EXTRA|NOTRLCOM|TRLBAR|CMDWIN,
 			ADDR_LINES),
@@ -1796,7 +1799,7 @@ struct exarg
 #ifdef FEAT_USR_CMDS
     int		useridx;	/* user command index */
 #endif
-    char_u	*errmsg;	/* returned error message */
+    char	*errmsg;	/* returned error message */
     char_u	*(*getline)(int, void *, int);
     void	*cookie;	/* argument for getline() */
 #ifdef FEAT_EVAL

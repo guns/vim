@@ -327,7 +327,7 @@ mch_chdir(char *path)
     if (p_verbose >= 5)
     {
 	verbose_enter();
-	smsg((char_u *)"chdir(%s)", path);
+	smsg("chdir(%s)", path);
 	verbose_leave();
     }
 # ifdef VMS
@@ -980,19 +980,31 @@ sig_alarm SIGDEFARG(sigarg)
 }
 #endif
 
-#if (defined(HAVE_SETJMP_H) \
-	&& ((defined(FEAT_X11) && defined(FEAT_XCLIPBOARD)) \
-	    || defined(FEAT_LIBCALL))) \
-    || defined(PROTO)
+#if defined(HAVE_SETJMP_H) || defined(PROTO)
+// argument to SETJMP()
+static JMP_BUF lc_jump_env;
+
+# ifdef SIGHASARG
+// Caught signal number, 0 when no was signal caught; used for mch_libcall().
+// Volatile because it is used in signal handlers.
+static volatile sig_atomic_t lc_signal;
+# endif
+
+// TRUE when lc_jump_env is valid.
+// Volatile because it is used in signal handler deathtrap().
+static volatile sig_atomic_t lc_active INIT(= FALSE);
+
 /*
  * A simplistic version of setjmp() that only allows one level of using.
+ * Used to protect areas where we could crash.
  * Don't call twice before calling mch_endjmp()!.
+ *
  * Usage:
  *	mch_startjmp();
  *	if (SETJMP(lc_jump_env) != 0)
  *	{
  *	    mch_didjmp();
- *	    EMSG("crash!");
+ *	    emsg("crash!");
  *	}
  *	else
  *	{
@@ -1023,8 +1035,8 @@ mch_endjmp(void)
 mch_didjmp(void)
 {
 # if defined(HAVE_SIGALTSTACK) || defined(HAVE_SIGSTACK)
-    /* On FreeBSD the signal stack has to be reset after using siglongjmp(),
-     * otherwise catching the signal only works once. */
+    // On FreeBSD the signal stack has to be reset after using siglongjmp(),
+    // otherwise catching the signal only works once.
     init_signal_stack();
 # endif
 }
@@ -1620,7 +1632,7 @@ mch_input_isatty(void)
     static void
 xopen_message(long elapsed_msec)
 {
-    smsg((char_u *)_("Opening the X display took %ld msec"), elapsed_msec);
+    smsg(_("Opening the X display took %ld msec"), elapsed_msec);
 }
 # endif
 #endif
@@ -1659,6 +1671,38 @@ x_error_check(Display *dpy UNUSED, XErrorEvent *error_event UNUSED)
     return 0;
 }
 
+/*
+ * Return TRUE when connection to the X server is desired.
+ */
+    static int
+x_connect_to_server(void)
+{
+    // No point in connecting if we are exiting or dying.
+    if (exiting || v_dying)
+	return FALSE;
+
+#if defined(FEAT_CLIENTSERVER)
+    if (x_force_connect)
+	return TRUE;
+#endif
+    if (x_no_connect)
+	return FALSE;
+
+    // Check for a match with "exclude:" from 'clipboard'.
+    if (clip_exclude_prog != NULL)
+    {
+	// Just in case we get called recursively, return FALSE.  This could
+	// happen if vpeekc() is used while executing the prog and it causes a
+	// related callback to be invoked.
+	if (regprog_in_use(clip_exclude_prog))
+	    return FALSE;
+
+	if (vim_regexec_prog(&clip_exclude_prog, FALSE, T_NAME, (colnr_T)0))
+	    return FALSE;
+    }
+    return TRUE;
+}
+
 #if defined(FEAT_X11) && defined(FEAT_XCLIPBOARD)
 # if defined(HAVE_SETJMP_H)
 /*
@@ -1678,13 +1722,13 @@ x_IOerror_check(Display *dpy UNUSED)
 /*
  * An X IO Error handler, used to catch terminal errors.
  */
-static int xterm_dpy_was_reset = FALSE;
+static int xterm_dpy_retry_count = 0;
 
     static int
 x_IOerror_handler(Display *dpy UNUSED)
 {
     xterm_dpy = NULL;
-    xterm_dpy_was_reset = TRUE;
+    xterm_dpy_retry_count = 5;  // Try reconnecting five times
     x11_window = 0;
     x11_display = NULL;
     xterm_Shell = (Widget)0;
@@ -1704,9 +1748,10 @@ x_IOerror_handler(Display *dpy UNUSED)
     static void
 may_restore_clipboard(void)
 {
-    if (xterm_dpy_was_reset)
+    // No point in restoring the connecting if we are exiting or dying.
+    if (!exiting && !v_dying && xterm_dpy_retry_count > 0)
     {
-	xterm_dpy_was_reset = FALSE;
+	--xterm_dpy_retry_count;
 
 # ifndef LESSTIF_VERSION
 	/* This has been reported to avoid Vim getting stuck. */
@@ -1723,28 +1768,6 @@ may_restore_clipboard(void)
     }
 }
 #endif
-
-/*
- * Return TRUE when connection to the X server is desired.
- */
-    static int
-x_connect_to_server(void)
-{
-#if defined(FEAT_CLIENTSERVER)
-    if (x_force_connect)
-	return TRUE;
-#endif
-    if (x_no_connect)
-	return FALSE;
-
-    /* Check for a match with "exclude:" from 'clipboard'. */
-    if (clip_exclude_prog != NULL)
-    {
-	if (vim_regexec_prog(&clip_exclude_prog, FALSE, T_NAME, (colnr_T)0))
-	    return FALSE;
-    }
-    return TRUE;
-}
 
 /*
  * Test if "dpy" and x11_window are valid by getting the window title.
@@ -2647,7 +2670,7 @@ mch_FullName(
 #endif
 		l = mch_chdir((char *)olddir);
 	    if (l != 0)
-		EMSG(_(e_prev_dir));
+		emsg(_(e_prev_dir));
 	}
 
 	l = STRLEN(buf);
@@ -3951,7 +3974,7 @@ check_mouse_termcode(void)
     int
 mch_screenmode(char_u *arg UNUSED)
 {
-    EMSG(_(e_screenmode));
+    emsg(_(e_screenmode));
     return FAIL;
 }
 
@@ -5431,7 +5454,7 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options, int is_terminal)
 	fd_in[0] = mch_open((char *)fname, O_RDONLY, 0);
 	if (fd_in[0] < 0)
 	{
-	    EMSG2(_(e_notopen), fname);
+	    semsg(_(e_notopen), fname);
 	    goto failed;
 	}
     }
@@ -5449,7 +5472,7 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options, int is_terminal)
 	fd_out[1] = mch_open((char *)fname, O_WRONLY | O_CREAT | O_TRUNC, 0644);
 	if (fd_out[1] < 0)
 	{
-	    EMSG2(_(e_notopen), fname);
+	    semsg(_(e_notopen), fname);
 	    goto failed;
 	}
     }
@@ -5463,7 +5486,7 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options, int is_terminal)
 	fd_err[1] = mch_open((char *)fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
 	if (fd_err[1] < 0)
 	{
-	    EMSG2(_(e_notopen), fname);
+	    semsg(_(e_notopen), fname);
 	    goto failed;
 	}
     }
@@ -5553,7 +5576,7 @@ mch_job_start(char **argv, job_T *job, jobopt_T *options, int is_terminal)
 		{
 		    typval_T *item = &dict_lookup(hi)->di_tv;
 
-		    vim_setenv((char_u*)hi->hi_key, get_tv_string(item));
+		    vim_setenv((char_u*)hi->hi_key, tv_get_string(item));
 		    --todo;
 		}
 	}
@@ -5820,7 +5843,6 @@ mch_detect_ended_job(job_T *job_list)
 mch_signal_job(job_T *job, char_u *how)
 {
     int	    sig = -1;
-    pid_t   job_pid;
 
     if (*how == NUL || STRCMP(how, "term") == 0)
 	sig = SIGTERM;
@@ -5841,16 +5863,13 @@ mch_signal_job(job_T *job, char_u *how)
     else
 	return FAIL;
 
-    /* TODO: have an option to only kill the process, not the group? */
-    job_pid = job->jv_pid;
-#ifdef HAVE_GETPGID
-    if (job_pid == getpgid(job_pid))
-	job_pid = -job_pid;
-#endif
-
-    /* Never kill ourselves! */
-    if (job_pid != 0)
-	kill(job_pid, sig);
+    // Never kill ourselves!
+    if (job->jv_pid != 0)
+    {
+	// TODO: have an option to only kill the process, not the group?
+	kill(-job->jv_pid, sig);
+	kill(job->jv_pid, sig);
+    }
 
     return OK;
 }
@@ -6490,7 +6509,7 @@ mch_expand_wildcards(
      */
     if ((tempname = vim_tempname('o', FALSE)) == NULL)
     {
-	EMSG(_(e_notmp));
+	emsg(_(e_notmp));
 	return FAIL;
     }
 
@@ -6744,7 +6763,7 @@ mch_expand_wildcards(
     if (i != (int)len)
     {
 	/* unexpected read error */
-	EMSG2(_(e_notread), tempname);
+	semsg(_(e_notread), tempname);
 	vim_free(tempname);
 	vim_free(buffer);
 	return FAIL;
@@ -7328,7 +7347,7 @@ mch_libcall(
 	/* "dlerr" must be used before dlclose() */
 	dlerr = (char *)dlerror();
 	if (dlerr != NULL)
-	    EMSG2(_("dlerror = \"%s\""), dlerr);
+	    semsg(_("dlerror = \"%s\""), dlerr);
     }
 # else
     hinstLib = shl_load((const char*)libname, BIND_IMMEDIATE|BIND_VERBOSE, 0L);
@@ -7423,7 +7442,7 @@ mch_libcall(
 	    for (i = 0; signal_info[i].sig != -1; i++)
 		if (lc_signal == signal_info[i].sig)
 		    break;
-	    EMSG2("E368: got SIG%s in libcall()", signal_info[i].name);
+	    semsg("E368: got SIG%s in libcall()", signal_info[i].name);
 	}
 #  endif
 # endif
@@ -7431,7 +7450,7 @@ mch_libcall(
 # if defined(USE_DLOPEN)
 	/* "dlerr" must be used before dlclose() */
 	if (dlerr != NULL)
-	    EMSG2(_("dlerror = \"%s\""), dlerr);
+	    semsg(_("dlerror = \"%s\""), dlerr);
 
 	/* Free the DLL module. */
 	(void)dlclose(hinstLib);
@@ -7442,7 +7461,7 @@ mch_libcall(
 
     if (!success)
     {
-	EMSG2(_(e_libcall), funcname);
+	semsg(_(e_libcall), funcname);
 	return FAIL;
     }
 
@@ -7498,6 +7517,8 @@ setup_term_clip(void)
 	{
 	    xterm_dpy = XtOpenDisplay(app_context, xterm_display,
 		    "vim_xterm", "Vim_xterm", NULL, 0, &z, &strp);
+	    if (xterm_dpy != NULL)
+		xterm_dpy_retry_count = 0;
 #if defined(HAVE_SETJMP_H)
 	    mch_endjmp();
 #endif

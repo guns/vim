@@ -1,4 +1,4 @@
-*autocmd.txt*   For Vim version 8.1.  Last change: 2018 May 03
+*autocmd.txt*   For Vim version 8.1.  Last change: 2018 Dec 28
 
 
 		  VIM REFERENCE MANUAL    by Bram Moolenaar
@@ -759,13 +759,14 @@ FilterReadPre			Before reading a file from a filter command.
 				Not triggered when 'shelltemp' is off.
 							*FilterWritePost*
 FilterWritePost			After writing a file for a filter command or
-				making a diff.
+				making a diff with an external diff (see
+				DiffUpdated for internal diff).
 				Vim checks the pattern against the name of
 				the current buffer as with FilterWritePre.
 				Not triggered when 'shelltemp' is off.
 							*FilterWritePre*
 FilterWritePre			Before writing a file for a filter command or
-				making a diff.
+				making a diff with an external diff.
 				Vim checks the pattern against the name of
 				the current buffer, not the name of the
 				temporary file that is the output of the
@@ -924,6 +925,12 @@ ShellFilterPost			After executing a shell command with
 							*SourcePre*
 SourcePre			Before sourcing a Vim script. |:source|
 				<afile> is the name of the file being sourced.
+							*SourcePost*
+SourcePost			After sourcing a Vim script. |:source|
+				<afile> is the name of the file being sourced.
+				Not triggered when sourcing was interrupted.
+				Also triggered after a SourceCmd autocommand
+				was triggered.
 							*SourceCmd*
 SourceCmd			When sourcing a Vim script. |:source|
 				<afile> is the name of the file being sourced.
