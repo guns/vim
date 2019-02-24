@@ -64,23 +64,9 @@
 #  define RUBY_EXPORT
 # endif
 
-#if !(defined(WIN32) || defined(_WIN64))
-# include <dlfcn.h>
-# define HINSTANCE void*
-# define RUBY_PROC void*
-# define load_dll(n) dlopen((n), RTLD_LAZY|RTLD_GLOBAL)
-# define symbol_from_dll dlsym
-# define close_dll dlclose
-#else
-# define RUBY_PROC FARPROC
-# define load_dll vimLoadLib
-# define symbol_from_dll GetProcAddress
-# define close_dll FreeLibrary
-#endif
+#endif  // ifdef DYNAMIC_RUBY
 
-#endif  /* ifdef DYNAMIC_RUBY */
-
-/* suggested by Ariya Mizutani */
+// suggested by Ariya Mizutani
 #if (_MSC_VER == 1200)
 # undef _WIN32_WINNT
 #endif
@@ -182,6 +168,22 @@
 
 #include "vim.h"
 #include "version.h"
+
+#ifdef DYNAMIC_RUBY
+# if !defined(MSWIN)  // must come after including vim.h, where it is defined
+#  include <dlfcn.h>
+#  define HINSTANCE void*
+#  define RUBY_PROC void*
+#  define load_dll(n) dlopen((n), RTLD_LAZY|RTLD_GLOBAL)
+#  define symbol_from_dll dlsym
+#  define close_dll dlclose
+# else
+#  define RUBY_PROC FARPROC
+#  define load_dll vimLoadLib
+#  define symbol_from_dll GetProcAddress
+#  define close_dll FreeLibrary
+# endif
+#endif
 
 #if defined(PROTO) && !defined(FEAT_RUBY)
 /* Define these to be able to generate the function prototypes. */
@@ -331,7 +333,7 @@ static void ruby_vim_init(void);
 # endif
 # define ruby_init			dll_ruby_init
 # define ruby_init_loadpath		dll_ruby_init_loadpath
-# ifdef WIN3264
+# ifdef MSWIN
 #  ifdef RUBY19_OR_LATER
 #   define ruby_sysinit			dll_ruby_sysinit
 #  else
@@ -447,7 +449,7 @@ static VALUE *dll_ruby_errinfo;
 # endif
 static void (*dll_ruby_init) (void);
 static void (*dll_ruby_init_loadpath) (void);
-# ifdef WIN3264
+# ifdef MSWIN
 #  ifdef RUBY19_OR_LATER
 static void (*dll_ruby_sysinit) (int*, char***);
 #  else
@@ -506,7 +508,11 @@ SIGNED_VALUE rb_num2long_stub(VALUE x)
 {
     return dll_rb_num2long(x);
 }
+#  if defined(DYNAMIC_RUBY_VER) && DYNAMIC_RUBY_VER >= 26
+VALUE rb_int2big_stub(intptr_t x)
+#  else
 VALUE rb_int2big_stub(SIGNED_VALUE x)
+#  endif
 {
     return dll_rb_int2big(x);
 }
@@ -662,7 +668,7 @@ static struct
 # endif
     {"ruby_init", (RUBY_PROC*)&dll_ruby_init},
     {"ruby_init_loadpath", (RUBY_PROC*)&dll_ruby_init_loadpath},
-# ifdef WIN3264
+# ifdef MSWIN
 #  ifdef RUBY19_OR_LATER
     {"ruby_sysinit", (RUBY_PROC*)&dll_ruby_sysinit},
 #  else
@@ -945,7 +951,7 @@ static int ensure_ruby_initialized(void)
 	if (ruby_enabled(TRUE))
 	{
 #endif
-#ifdef _WIN32
+#ifdef MSWIN
 	    /* suggested by Ariya Mizutani */
 	    int argc = 1;
 	    char *argv[] = {"gvim.exe"};
@@ -1057,11 +1063,11 @@ static void error_print(int state)
 # ifdef RUBY21_OR_LATER
 	bt = rb_funcallv(error, rb_intern("backtrace"), 0, 0);
 	for (i = 0; i < RARRAY_LEN(bt); i++)
-	    msg_attr((char_u *)RSTRING_PTR(RARRAY_AREF(bt, i)), attr);
+	    msg_attr(RSTRING_PTR(RARRAY_AREF(bt, i)), attr);
 # else
 	bt = rb_funcall2(error, rb_intern("backtrace"), 0, 0);
 	for (i = 0; i < RARRAY_LEN(bt); i++)
-	    msg_attr((char_u *)RSTRING_PTR(RARRAY_PTR(bt)[i]), attr);
+	    msg_attr(RSTRING_PTR(RARRAY_PTR(bt)[i]), attr);
 # endif
 	break;
     default:
@@ -1083,11 +1089,11 @@ static VALUE vim_message(VALUE self UNUSED, VALUE str)
 	strcpy(buff, RSTRING_PTR(str));
 	p = strchr(buff, '\n');
 	if (p) *p = '\0';
-	MSG(buff);
+	msg(buff);
     }
     else
     {
-	MSG("");
+	msg("");
     }
     return Qnil;
 }
@@ -1261,8 +1267,8 @@ static VALUE vim_blob(VALUE self UNUSED, VALUE str)
     int	i;
     for (i = 0; i < RSTRING_LEN(str); i++)
     {
-	sprintf(buf, "%02X", RSTRING_PTR(str)[i]);
-	rb_str_concat(result, rb_str_new_cstr(buf));
+	sprintf(buf, "%02X", (unsigned char)(RSTRING_PTR(str)[i]));
+	rb_str_concat(result, rb_str_new2(buf));
     }
     return result;
 }
@@ -1641,7 +1647,7 @@ static VALUE f_p(int argc, VALUE *argv, VALUE self UNUSED)
 	if (i > 0) rb_str_cat(str, ", ", 2);
 	rb_str_concat(str, rb_inspect(argv[i]));
     }
-    MSG(RSTRING_PTR(str));
+    msg(RSTRING_PTR(str));
 
     if (argc == 1)
 	ret = argv[0];

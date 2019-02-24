@@ -21,30 +21,23 @@ typedef unsigned short	short_u;
 #endif
 
 /*
- * position in file or buffer
+ * Position in file or buffer.
  */
 typedef struct
 {
-    linenr_T	lnum;	/* line number */
-    colnr_T	col;	/* column number */
-#ifdef FEAT_VIRTUALEDIT
-    colnr_T	coladd;
-#endif
+    linenr_T	lnum;	// line number
+    colnr_T	col;	// column number
+    colnr_T	coladd; // extra virtual column
 } pos_T;
 
-#ifdef FEAT_VIRTUALEDIT
-# define INIT_POS_T(l, c, ca) {l, c, ca}
-#else
-# define INIT_POS_T(l, c, ca) {l, c}
-#endif
 
 /*
  * Same, but without coladd.
  */
 typedef struct
 {
-    linenr_T	lnum;	/* line number */
-    colnr_T	col;	/* column number */
+    linenr_T	lnum;	// line number
+    colnr_T	col;	// column number
 } lpos_T;
 
 /*
@@ -395,9 +388,7 @@ struct u_header
     u_entry_T	*uh_entry;	/* pointer to first entry */
     u_entry_T	*uh_getbot_entry; /* pointer to where ue_bot must be set */
     pos_T	uh_cursor;	/* cursor position before saving */
-#ifdef FEAT_VIRTUALEDIT
     long	uh_cursor_vcol;
-#endif
     int		uh_flags;	/* see below */
     pos_T	uh_namedm[NMARKS];	/* marks before undo/after redo */
     visualinfo_T uh_visual;	/* Visual areas before undo/after redo */
@@ -416,12 +407,8 @@ struct u_header
 /*
  * structures used in undo.c
  */
-#if VIM_SIZEOF_INT > 2
-# define ALIGN_LONG	/* longword alignment and use filler byte */
-# define ALIGN_SIZE (sizeof(long))
-#else
-# define ALIGN_SIZE (sizeof(short))
-#endif
+#define ALIGN_LONG	/* longword alignment and use filler byte */
+#define ALIGN_SIZE (sizeof(long))
 
 #define ALIGN_MASK (ALIGN_SIZE - 1)
 
@@ -1086,7 +1073,7 @@ typedef struct
 {
     int		vc_type;	/* zero or one of the CONV_ values */
     int		vc_factor;	/* max. expansion factor */
-# ifdef WIN3264
+# ifdef MSWIN
     int		vc_cpfrom;	/* codepage to convert from (CONV_CODEPAGE) */
     int		vc_cpto;	/* codepage to convert to (CONV_CODEPAGE) */
 # endif
@@ -1103,9 +1090,7 @@ typedef struct
 {
     char_u	*vir_line;	/* text of the current line */
     FILE	*vir_fd;	/* file descriptor */
-#ifdef FEAT_MBYTE
     vimconv_T	vir_conv;	/* encoding conversion */
-#endif
     int		vir_version;	/* viminfo version detected or -1 */
     garray_T	vir_barlines;	/* lines starting with | */
 } vir_T;
@@ -1116,7 +1101,7 @@ typedef struct
 #define CONV_TO_LATIN1		3
 #define CONV_TO_LATIN9		4
 #define CONV_ICONV		5
-#ifdef WIN3264
+#ifdef MSWIN
 # define CONV_CODEPAGE		10	/* codepage -> codepage */
 #endif
 #ifdef MACOS_X
@@ -1202,7 +1187,7 @@ typedef long_u hash_T;		/* Type for hi_hash */
 
 #ifdef FEAT_NUM64
 /* Use 64-bit Number. */
-# ifdef WIN3264
+# ifdef MSWIN
 #  ifdef PROTO
 typedef long		    varnumber_T;
 typedef unsigned long	    uvarnumber_T;
@@ -1231,19 +1216,11 @@ typedef unsigned long	    uvarnumber_T;
 # endif
 #else
 /* Use 32-bit Number. */
-# if VIM_SIZEOF_INT <= 3	/* use long if int is smaller than 32 bits */
-typedef long		    varnumber_T;
-typedef unsigned long	    uvarnumber_T;
-#define VARNUM_MIN	    LONG_MIN
-#define VARNUM_MAX	    LONG_MAX
-#define UVARNUM_MAX	    ULONG_MAX
-# else
 typedef int		    varnumber_T;
 typedef unsigned int	    uvarnumber_T;
 #define VARNUM_MIN	    INT_MIN
 #define VARNUM_MAX	    INT_MAX
 #define UVARNUM_MAX	    UINT_MAX
-# endif
 #endif
 
 typedef double	float_T;
@@ -1566,14 +1543,20 @@ struct jobvar_S
 #ifdef UNIX
     pid_t	jv_pid;
 #endif
-#ifdef WIN32
+#ifdef MSWIN
     PROCESS_INFORMATION	jv_proc_info;
     HANDLE		jv_job_object;
 #endif
     char_u	*jv_tty_in;	/* controlling tty input, allocated */
     char_u	*jv_tty_out;	/* controlling tty output, allocated */
     jobstatus_T	jv_status;
-    char_u	*jv_stoponexit; /* allocated */
+    char_u	*jv_stoponexit;	/* allocated */
+#ifdef UNIX
+    char_u	*jv_termsig;	/* allocated */
+#endif
+#ifdef MSWIN
+    char_u	*jv_tty_type;	// allocated
+#endif
     int		jv_exitval;
     char_u	*jv_exit_cb;	/* allocated */
     partial_T	*jv_exit_partial;
@@ -1687,7 +1670,7 @@ typedef struct {
      * message when the deadline was set.  If it gets longer (something was
      * received) the deadline is reset. */
     size_t	ch_wait_len;
-#ifdef WIN32
+#ifdef MSWIN
     DWORD	ch_deadline;
 #else
     struct timeval ch_deadline;
@@ -1737,7 +1720,7 @@ struct channel_S {
 				/* callback for Netbeans when channel is
 				 * closed */
 
-#ifdef WIN32
+#ifdef MSWIN
     int		ch_named_pipe;	/* using named pipe instead of pty */
 #endif
     char_u	*ch_callback;	/* call when any msg is not handled */
@@ -1748,13 +1731,15 @@ struct channel_S {
     int		ch_keep_open;	/* do not close on read error */
     int		ch_nonblock;
 
-    job_T	*ch_job;	/* Job that uses this channel; this does not
-				 * count as a reference to avoid a circular
-				 * reference, the job refers to the channel. */
-    int		ch_job_killed;	/* TRUE when there was a job and it was killed
-				 * or we know it died. */
+    job_T	*ch_job;	// Job that uses this channel; this does not
+				// count as a reference to avoid a circular
+				// reference, the job refers to the channel.
+    int		ch_job_killed;	// TRUE when there was a job and it was killed
+				// or we know it died.
+    int		ch_anonymous_pipe;  // ConPTY
+    int		ch_killing;	    // TerminateJobObject() was called
 
-    int		ch_refcount;	/* reference count */
+    int		ch_refcount;	// reference count
     int		ch_copyID;
 };
 
@@ -1807,6 +1792,7 @@ struct channel_S {
 #define JO2_NORESTORE	    0x2000	/* "norestore" */
 #define JO2_TERM_KILL	    0x4000	/* "term_kill" */
 #define JO2_ANSI_COLORS	    0x8000	/* "ansi_colors" */
+#define JO2_TTY_TYPE	    0x10000	/* "tty_type" */
 
 #define JO_MODE_ALL	(JO_MODE + JO_IN_MODE + JO_OUT_MODE + JO_ERR_MODE)
 #define JO_CB_ALL \
@@ -1879,6 +1865,7 @@ typedef struct
 # if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
     long_u	jo_ansi_colors[16];
 # endif
+    int		jo_tty_type;	    // first character of "tty_type"
 #endif
 } jobopt_T;
 
@@ -1940,6 +1927,10 @@ typedef struct {
 # define CRYPT_M_BF	1
 # define CRYPT_M_BF2	2
 # define CRYPT_M_COUNT	3 /* number of crypt methods */
+
+// Currently all crypt methods work inplace.  If one is added that isn't then
+// define this.
+//  # define CRYPT_NOT_INPLACE 1
 #endif
 
 
@@ -2009,16 +2000,12 @@ typedef struct {
     /* for spell checking */
     garray_T	b_langp;	/* list of pointers to slang_T, see spell.c */
     char_u	b_spell_ismw[256];/* flags: is midword char */
-# ifdef FEAT_MBYTE
     char_u	*b_spell_ismw_mb; /* multi-byte midword chars */
-# endif
     char_u	*b_p_spc;	/* 'spellcapcheck' */
     regprog_T	*b_cap_prog;	/* program for 'spellcapcheck' */
     char_u	*b_p_spf;	/* 'spellfile' */
     char_u	*b_p_spl;	/* 'spelllang' */
-# ifdef FEAT_MBYTE
     int		b_cjk;		/* all CJK letters as OK */
-# endif
 #endif
 #if !defined(FEAT_SYN_HL) && !defined(FEAT_SPELL)
     int		dummy;
@@ -2229,9 +2216,7 @@ struct file_buffer
     unsigned	b_bkc_flags;    /* flags for 'backupcopy' */
     int		b_p_ci;		/* 'copyindent' */
     int		b_p_bin;	/* 'binary' */
-#ifdef FEAT_MBYTE
     int		b_p_bomb;	/* 'bomb' */
-#endif
     char_u	*b_p_bh;	/* 'bufhidden' */
     char_u	*b_p_bt;	/* 'buftype' */
 #ifdef FEAT_QUICKFIX
@@ -2266,9 +2251,7 @@ struct file_buffer
     int		b_p_et;		/* 'expandtab' */
     int		b_p_et_nobin;	/* b_p_et saved for binary mode */
     int	        b_p_et_nopaste; /* b_p_et saved for paste mode */
-#ifdef FEAT_MBYTE
     char_u	*b_p_fenc;	/* 'fileencoding' */
-#endif
     char_u	*b_p_ff;	/* 'fileformat' */
     char_u	*b_p_ft;	/* 'filetype' */
     char_u	*b_p_fo;	/* 'formatoptions' */
@@ -2300,9 +2283,7 @@ struct file_buffer
 #ifdef FEAT_LISP
     int		b_p_lisp;	/* 'lisp' */
 #endif
-#ifdef FEAT_MBYTE
     char_u	*b_p_menc;	/* 'makeencoding' */
-#endif
     char_u	*b_p_mps;	/* 'matchpairs' */
     int		b_p_ml;		/* 'modeline' */
     int		b_p_ml_nobin;	/* b_p_ml saved for binary mode */
@@ -2421,11 +2402,9 @@ struct file_buffer
 
     int		b_start_eol;	/* last line had eol when it was read */
     int		b_start_ffc;	/* first char of 'ff' when edit started */
-#ifdef FEAT_MBYTE
     char_u	*b_start_fenc;	/* 'fileencoding' when edit started or NULL */
     int		b_bad_char;	/* "++bad=" argument when edit started or 0 */
     int		b_start_bomb;	/* 'bomb' when it was read */
-#endif
 
 #ifdef FEAT_EVAL
     dictitem_T	b_bufvar;	/* variable for "b:" Dictionary */
@@ -2960,6 +2939,8 @@ struct window_S
     int		w_p_brishift;	    /* additional shift for breakindent */
     int		w_p_brisbr;	    /* sbr in 'briopt' */
 #endif
+    long        w_p_siso;           /* 'sidescrolloff' local value */
+    long        w_p_so;             /* 'scrolloff' local value */
 
     /* transform a pointer to a "onebuf" option into a "allbuf" option */
 #define GLOBAL_WO(p)	((char *)p + sizeof(winopt_T))
@@ -2969,10 +2950,6 @@ struct window_S
 #ifdef FEAT_EVAL
     dictitem_T	w_winvar;	/* variable for "w:" Dictionary */
     dict_T	*w_vars;	/* internal variables, local to window */
-#endif
-
-#if defined(FEAT_RIGHTLEFT) && defined(FEAT_FKMAP)
-    int		w_farsi;	/* for the window dependent Farsi functions */
 #endif
 
     /*
@@ -3103,10 +3080,8 @@ typedef struct cmdarg_S
     int		prechar;	/* prefix character (optional, always 'g') */
     int		cmdchar;	/* command character */
     int		nchar;		/* next command character (optional) */
-#ifdef FEAT_MBYTE
     int		ncharC1;	/* first composing character (optional) */
     int		ncharC2;	/* second composing character (optional) */
-#endif
     int		extra_char;	/* yet another character (optional) */
     long	opcount;	/* count before an operator */
     long	count0;		/* count before command, default 0 */
@@ -3250,7 +3225,7 @@ struct VimMenu
 #ifdef FEAT_BEVAL_TIP
     BalloonEval *tip;		    /* tooltip for this menu item */
 #endif
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
     UINT	id;		    /* Id of menu item */
     HMENU	submenu_id;	    /* If this is submenu, add children here */
     HWND	tearoff_handle;	    /* hWnd of tearoff if created */

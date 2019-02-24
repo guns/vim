@@ -24,11 +24,7 @@ static char_u e_py_systemexit[]	= "E880: Can't handle SystemExit of %s exception
 typedef int Py_ssize_t;  /* Python 2.4 and earlier don't have this type. */
 #endif
 
-#ifdef FEAT_MBYTE
-# define ENC_OPT ((char *)p_enc)
-#else
-# define ENC_OPT "latin1"
-#endif
+#define ENC_OPT ((char *)p_enc)
 #define DOPY_FUNC "_vim_pydo"
 
 static const char *vim_special_path = "_vim_path_";
@@ -91,9 +87,9 @@ static PyObject *vim_special_path_object;
 #if PY_VERSION_HEX >= 0x030700f0
 static PyObject *py_find_spec;
 #else
-static PyObject *py_find_module;
 static PyObject *py_load_module;
 #endif
+static PyObject *py_find_module;
 
 static PyObject *VimError;
 
@@ -410,12 +406,6 @@ writer(writefn fn, char_u *str, PyInt n)
 }
 
     static int
-msg_wrapper(char *text)
-{
-    return msg((char_u *)text);
-}
-
-    static int
 write_output(OutputObject *self, PyObject *string)
 {
     Py_ssize_t	len = 0;
@@ -427,7 +417,7 @@ write_output(OutputObject *self, PyObject *string)
 
     Py_BEGIN_ALLOW_THREADS
     Python_Lock_Vim();
-    writer((writefn)(error ? emsg : msg_wrapper), (char_u *)str, len);
+    writer((writefn)(error ? emsg : msg), (char_u *)str, len);
     Python_Release_Vim();
     Py_END_ALLOW_THREADS
     PyMem_Free(str);
@@ -769,7 +759,7 @@ VimToPython(typval_T *our_tv, int depth, PyObject *lookup_dict)
 	sprintf(buf, "%ld", (long)our_tv->vval.v_number);
 	ret = PyString_FromString((char *)buf);
     }
-# ifdef FEAT_FLOAT
+#ifdef FEAT_FLOAT
     else if (our_tv->v_type == VAR_FLOAT)
     {
 	char buf[NUMBUFLEN];
@@ -777,7 +767,7 @@ VimToPython(typval_T *our_tv, int depth, PyObject *lookup_dict)
 	sprintf(buf, "%f", our_tv->vval.v_float);
 	ret = PyString_FromString((char *)buf);
     }
-# endif
+#endif
     else if (our_tv->v_type == VAR_LIST)
     {
 	list_T		*list = our_tv->vval.v_list;
@@ -991,11 +981,7 @@ VimStrwidth(PyObject *self UNUSED, PyObject *string)
     if (!(str = StringToChars(string, &todecref)))
 	return NULL;
 
-#ifdef FEAT_MBYTE
     len = mb_string2cells(str, (int)STRLEN(str));
-#else
-    len = STRLEN(str);
-#endif
 
     Py_XDECREF(todecref);
 
@@ -4047,9 +4033,7 @@ WindowSetattr(WindowObject *self, char *name, PyObject *valObject)
 	self->win->w_cursor.lnum = lnum;
 	self->win->w_cursor.col = col;
 	self->win->w_set_curswant = TRUE;
-#ifdef FEAT_VIRTUALEDIT
 	self->win->w_cursor.coladd = 0;
-#endif
 	/* When column is out of range silently correct it. */
 	check_cursor_col_win(self->win);
 
@@ -6109,18 +6093,18 @@ convert_dl(PyObject *obj, typval_T *tv,
 
     sprintf(hexBuf, "%p", (void *)obj);
 
-# ifdef PY_USE_CAPSULE
+#ifdef PY_USE_CAPSULE
     capsule = PyDict_GetItemString(lookup_dict, hexBuf);
-# else
+#else
     capsule = (PyObject *)PyDict_GetItemString(lookup_dict, hexBuf);
-# endif
+#endif
     if (capsule == NULL)
     {
-# ifdef PY_USE_CAPSULE
+#ifdef PY_USE_CAPSULE
 	capsule = PyCapsule_New(tv, NULL, NULL);
-# else
+#else
 	capsule = PyCObject_FromVoidPtr(tv, NULL);
-# endif
+#endif
 	if (PyDict_SetItemString(lookup_dict, hexBuf, capsule))
 	{
 	    Py_DECREF(capsule);
@@ -6146,11 +6130,11 @@ convert_dl(PyObject *obj, typval_T *tv,
     {
 	typval_T	*v;
 
-# ifdef PY_USE_CAPSULE
+#ifdef PY_USE_CAPSULE
 	v = PyCapsule_GetPointer(capsule, NULL);
-# else
+#else
 	v = PyCObject_AsVoidPtr(capsule);
-# endif
+#endif
 	copy_tv(v, tv);
     }
     return 0;
@@ -6935,6 +6919,13 @@ populate_module(PyObject *m)
     {
 	Py_DECREF(imp);
 	return -1;
+    }
+
+    if ((py_find_module = PyObject_GetAttrString(cls, "find_module")))
+    {
+	// find_module() is deprecated, this may stop working in some later
+	// version.
+        ADD_OBJECT(m, "_find_module", py_find_module);
     }
 
     Py_DECREF(imp);

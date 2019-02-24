@@ -226,7 +226,10 @@ enum
     NFA_CLASS_TAB,
     NFA_CLASS_RETURN,
     NFA_CLASS_BACKSPACE,
-    NFA_CLASS_ESCAPE
+    NFA_CLASS_ESCAPE,
+    NFA_CLASS_IDENT,
+    NFA_CLASS_KEYWORD,
+    NFA_CLASS_FNAME
 };
 
 /* Keep in sync with classchars. */
@@ -242,7 +245,7 @@ static int nfa_classcodes[] = {
 
 static char_u e_nul_found[] = N_("E865: (NFA) Regexp end encountered prematurely");
 static char_u e_misplaced[] = N_("E866: (NFA regexp) Misplaced %c");
-static char_u e_ill_char_class[] = N_("E877: (NFA regexp) Invalid character class: %ld");
+static char_u e_ill_char_class[] = N_("E877: (NFA regexp) Invalid character class: %d");
 
 // Variables only used in nfa_regcomp() and descendants.
 static int nfa_re_flags; // re_flags passed to nfa_regcomp()
@@ -487,11 +490,9 @@ nfa_get_match_text(nfa_state_T *start)
 	s = ret;
 	while (p->c > 0)
 	{
-#ifdef FEAT_MBYTE
 	    if (has_mbyte)
 		s += (*mb_char2bytes)(p->c, s);
 	    else
-#endif
 		*s++ = p->c;
 	    p = p->out;
 	}
@@ -508,10 +509,13 @@ nfa_get_match_text(nfa_state_T *start)
 realloc_post_list(void)
 {
     int   nstate_max = (int)(post_end - post_start);
-    int   new_max = nstate_max + 1000;
+    int   new_max;
     int   *new_start;
     int	  *old_start;
 
+    // For weird patterns the number of states can be very high. Increasing by
+    // 50% seems a reasonable compromise between memory use and speed.
+    new_max = nstate_max * 3 / 2;
     new_start = (int *)lalloc(new_max * sizeof(int), TRUE);
     if (new_start == NULL)
 	return FAIL;
@@ -687,16 +691,10 @@ nfa_recognize_char_class(char_u *start, char_u *end, int extra_newl)
 nfa_emit_equi_class(int c)
 {
 #define EMIT2(c)    EMIT(c); EMIT(NFA_CONCAT);
-#ifdef FEAT_MBYTE
-# define EMITMBC(c) EMIT(c); EMIT(NFA_CONCAT);
-#else
-# define EMITMBC(c)
-#endif
+#define EMITMBC(c) EMIT(c); EMIT(NFA_CONCAT);
 
-#ifdef FEAT_MBYTE
     if (enc_utf8 || STRCMP(p_enc, "latin1") == 0
 					 || STRCMP(p_enc, "iso-8859-15") == 0)
-#endif
     {
 #ifdef EBCDIC
 # define A_circumflex 0x62
@@ -1203,9 +1201,7 @@ nfa_regatom(void)
     int		got_coll_char;
     char_u	*p;
     char_u	*endp;
-#ifdef FEAT_MBYTE
     char_u	*old_regparse = regparse;
-#endif
     int		extra = 0;
     int		emit_range;
     int		negated;
@@ -1307,10 +1303,10 @@ nfa_regatom(void)
 		    rc_did_emsg = TRUE;
 		    return FAIL;
 		}
-		siemsg("INTERNAL: Unknown character class char: %ld", c);
+		siemsg("INTERNAL: Unknown character class char: %d", c);
 		return FAIL;
 	    }
-#ifdef FEAT_MBYTE
+
 	    /* When '.' is followed by a composing char ignore the dot, so that
 	     * the composing char is matched here. */
 	    if (enc_utf8 && c == Magic('.') && utf_iscomposing(peekchr()))
@@ -1319,7 +1315,6 @@ nfa_regatom(void)
 		c = getchr();
 		goto nfa_do_multibyte;
 	    }
-#endif
 	    EMIT(nfa_classcodes[p - classchars]);
 	    if (extra == NFA_ADD_NL)
 	    {
@@ -1480,7 +1475,7 @@ nfa_regatom(void)
 			    default:  nr = -1; break;
 			}
 
-			if (nr < 0)
+			if (nr < 0 || nr > INT_MAX)
 			    EMSG2_RET_FAIL(
 			       _("E678: Invalid character after %s%%[dxouU]"),
 				    reg_magic == MAGIC_ALL);
@@ -1558,6 +1553,8 @@ nfa_regatom(void)
 			}
 			if (c == 'l' || c == 'c' || c == 'v')
 			{
+			    int limit = INT_MAX;
+
 			    if (c == 'l')
 			    {
 				/* \%{n}l  \%{n}<l  \%{n}>l  */
@@ -1571,16 +1568,17 @@ nfa_regatom(void)
 				EMIT(cmp == '<' ? NFA_COL_LT :
 				     cmp == '>' ? NFA_COL_GT : NFA_COL);
 			    else
+			    {
 				/* \%{n}v  \%{n}<v  \%{n}>v  */
 				EMIT(cmp == '<' ? NFA_VCOL_LT :
 				     cmp == '>' ? NFA_VCOL_GT : NFA_VCOL);
-#if VIM_SIZEOF_INT < VIM_SIZEOF_LONG
-			    if (n > INT_MAX)
+				limit = INT_MAX / MB_MAXBYTES;
+			    }
+			    if (n >= limit)
 			    {
 				emsg(_("E951: \\% value too large"));
 				return FAIL;
 			    }
-#endif
 			    EMIT((int)n);
 			    break;
 			}
@@ -1729,6 +1727,15 @@ collection:
 				case CLASS_ESCAPE:
 				    EMIT(NFA_CLASS_ESCAPE);
 				    break;
+				case CLASS_IDENT:
+				    EMIT(NFA_CLASS_IDENT);
+				    break;
+				case CLASS_KEYWORD:
+				    EMIT(NFA_CLASS_KEYWORD);
+				    break;
+				case CLASS_FNAME:
+				    EMIT(NFA_CLASS_FNAME);
+				    break;
 			    }
 			    EMIT(NFA_CONCAT);
 			    continue;
@@ -1781,7 +1788,8 @@ collection:
 			MB_PTR_ADV(regparse);
 
 			if (*regparse == 'n')
-			    startc = reg_string ? NL : NFA_NEWL;
+			    startc = (reg_string || emit_range
+					|| regparse[1] == '-') ? NL : NFA_NEWL;
 			else
 			    if  (*regparse == 'd'
 				    || *regparse == 'o'
@@ -1827,9 +1835,7 @@ collection:
 			    EMIT(NFA_RANGE);
 			    EMIT(NFA_CONCAT);
 			}
-			else
-#ifdef FEAT_MBYTE
-			     if (has_mbyte && ((*mb_char2len)(startc) > 1
+			else if (has_mbyte && ((*mb_char2len)(startc) > 1
 				    || (*mb_char2len)(endc) > 1))
 			{
 			    /* Emit the characters in the range.
@@ -1842,7 +1848,6 @@ collection:
 			    }
 			}
 			else
-#endif
 			{
 #ifdef EBCDIC
 			    int alpha_only = FALSE;
@@ -1929,7 +1934,6 @@ collection:
 
 	default:
 	    {
-#ifdef FEAT_MBYTE
 		int	plen;
 
 nfa_do_multibyte:
@@ -1961,7 +1965,6 @@ nfa_do_multibyte:
 		    regparse = old_regparse + plen;
 		}
 		else
-#endif
 		{
 		    c = no_Magic(c);
 		    EMIT(c);
@@ -2211,9 +2214,7 @@ nfa_regconcat(void)
 		break;
 
 	    case Magic('Z'):
-#ifdef FEAT_MBYTE
 		regflags |= RF_ICOMBINE;
-#endif
 		skipchr_keepstart();
 		break;
 	    case Magic('c'):
@@ -2573,6 +2574,9 @@ nfa_set_code(int c)
 	case NFA_CLASS_RETURN:	STRCPY(code, "NFA_CLASS_RETURN"); break;
 	case NFA_CLASS_BACKSPACE:   STRCPY(code, "NFA_CLASS_BACKSPACE"); break;
 	case NFA_CLASS_ESCAPE:	STRCPY(code, "NFA_CLASS_ESCAPE"); break;
+	case NFA_CLASS_IDENT:	STRCPY(code, "NFA_CLASS_IDENT"); break;
+	case NFA_CLASS_KEYWORD:	STRCPY(code, "NFA_CLASS_KEYWORD"); break;
+	case NFA_CLASS_FNAME:	STRCPY(code, "NFA_CLASS_FNAME"); break;
 
 	case NFA_ANY:	STRCPY(code, "NFA_ANY"); break;
 	case NFA_IDENT:	STRCPY(code, "NFA_IDENT"); break;
@@ -2996,13 +3000,11 @@ nfa_max_width(nfa_state_T *startstate, int depth)
 	    case NFA_START_COLL:
 	    case NFA_START_NEG_COLL:
 		/* matches some character, including composing chars */
-#ifdef FEAT_MBYTE
 		if (enc_utf8)
 		    len += MB_MAXBYTES;
 		else if (has_mbyte)
 		    len += 2;
 		else
-#endif
 		    ++len;
 		if (state->c != NFA_ANY)
 		{
@@ -3048,11 +3050,9 @@ nfa_max_width(nfa_state_T *startstate, int depth)
 	    case NFA_NUPPER_IC:
 	    case NFA_ANY_COMPOSING:
 		/* possibly non-ascii */
-#ifdef FEAT_MBYTE
 		if (has_mbyte)
 		    len += 3;
 		else
-#endif
 		    ++len;
 		break;
 
@@ -3501,7 +3501,6 @@ post2nfa(int *postfix, int *end, int nfa_calc_size)
 	    break;
 	  }
 
-#ifdef FEAT_MBYTE
 	case NFA_COMPOSING:	/* char with composing char */
 #if 0
 	    /* TODO */
@@ -3511,7 +3510,6 @@ post2nfa(int *postfix, int *end, int nfa_calc_size)
 	    }
 #endif
 	    /* FALLTHROUGH */
-#endif
 
 	case NFA_MOPEN:	/* \( \) Submatch */
 	case NFA_MOPEN1:
@@ -3558,9 +3556,7 @@ post2nfa(int *postfix, int *end, int nfa_calc_size)
 		case NFA_ZOPEN8: mclose = NFA_ZCLOSE8; break;
 		case NFA_ZOPEN9: mclose = NFA_ZCLOSE9; break;
 #endif
-#ifdef FEAT_MBYTE
 		case NFA_COMPOSING: mclose = NFA_END_COMPOSING; break;
-#endif
 		default:
 		    /* NFA_MOPEN, NFA_MOPEN1 .. NFA_MOPEN9 */
 		    mclose = *p + NSUBEXP;
@@ -3596,11 +3592,9 @@ post2nfa(int *postfix, int *end, int nfa_calc_size)
 		goto theend;
 	    patch(e.out, s1);
 
-#ifdef FEAT_MBYTE
 	    if (mopen == NFA_COMPOSING)
 		/* COMPOSING->out1 = END_COMPOSING */
 		patch(list1(&s->out1), s1);
-#endif
 
 	    PUSH(frag(s, list1(&s1->out)));
 	    break;
@@ -4297,6 +4291,7 @@ state_in_list(
 /*
  * Add "state" and possibly what follows to state list ".".
  * Returns "subs_arg", possibly copied into temp_subs.
+ * Returns NULL when recursiveness is too deep.
  */
     static regsubs_T *
 addstate(
@@ -4323,6 +4318,15 @@ addstate(
 #ifdef ENABLE_LOG
     int			did_print = FALSE;
 #endif
+    static int		depth = 0;
+
+    // This function is called recursively.  When the depth is too much we run
+    // out of stack and crash, limit recursiveness here.
+    if (++depth >= 5000 || subs == NULL)
+    {
+	--depth;
+	return NULL;
+    }
 
     if (off_arg <= -ADDSTATE_HERE_OFFSET)
     {
@@ -4434,6 +4438,7 @@ skip_add:
 			    abs(state->id), l->id, state->c, code,
 			    pim == NULL ? "NULL" : "yes", l->has_pim, found);
 #endif
+			--depth;
 			return subs;
 		    }
 		}
@@ -4444,12 +4449,20 @@ skip_add:
 		    goto skip_add;
 	    }
 
-	    /* When there are backreferences or PIMs the number of states may
-	     * be (a lot) bigger than anticipated. */
+	    // When there are backreferences or PIMs the number of states may
+	    // be (a lot) bigger than anticipated.
 	    if (l->n == l->len)
 	    {
-		int newlen = l->len * 3 / 2 + 50;
+		int		newlen = l->len * 3 / 2 + 50;
+		size_t		newsize = newlen * sizeof(nfa_thread_T);
+		nfa_thread_T	*newt;
 
+		if ((long)(newsize >> 10) >= p_mmp)
+		{
+		    emsg(_(e_maxmempat));
+		    --depth;
+		    return NULL;
+		}
 		if (subs != &temp_subs)
 		{
 		    /* "subs" may point into the current array, need to make a
@@ -4462,8 +4475,14 @@ skip_add:
 		    subs = &temp_subs;
 		}
 
-		/* TODO: check for vim_realloc() returning NULL. */
-		l->t = vim_realloc(l->t, newlen * sizeof(nfa_thread_T));
+		newt = vim_realloc(l->t, newsize);
+		if (newt == NULL)
+		{
+		    // out of memory
+		    --depth;
+		    return NULL;
+		}
+		l->t = newt;
 		l->len = newlen;
 	    }
 
@@ -4608,7 +4627,9 @@ skip_add:
 	    }
 
 	    subs = addstate(l, state->out, subs, pim, off_arg);
-	    /* "subs" may have changed, need to set "sub" again */
+	    if (subs == NULL)
+		break;
+	    // "subs" may have changed, need to set "sub" again
 #ifdef FEAT_SYN_HL
 	    if (state->c >= NFA_ZOPEN && state->c <= NFA_ZOPEN9)
 		sub = &subs->synt;
@@ -4632,7 +4653,7 @@ skip_add:
 			? subs->norm.list.multi[0].end_lnum >= 0
 			: subs->norm.list.line[0].end != NULL))
 	    {
-		/* Do not overwrite the position set by \ze. */
+		// Do not overwrite the position set by \ze.
 		subs = addstate(l, state->out, subs, pim, off_arg);
 		break;
 	    }
@@ -4708,6 +4729,8 @@ skip_add:
 	    }
 
 	    subs = addstate(l, state->out, subs, pim, off_arg);
+	    if (subs == NULL)
+		break;
 	    /* "subs" may have changed, need to set "sub" again */
 #ifdef FEAT_SYN_HL
 	    if (state->c >= NFA_ZCLOSE && state->c <= NFA_ZCLOSE9)
@@ -4723,6 +4746,7 @@ skip_add:
 	    sub->in_use = save_in_use;
 	    break;
     }
+    --depth;
     return subs;
 }
 
@@ -4732,7 +4756,7 @@ skip_add:
  * This makes sure the order of states to be tried does not change, which
  * matters for alternatives.
  */
-    static void
+    static regsubs_T *
 addstate_here(
     nfa_list_T		*l,	/* runtime state list */
     nfa_state_T		*state,	/* state to update */
@@ -4743,23 +4767,26 @@ addstate_here(
     int tlen = l->n;
     int count;
     int listidx = *ip;
+    regsubs_T *r;
 
     /* First add the state(s) at the end, so that we know how many there are.
      * Pass the listidx as offset (avoids adding another argument to
      * addstate(). */
-    addstate(l, state, subs, pim, -listidx - ADDSTATE_HERE_OFFSET);
+    r = addstate(l, state, subs, pim, -listidx - ADDSTATE_HERE_OFFSET);
+    if (r == NULL)
+	return NULL;
 
-    /* when "*ip" was at the end of the list, nothing to do */
+    // when "*ip" was at the end of the list, nothing to do
     if (listidx + 1 == tlen)
-	return;
+	return r;
 
-    /* re-order to put the new state at the current position */
+    // re-order to put the new state at the current position
     count = l->n - tlen;
     if (count == 0)
-	return; /* no state got added */
+	return r; // no state got added
     if (count == 1)
     {
-	/* overwrite the current state */
+	// overwrite the current state
 	l->t[listidx] = l->t[l->n - 1];
     }
     else if (count > 1)
@@ -4768,12 +4795,19 @@ addstate_here(
 	{
 	    /* not enough space to move the new states, reallocate the list
 	     * and move the states to the right position */
-	    nfa_thread_T *newl;
+	    int		    newlen = l->len * 3 / 2 + 50;
+	    size_t	    newsize = newlen * sizeof(nfa_thread_T);
+	    nfa_thread_T    *newl;
 
-	    l->len = l->len * 3 / 2 + 50;
-	    newl = (nfa_thread_T *)alloc(l->len * sizeof(nfa_thread_T));
+	    if ((long)(newsize >> 10) >= p_mmp)
+	    {
+		emsg(_(e_maxmempat));
+		return NULL;
+	    }
+	    newl = (nfa_thread_T *)alloc((int)newsize);
 	    if (newl == NULL)
-		return;
+		return NULL;
+	    l->len = newlen;
 	    mch_memmove(&(newl[0]),
 		    &(l->t[0]),
 		    sizeof(nfa_thread_T) * listidx);
@@ -4800,6 +4834,8 @@ addstate_here(
     }
     --l->n;
     *ip = listidx - 1;
+
+    return r;
 }
 
 /*
@@ -4872,6 +4908,18 @@ check_char_class(int class, int c)
 	    break;
 	case NFA_CLASS_ESCAPE:
 	    if (c == '\033')
+		return OK;
+	    break;
+	case NFA_CLASS_IDENT:
+	    if (vim_isIDc(c))
+		return OK;
+	    break;
+	case NFA_CLASS_KEYWORD:
+	    if (reg_iswordc(c))
+		return OK;
+	    break;
+	case NFA_CLASS_FNAME:
+	    if (vim_isfilec(c))
 		return OK;
 	    break;
 
@@ -5119,10 +5167,8 @@ recursive_regmatch(
 	    if ((int)(rex.input - rex.line) >= state->val)
 	    {
 		rex.input -= state->val;
-#ifdef FEAT_MBYTE
 		if (has_mbyte)
 		    rex.input -= mb_head_off(rex.line, rex.input);
-#endif
 	    }
 	    else
 		rex.input = rex.line;
@@ -5381,11 +5427,7 @@ skip_to_start(int c, colnr_T *colp)
     char_u *s;
 
     /* Used often, do some work to avoid call overhead. */
-    if (!rex.reg_ic
-#ifdef FEAT_MBYTE
-		&& !has_mbyte
-#endif
-		)
+    if (!rex.reg_ic && !has_mbyte)
 	s = vim_strbyte(rex.line + *colp, c);
     else
 	s = cstrchr(rex.line + *colp, c);
@@ -5424,12 +5466,9 @@ find_match_text(colnr_T startcol, int regstart, char_u *match_text)
 	    len2 += MB_CHAR2LEN(c2);
 	}
 	if (match
-#ifdef FEAT_MBYTE
 		/* check that no composing char follows */
 		&& !(enc_utf8
-			   && utf_iscomposing(PTR2CHAR(rex.line + col + len2)))
-#endif
-		)
+			  && utf_iscomposing(PTR2CHAR(rex.line + col + len2))))
 	{
 	    cleanup_subexpr();
 	    if (REG_MULTI)
@@ -5503,6 +5542,7 @@ nfa_regmatch(
     int		add_count;
     int		add_off = 0;
     int		toplevel = start->c == NFA_MOPEN;
+    regsubs_T	*r;
 #ifdef NFA_REGEXP_DEBUG_LOG
     FILE	*debug;
 #endif
@@ -5577,10 +5617,15 @@ nfa_regmatch(
 	else
 	    m->norm.list.line[0].start = rex.input;
 	m->norm.in_use = 1;
-	addstate(thislist, start->out, m, NULL, 0);
+	r = addstate(thislist, start->out, m, NULL, 0);
     }
     else
-	addstate(thislist, start, m, NULL, 0);
+	r = addstate(thislist, start, m, NULL, 0);
+    if (r == NULL)
+    {
+	nfa_match = NFA_TOO_EXPENSIVE;
+	goto theend;
+    }
 
 #define	ADD_STATE_IF_MATCH(state)			\
     if (result) {					\
@@ -5596,14 +5641,12 @@ nfa_regmatch(
 	int	curc;
 	int	clen;
 
-#ifdef FEAT_MBYTE
 	if (has_mbyte)
 	{
 	    curc = (*mb_ptr2char)(rex.input);
 	    clen = (*mb_ptr2len)(rex.input);
 	}
 	else
-#endif
 	{
 	    curc = *rex.input;
 	    clen = 1;
@@ -5708,12 +5751,11 @@ nfa_regmatch(
 	    {
 	    case NFA_MATCH:
 	      {
-#ifdef FEAT_MBYTE
 		/* If the match ends before a composing characters and
 		 * rex.reg_icombine is not set, that is not really a match. */
 		if (enc_utf8 && !rex.reg_icombine && utf_iscomposing(curc))
 		    break;
-#endif
+
 		nfa_match = TRUE;
 		copy_sub(&submatch->norm, &t->subs.norm);
 #ifdef FEAT_SYN_HL
@@ -5887,8 +5929,12 @@ nfa_regmatch(
 			/* t->state->out1 is the corresponding END_INVISIBLE
 			 * node; Add its out to the current list (zero-width
 			 * match). */
-			addstate_here(thislist, t->state->out1->out, &t->subs,
-							       &pim, &listidx);
+			if (addstate_here(thislist, t->state->out1->out,
+					     &t->subs, &pim, &listidx) == NULL)
+			{
+			    nfa_match = NFA_TOO_EXPENSIVE;
+			    goto theend;
+			}
 		    }
 		}
 		break;
@@ -6024,7 +6070,6 @@ nfa_regmatch(
 
 		if (curc == NUL)
 		    result = FALSE;
-#ifdef FEAT_MBYTE
 		else if (has_mbyte)
 		{
 		    int this_class;
@@ -6036,7 +6081,6 @@ nfa_regmatch(
 		    else if (reg_prev_class() == this_class)
 			result = FALSE;
 		}
-#endif
 		else if (!vim_iswordc_buf(curc, rex.reg_buf)
 			   || (rex.input > rex.line
 				&& vim_iswordc_buf(rex.input[-1], rex.reg_buf)))
@@ -6052,7 +6096,6 @@ nfa_regmatch(
 		result = TRUE;
 		if (rex.input == rex.line)
 		    result = FALSE;
-#ifdef FEAT_MBYTE
 		else if (has_mbyte)
 		{
 		    int this_class, prev_class;
@@ -6064,7 +6107,6 @@ nfa_regmatch(
 					|| prev_class == 0 || prev_class == 1)
 			result = FALSE;
 		}
-#endif
 		else if (!vim_iswordc_buf(rex.input[-1], rex.reg_buf)
 			|| (rex.input[0] != NUL
 					&& vim_iswordc_buf(curc, rex.reg_buf)))
@@ -6093,7 +6135,6 @@ nfa_regmatch(
 		}
 		break;
 
-#ifdef FEAT_MBYTE
 	    case NFA_COMPOSING:
 	    {
 		int	    mc = curc;
@@ -6169,7 +6210,6 @@ nfa_regmatch(
 		ADD_STATE_IF_MATCH(end);
 		break;
 	    }
-#endif
 
 	    case NFA_NEWL:
 		if (curc == NUL && !rex.reg_line_lbr && REG_MULTI
@@ -6274,13 +6314,11 @@ nfa_regmatch(
 	    case NFA_ANY_COMPOSING:
 		/* On a composing character skip over it.  Otherwise do
 		 * nothing.  Always matches. */
-#ifdef FEAT_MBYTE
 		if (enc_utf8 && utf_iscomposing(curc))
 		{
 		    add_off = clen;
 		}
 		else
-#endif
 		{
 		    add_here = TRUE;
 		    add_off = 0;
@@ -6562,10 +6600,7 @@ nfa_regmatch(
 		    /* Bail out quickly when there can't be a match, avoid the
 		     * overhead of win_linetabsize() on long lines. */
 		    if (op != 1 && col > t->state->val
-#ifdef FEAT_MBYTE
-			    * (has_mbyte ? MB_MAXBYTES : 1)
-#endif
-			    )
+			    * (has_mbyte ? MB_MAXBYTES : 1))
 			break;
 		    result = FALSE;
 		    if (op == 1 && col - 1 > t->state->val && col > 100)
@@ -6676,12 +6711,10 @@ nfa_regmatch(
 
 		if (!result && rex.reg_ic)
 		    result = MB_TOLOWER(c) == MB_TOLOWER(curc);
-#ifdef FEAT_MBYTE
 		/* If rex.reg_icombine is not set only skip over the character
 		 * itself.  When it is set skip over composing characters. */
 		if (result && enc_utf8 && !rex.reg_icombine)
 		    clen = utf_ptr2len(rex.input);
-#endif
 		ADD_STATE_IF_MATCH(t->state);
 		break;
 	      }
@@ -6775,12 +6808,18 @@ nfa_regmatch(
 		}
 
 		if (add_here)
-		    addstate_here(thislist, add_state, &t->subs, pim, &listidx);
+		    r = addstate_here(thislist, add_state, &t->subs,
+								pim, &listidx);
 		else
 		{
-		    addstate(nextlist, add_state, &t->subs, pim, add_off);
+		    r = addstate(nextlist, add_state, &t->subs, pim, add_off);
 		    if (add_count > 0)
 			nextlist->t[nextlist->n - 1].count = add_count;
+		}
+		if (r == NULL)
+		{
+		    nfa_match = NFA_TOO_EXPENSIVE;
+		    goto theend;
 		}
 	    }
 
@@ -6857,11 +6896,21 @@ nfa_regmatch(
 					 (colnr_T)(rex.input - rex.line) + clen;
 		    else
 			m->norm.list.line[0].start = rex.input + clen;
-		    addstate(nextlist, start->out, m, NULL, clen);
+		    if (addstate(nextlist, start->out, m, NULL, clen) == NULL)
+		    {
+			nfa_match = NFA_TOO_EXPENSIVE;
+			goto theend;
+		    }
 		}
 	    }
 	    else
-		addstate(nextlist, start, m, NULL, clen);
+	    {
+		if (addstate(nextlist, start, m, NULL, clen) == NULL)
+		{
+		    nfa_match = NFA_TOO_EXPENSIVE;
+		    goto theend;
+		}
+	    }
 	}
 
 #ifdef ENABLE_LOG
@@ -7104,11 +7153,9 @@ nfa_regexec_both(
     else if (prog->regflags & RF_NOICASE)
 	rex.reg_ic = FALSE;
 
-#ifdef FEAT_MBYTE
     /* If pattern contains "\Z" overrule value of rex.reg_icombine */
     if (prog->regflags & RF_ICOMBINE)
 	rex.reg_icombine = TRUE;
-#endif
 
     rex.line = line;
     rex.lnum = 0;    /* relative to line */
@@ -7149,11 +7196,7 @@ nfa_regexec_both(
 
 	/* If match_text is set it contains the full text that must match.
 	 * Nothing else to try. Doesn't handle combining chars well. */
-	if (prog->match_text != NULL
-#ifdef FEAT_MBYTE
-		    && !rex.reg_icombine
-#endif
-		)
+	if (prog->match_text != NULL && !rex.reg_icombine)
 	    return find_match_text(col, prog->regstart, prog->match_text);
     }
 
@@ -7209,12 +7252,7 @@ nfa_regcomp(char_u *expr, int re_flags)
      * (and count its size). */
     postfix = re2post();
     if (postfix == NULL)
-    {
-	/* TODO: only give this error for debugging? */
-	if (post_ptr >= post_end)
-	    siemsg("Internal error: estimated max number of states insufficient: %ld", post_end - post_start);
 	goto fail;	    /* Cascaded (syntax?) error */
-    }
 
     /*
      * In order to build the NFA, we parse the input regexp twice:
@@ -7334,9 +7372,7 @@ nfa_regexec_nl(
     rex.reg_buf = curbuf;
     rex.reg_win = NULL;
     rex.reg_ic = rmp->rm_ic;
-#ifdef FEAT_MBYTE
     rex.reg_icombine = FALSE;
-#endif
     rex.reg_maxcol = 0;
     return nfa_regexec_both(line, col, NULL, NULL);
 }
@@ -7385,9 +7421,7 @@ nfa_regexec_multi(
     rex.reg_maxline = rex.reg_buf->b_ml.ml_line_count - lnum;
     rex.reg_line_lbr = FALSE;
     rex.reg_ic = rmp->rmm_ic;
-#ifdef FEAT_MBYTE
     rex.reg_icombine = FALSE;
-#endif
     rex.reg_maxcol = rmp->rmm_maxcol;
 
     return nfa_regexec_both(NULL, col, tm, timed_out);

@@ -10,7 +10,7 @@
  * os_win32.c
  *
  * Used for both the console version and the Win32 GUI.  A lot of code is for
- * the console version only, so there is a lot of "#ifndef FEAT_GUI_W32".
+ * the console version only, so there is a lot of "#ifndef FEAT_GUI_MSWIN".
  *
  * Win32 (Windows NT and Windows 95) system-dependent routines.
  * Portions lifted from the Win32 SDK samples, the MSDOS-dependent code,
@@ -45,7 +45,7 @@
 #endif
 
 #ifndef PROTO
-# if defined(FEAT_TITLE) && !defined(FEAT_GUI_W32)
+# if defined(FEAT_TITLE) && !defined(FEAT_GUI_MSWIN)
 #  include <shellapi.h>
 # endif
 #endif
@@ -151,7 +151,7 @@ typedef int LPSECURITY_ATTRIBUTES;
 # define wcsicmp(a, b) wcscmpi((a), (b))
 #endif
 
-#ifndef FEAT_GUI_W32
+#ifndef FEAT_GUI_MSWIN
 /* Win32 Console handles for input and output */
 static HANDLE g_hConIn  = INVALID_HANDLE_VALUE;
 static HANDLE g_hConOut = INVALID_HANDLE_VALUE;
@@ -171,6 +171,9 @@ static int g_fForceExit = FALSE;    /* set when forcefully exiting */
 static void scroll(unsigned cLines);
 static void set_scroll_region(unsigned left, unsigned top,
 			      unsigned right, unsigned bottom);
+static void set_scroll_region_tb(unsigned top, unsigned bottom);
+static void set_scroll_region_lr(unsigned left, unsigned right);
+static void insert_lines(unsigned cLines);
 static void delete_lines(unsigned cLines);
 static void gotoxy(unsigned x, unsigned y);
 static void standout(void);
@@ -186,7 +189,11 @@ static int win32_getattrs(char_u *name);
 static int win32_setattrs(char_u *name, int attrs);
 static int win32_set_archive(char_u *name);
 
-#ifndef FEAT_GUI_W32
+static int conpty_working = 0;
+static int conpty_stable = 0;
+static void vtp_flag_init();
+
+#ifndef FEAT_GUI_MSWIN
 static int vtp_working = 0;
 static void vtp_init();
 static void vtp_exit();
@@ -220,7 +227,7 @@ static void reset_console_color_rgb(void);
 # define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
 #endif
 
-#ifndef FEAT_GUI_W32
+#ifndef FEAT_GUI_MSWIN
 static int suppress_winsize = 1;	/* don't fiddle with console */
 #endif
 
@@ -228,7 +235,7 @@ static char_u *exe_path = NULL;
 
 static BOOL win8_or_later = FALSE;
 
-#ifndef FEAT_GUI_W32
+#ifndef FEAT_GUI_MSWIN
 /* Dynamic loading for portability */
 typedef struct _DYN_CONSOLE_SCREEN_BUFFER_INFOEX
 {
@@ -247,6 +254,7 @@ static PfnGetConsoleScreenBufferInfoEx pGetConsoleScreenBufferInfoEx;
 typedef BOOL (WINAPI *PfnSetConsoleScreenBufferInfoEx)(HANDLE, PDYN_CONSOLE_SCREEN_BUFFER_INFOEX);
 static PfnSetConsoleScreenBufferInfoEx pSetConsoleScreenBufferInfoEx;
 static BOOL has_csbiex = FALSE;
+#endif
 
 /*
  * Get version number including build number
@@ -276,7 +284,7 @@ get_build_number(void)
     return ver;
 }
 
-
+#ifndef FEAT_GUI_MSWIN
 /*
  * Version of ReadConsoleInput() that works with IME.
  * Works around problems on Windows 8.
@@ -452,11 +460,7 @@ unescape_shellxquote(char_u *p, char_u *escaped)
     {
 	if (*p == '^' && vim_strchr(escaped, p[1]) != NULL)
 	    mch_memmove(p, p + 1, l--);
-#ifdef FEAT_MBYTE
 	n = (*mb_ptr2len)(p);
-#else
-	n = 1;
-#endif
 	p += n;
 	l -= n;
     }
@@ -826,7 +830,7 @@ PlatformId(void)
     }
 }
 
-#ifndef FEAT_GUI_W32
+#ifndef FEAT_GUI_MSWIN
 
 #define SHIFT  (SHIFT_PRESSED)
 #define CTRL   (RIGHT_CTRL_PRESSED | LEFT_CTRL_PRESSED)
@@ -1118,7 +1122,7 @@ decode_key_event(
 # pragma optimize("", on)
 #endif
 
-#endif /* FEAT_GUI_W32 */
+#endif /* FEAT_GUI_MSWIN */
 
 
 #ifdef FEAT_MOUSE
@@ -1126,7 +1130,7 @@ decode_key_event(
 /*
  * For the GUI the mouse handling is in gui_w32.c.
  */
-# ifdef FEAT_GUI_W32
+# ifdef FEAT_GUI_MSWIN
     void
 mch_setmouse(int on UNUSED)
 {
@@ -1437,7 +1441,7 @@ decode_mouse_event(
     return TRUE;
 }
 
-# endif /* FEAT_GUI_W32 */
+# endif /* FEAT_GUI_MSWIN */
 #endif /* FEAT_MOUSE */
 
 
@@ -1477,7 +1481,7 @@ mch_update_cursor(void)
 }
 #endif
 
-#ifndef FEAT_GUI_W32	    /* this isn't used for the GUI */
+#ifndef FEAT_GUI_MSWIN	    /* this isn't used for the GUI */
 /*
  * Handle FOCUS_EVENT.
  */
@@ -1487,6 +1491,8 @@ handle_focus_event(INPUT_RECORD ir)
     g_fJustGotFocus = ir.Event.FocusEvent.bSetFocus;
     ui_focus_change((int)g_fJustGotFocus);
 }
+
+static void ResizeConBuf(HANDLE hConsole, COORD coordScreen);
 
 /*
  * Wait until console input from keyboard or mouse is available,
@@ -1512,9 +1518,8 @@ WaitForChar(long msec, int ignore_input)
 	/* Wait forever. */
 	dwEndTime = INFINITE;
 
-    /* We need to loop until the end of the time period, because
-     * we might get multiple unusable mouse events in that time.
-     */
+    // We need to loop until the end of the time period, because
+    // we might get multiple unusable mouse events in that time.
     for (;;)
     {
 	// Only process messages when waiting.
@@ -1576,34 +1581,35 @@ WaitForChar(long msec, int ignore_input)
 		dwWaitTime = p_mzq; /* don't wait longer than 'mzquantum' */
 #endif
 #ifdef FEAT_TIMERS
+	    // When waiting very briefly don't trigger timers.
+	    if (dwWaitTime > 10)
 	    {
 		long	due_time;
 
-		/* When waiting very briefly don't trigger timers. */
-		if (dwWaitTime > 10)
+		// Trigger timers and then get the time in msec until the next
+		// one is due.  Wait up to that time.
+		due_time = check_due_timer();
+		if (typebuf.tb_change_cnt != tb_change_cnt)
 		{
-		    /* Trigger timers and then get the time in msec until the
-		     * next one is due.  Wait up to that time. */
-		    due_time = check_due_timer();
-		    if (typebuf.tb_change_cnt != tb_change_cnt)
-		    {
-			/* timer may have used feedkeys() */
-			return FALSE;
-		    }
-		    if (due_time > 0 && dwWaitTime > (DWORD)due_time)
-			dwWaitTime = due_time;
+		    // timer may have used feedkeys().
+		    return FALSE;
 		}
+		if (due_time > 0 && dwWaitTime > (DWORD)due_time)
+		    dwWaitTime = due_time;
 	    }
 #endif
+	    if (
 #ifdef FEAT_CLIENTSERVER
-	    /* Wait for either an event on the console input or a message in
-	     * the client-server window. */
-	    if (msg_wait_for_multiple_objects(1, &g_hConIn, FALSE,
-				 dwWaitTime, QS_SENDMESSAGE) != WAIT_OBJECT_0)
+		    // Wait for either an event on the console input or a
+		    // message in the client-server window.
+		    msg_wait_for_multiple_objects(1, &g_hConIn, FALSE,
+				  dwWaitTime, QS_SENDMESSAGE) != WAIT_OBJECT_0
 #else
-	    if (wait_for_single_object(g_hConIn, dwWaitTime) != WAIT_OBJECT_0)
+		    wait_for_single_object(g_hConIn, dwWaitTime)
+							      != WAIT_OBJECT_0
 #endif
-		    continue;
+		    )
+		continue;
 	}
 
 	cRecords = 0;
@@ -1653,11 +1659,18 @@ WaitForChar(long msec, int ignore_input)
 		handle_focus_event(ir);
 	    else if (ir.EventType == WINDOW_BUFFER_SIZE_EVENT)
 	    {
-		/* Only call shell_resized() when the size actually change to
-		 * avoid the screen is cleard. */
-		if (ir.Event.WindowBufferSizeEvent.dwSize.X != Columns
-			|| ir.Event.WindowBufferSizeEvent.dwSize.Y != Rows)
+		COORD dwSize = ir.Event.WindowBufferSizeEvent.dwSize;
+
+		// Only call shell_resized() when the size actually change to
+		// avoid the screen is cleard.
+		if (dwSize.X != Columns || dwSize.Y != Rows)
+		{
+		    CONSOLE_SCREEN_BUFFER_INFO csbi;
+		    GetConsoleScreenBufferInfo(g_hConOut, &csbi);
+		    dwSize.Y = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+		    ResizeConBuf(g_hConOut, dwSize);
 		    shell_resized();
+		}
 	    }
 #ifdef FEAT_MOUSE
 	    else if (ir.EventType == MOUSE_EVENT
@@ -1762,7 +1775,7 @@ tgetch(int *pmodifiers, WCHAR *pch2)
 #endif
     }
 }
-#endif /* !FEAT_GUI_W32 */
+#endif /* !FEAT_GUI_MSWIN */
 
 
 /*
@@ -1780,7 +1793,7 @@ mch_inchar(
     long	time UNUSED,
     int		tb_change_cnt UNUSED)
 {
-#ifndef FEAT_GUI_W32	    /* this isn't used for the GUI */
+#ifndef FEAT_GUI_MSWIN	    /* this isn't used for the GUI */
 
     int		len;
     int		c;
@@ -1889,7 +1902,6 @@ mch_inchar(
 	    {
 		int	n = 1;
 
-#ifdef FEAT_MBYTE
 		if (ch2 == NUL)
 		{
 		    int	    i;
@@ -1911,7 +1923,6 @@ mch_inchar(
 		    }
 		}
 		else
-#endif
 		    typeahead[typeaheadlen] = c;
 		if (ch2 != NUL)
 		{
@@ -1949,17 +1960,11 @@ mch_inchar(
 		if ((modifiers & MOD_MASK_ALT)
 			&& n == 1
 			&& (typeahead[typeaheadlen] & 0x80) == 0
-#ifdef FEAT_MBYTE
 			&& !enc_dbcs
-#endif
 		   )
 		{
-#ifdef FEAT_MBYTE
 		    n = (*mb_char2bytes)(typeahead[typeaheadlen] | 0x80,
 						    typeahead + typeaheadlen);
-#else
-		    typeahead[typeaheadlen] |= 0x80;
-#endif
 		    modifiers &= ~MOD_MASK_ALT;
 		}
 
@@ -2001,9 +2006,9 @@ theend:
     }
     return len;
 
-#else /* FEAT_GUI_W32 */
+#else /* FEAT_GUI_MSWIN */
     return 0;
-#endif /* FEAT_GUI_W32 */
+#endif /* FEAT_GUI_MSWIN */
 }
 
 #ifndef PROTO
@@ -2043,7 +2048,6 @@ executable_exists(char *name, char_u **path, int use_path)
 	return FALSE;
     }
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR	*p = enc_to_utf16((char_u *)name, NULL);
@@ -2072,7 +2076,6 @@ executable_exists(char *name, char_u **path, int use_path)
 	    return TRUE;
 	}
     }
-#endif
 
     curpath = getenv("PATH");
     newpath = (char*)alloc((unsigned)(STRLEN(curpath) + 3));
@@ -2120,7 +2123,7 @@ bad_param_handler(const wchar_t *expression,
 # define SET_INVALID_PARAM_HANDLER
 #endif
 
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
 
 /*
  * GUI version of mch_init().
@@ -2188,10 +2191,12 @@ mch_init(void)
 #ifdef FEAT_CLIPBOARD
     win_clip_init();
 #endif
+
+    vtp_flag_init();
 }
 
 
-#else /* FEAT_GUI_W32 */
+#else /* FEAT_GUI_MSWIN */
 
 #define SRWIDTH(sr) ((sr).Right - (sr).Left + 1)
 #define SRHEIGHT(sr) ((sr).Bottom - (sr).Top + 1)
@@ -2688,6 +2693,7 @@ mch_init(void)
     win_clip_init();
 #endif
 
+    vtp_flag_init();
     vtp_init();
 }
 
@@ -2745,7 +2751,7 @@ mch_exit(int r)
 
     exit(r);
 }
-#endif /* !FEAT_GUI_W32 */
+#endif /* !FEAT_GUI_MSWIN */
 
 /*
  * Do we have an interactive window?
@@ -2757,7 +2763,7 @@ mch_check_win(
 {
     get_exe_name();
 
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
     return OK;	    /* GUI always has a tty */
 #else
     if (isatty(1))
@@ -2767,7 +2773,6 @@ mch_check_win(
 }
 
 
-#ifdef FEAT_MBYTE
 /*
  * fname_casew(): Wide version of fname_case().  Set the case of the file name,
  * if it already exists.  When "len" is > 0, also expand short to long
@@ -2877,7 +2882,6 @@ fname_casew(
     wcscpy(name, szTrueName);
     return OK;
 }
-#endif
 
 /*
  * fname_case(): Set the case of the file name, if it already exists.
@@ -2905,7 +2909,6 @@ fname_case(
 
     slash_adjust(name);
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR	*p = enc_to_utf16(name, NULL);
@@ -2932,7 +2935,6 @@ fname_case(
 	}
 	return;
     }
-#endif
 
     /* If 'enc' is utf-8, flen can be larger than _MAX_PATH.
      * So we should check this after calling wide function. */
@@ -2961,7 +2963,6 @@ fname_case(
 	porigPrev = porig;
 	while (*porig != NUL && *porig != psepc)
 	{
-#ifdef FEAT_MBYTE
 	    int l;
 
 	    if (enc_dbcs)
@@ -2971,7 +2972,6 @@ fname_case(
 		    *ptrue++ = *porig++;
 	    }
 	    else
-#endif
 		*ptrue++ = *porig++;
 	}
 	*ptrue = NUL;
@@ -3043,7 +3043,6 @@ mch_get_user_name(
     char szUserName[256 + 1];	/* UNLEN is 256 */
     DWORD cch = sizeof szUserName;
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR wszUserName[256 + 1];	/* UNLEN is 256 */
@@ -3061,7 +3060,6 @@ mch_get_user_name(
 	    }
 	}
     }
-#endif
     if (GetUserName(szUserName, &cch))
     {
 	vim_strncpy(s, (char_u *)szUserName, len - 1);
@@ -3082,7 +3080,6 @@ mch_get_host_name(
 {
     DWORD cch = len;
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR wszHostName[256 + 1];
@@ -3100,7 +3097,6 @@ mch_get_host_name(
 	    }
 	}
     }
-#endif
     if (!GetComputerName((LPSTR)s, &cch))
 	vim_strncpy(s, (char_u *)"PC (Win32 Vim)", len - 1);
 }
@@ -3134,7 +3130,6 @@ mch_dirname(
      * But the Win32s known bug list says that getcwd() doesn't work
      * so use the Win32 system call instead. <Negri>
      */
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR	wbuf[_MAX_PATH + 1];
@@ -3166,7 +3161,6 @@ mch_dirname(
 	}
 	return FAIL;
     }
-#endif
     if (GetCurrentDirectory(len, (LPSTR)buf) == 0)
 	return FAIL;
     lfnlen = GetLongPathNameA((LPCSTR)buf, (LPSTR)abuf, _MAX_PATH);
@@ -3204,7 +3198,6 @@ mch_setperm(char_u *name, long perm)
 {
     long	n = -1;
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR *p = enc_to_utf16(name, NULL);
@@ -3218,7 +3211,6 @@ mch_setperm(char_u *name, long perm)
 	}
     }
     if (n == -1)
-#endif
 	n = _chmod((const char *)name, perm);
     if (n == -1)
 	return FAIL;
@@ -3289,7 +3281,6 @@ mch_isrealdir(char_u *name)
     int
 mch_mkdir(char_u *name)
 {
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR	*p;
@@ -3302,7 +3293,6 @@ mch_mkdir(char_u *name)
 	vim_free(p);
 	return retval;
     }
-#endif
     return _mkdir((const char *)name);
 }
 
@@ -3313,7 +3303,6 @@ mch_mkdir(char_u *name)
     int
 mch_rmdir(char_u *name)
 {
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR	*p;
@@ -3326,7 +3315,6 @@ mch_rmdir(char_u *name)
 	vim_free(p);
 	return retval;
     }
-#endif
     return _rmdir((const char *)name);
 }
 
@@ -3352,7 +3340,6 @@ mch_is_symbolic_link(char_u *name)
     int			res = FALSE;
     WIN32_FIND_DATAA	findDataA;
     DWORD		fileFlags = 0, reparseTag = 0;
-#ifdef FEAT_MBYTE
     WCHAR		*wn = NULL;
     WIN32_FIND_DATAW	findDataW;
 
@@ -3369,7 +3356,6 @@ mch_is_symbolic_link(char_u *name)
 	}
     }
     else
-#endif
     {
 	hFind = FindFirstFile((LPCSTR)name, &findDataA);
 	if (hFind != INVALID_HANDLE_VALUE)
@@ -3414,7 +3400,6 @@ win32_fileinfo(char_u *fname, BY_HANDLE_FILE_INFORMATION *info)
 {
     HANDLE	hFile;
     int		res = FILEINFO_READ_FAIL;
-#ifdef FEAT_MBYTE
     WCHAR	*wn = NULL;
 
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
@@ -3435,7 +3420,6 @@ win32_fileinfo(char_u *fname, BY_HANDLE_FILE_INFORMATION *info)
 	vim_free(wn);
     }
     else
-#endif
 	hFile = CreateFile((LPCSTR)fname,    /* file name */
 		    GENERIC_READ,	    /* access mode */
 		    FILE_SHARE_READ | FILE_SHARE_WRITE,	/* share mode */
@@ -3465,7 +3449,6 @@ win32_fileinfo(char_u *fname, BY_HANDLE_FILE_INFORMATION *info)
 win32_getattrs(char_u *name)
 {
     int		attr;
-#ifdef FEAT_MBYTE
     WCHAR	*p = NULL;
 
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
@@ -3477,7 +3460,6 @@ win32_getattrs(char_u *name)
 	vim_free(p);
     }
     else
-#endif
 	attr = GetFileAttributes((char *)name);
 
     return attr;
@@ -3492,7 +3474,6 @@ win32_getattrs(char_u *name)
 win32_setattrs(char_u *name, int attrs)
 {
     int res;
-#ifdef FEAT_MBYTE
     WCHAR	*p = NULL;
 
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
@@ -3504,7 +3485,6 @@ win32_setattrs(char_u *name, int attrs)
 	vim_free(p);
     }
     else
-#endif
 	res = SetFileAttributes((char *)name, attrs);
 
     return res ? 0 : -1;
@@ -3620,9 +3600,7 @@ mch_nodetype(char_u *name)
 {
     HANDLE	hFile;
     int		type;
-#ifdef FEAT_MBYTE
     WCHAR	*wn = NULL;
-#endif
 
     /* We can't open a file with a name "\\.\con" or "\\.\prn" and trying to
      * read from it later will cause Vim to hang.  Thus return NODE_WRITABLE
@@ -3630,7 +3608,6 @@ mch_nodetype(char_u *name)
     if (STRNCMP(name, "\\\\.\\", 4) == 0)
 	return NODE_WRITABLE;
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
 	wn = enc_to_utf16(name, NULL);
 
@@ -3646,7 +3623,6 @@ mch_nodetype(char_u *name)
 	vim_free(wn);
     }
     else
-#endif
 	hFile = CreateFile((LPCSTR)name,    /* file name */
 		    GENERIC_WRITE,	    /* access mode */
 		    0,			    /* share mode */
@@ -3694,7 +3670,6 @@ mch_get_acl(char_u *fname)
     p = (struct my_acl *)alloc_clear((unsigned)sizeof(struct my_acl));
     if (p != NULL)
     {
-# ifdef FEAT_MBYTE
 	WCHAR	*wn = NULL;
 
 	if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
@@ -3736,7 +3711,6 @@ mch_get_acl(char_u *fname)
 	    vim_free(wn);
 	}
 	else
-# endif
 	{
 	    /* Try to retrieve the entire security descriptor. */
 	    err = GetNamedSecurityInfo(
@@ -3814,9 +3788,7 @@ mch_set_acl(char_u *fname, vim_acl_T acl)
 
     if (p != NULL)
     {
-# ifdef FEAT_MBYTE
 	WCHAR	*wn = NULL;
-# endif
 
 	/* Set security flags */
 	if (p->pSidOwner)
@@ -3835,7 +3807,6 @@ mch_set_acl(char_u *fname, vim_acl_T acl)
 	if (p->pSacl)
 	    sec_info |= SACL_SECURITY_INFORMATION;
 
-# ifdef FEAT_MBYTE
 	if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
 	    wn = enc_to_utf16(fname, NULL);
 	if (wn != NULL)
@@ -3852,7 +3823,6 @@ mch_set_acl(char_u *fname, vim_acl_T acl)
 	    vim_free(wn);
 	}
 	else
-# endif
 	{
 	    (void)SetNamedSecurityInfo(
 			(LPSTR)fname,		// Abstract filename
@@ -3882,7 +3852,7 @@ mch_free_acl(vim_acl_T acl)
 #endif
 }
 
-#ifndef FEAT_GUI_W32
+#ifndef FEAT_GUI_MSWIN
 
 /*
  * handler for ctrl-break, ctrl-c interrupts, and fatal events.
@@ -4198,7 +4168,7 @@ mch_set_winsize_now(void)
     }
     suppress_winsize = 0;
 }
-#endif /* FEAT_GUI_W32 */
+#endif /* FEAT_GUI_MSWIN */
 
     static BOOL
 vim_create_process(
@@ -4210,7 +4180,6 @@ vim_create_process(
     LPVOID		*env,
     char		*cwd)
 {
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	BOOL	ret;
@@ -4246,7 +4215,6 @@ vim_create_process(
 	return ret;
     }
 fallback:
-#endif
     return CreateProcess(
 	NULL,			/* Executable name */
 	cmd,			/* Command to execute */
@@ -4266,7 +4234,6 @@ vim_shell_execute(
     char *cmd,
     INT	 n_show_cmd)
 {
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR *wcmd = enc_to_utf16((char_u *)cmd, NULL);
@@ -4278,12 +4245,11 @@ vim_shell_execute(
 	    return ret;
 	}
     }
-#endif
     return ShellExecute(NULL, NULL, cmd, NULL, NULL, n_show_cmd);
 }
 
 
-#if defined(FEAT_GUI_W32) || defined(PROTO)
+#if defined(FEAT_GUI_MSWIN) || defined(PROTO)
 
 /*
  * Specialised version of system() for Win32 GUI mode.
@@ -4465,20 +4431,9 @@ dump_pipe(int	    options,
     while (ret != 0 && availableBytes > 0)
     {
 	repeatCount++;
-	toRead =
-# ifdef FEAT_MBYTE
-		 (DWORD)(BUFLEN - *buffer_off);
-# else
-		 (DWORD)BUFLEN;
-# endif
+	toRead = (DWORD)(BUFLEN - *buffer_off);
 	toRead = availableBytes < toRead ? availableBytes : toRead;
-	ReadFile(g_hChildStd_OUT_Rd, buffer
-# ifdef FEAT_MBYTE
-		 + *buffer_off, toRead
-# else
-		 , toRead
-# endif
-		 , &len, NULL);
+	ReadFile(g_hChildStd_OUT_Rd, buffer + *buffer_off, toRead , &len, NULL);
 
 	/* If we haven't read anything, there is a problem */
 	if (len == 0)
@@ -4500,7 +4455,6 @@ dump_pipe(int	    options,
 		    ga_append(ga, buffer[i]);
 	    }
 	}
-# ifdef FEAT_MBYTE
 	else if (has_mbyte)
 	{
 	    int		l;
@@ -4534,7 +4488,7 @@ dump_pipe(int	    options,
 	    }
 	    c = *p;
 	    *p = NUL;
-	    msg_puts(buffer);
+	    msg_puts((char *)buffer);
 	    if (p < buffer + len)
 	    {
 		*p = c;
@@ -4544,11 +4498,10 @@ dump_pipe(int	    options,
 	    }
 	    *buffer_off = 0;
 	}
-# endif /* FEAT_MBYTE */
 	else
 	{
 	    buffer[len] = NUL;
-	    msg_puts(buffer);
+	    msg_puts((char *)buffer);
 	}
 
 	windgoto(msg_row, msg_col);
@@ -4607,7 +4560,7 @@ mch_system_piped(char *cmd, int options)
 	CloseHandle(g_hChildStd_IN_Wr);
 	CloseHandle(g_hChildStd_OUT_Rd);
 	CloseHandle(g_hChildStd_OUT_Wr);
-	MSG_PUTS(_("\nCannot create pipes\n"));
+	msg_puts(_("\nCannot create pipes\n"));
     }
 
     si.cb = sizeof(si);
@@ -4739,11 +4692,9 @@ mch_system_piped(char *cmd, int options)
 			}
 			else if (ta_buf[i] == '\r')
 			    ta_buf[i] = '\n';
-# ifdef FEAT_MBYTE
 			if (has_mbyte)
 			    i += (*mb_ptr2len_len)(ta_buf + i,
 						    ta_len + len - i) - 1;
-# endif
 		    }
 
 		    /*
@@ -4754,7 +4705,6 @@ mch_system_piped(char *cmd, int options)
 		    {
 			if (ta_buf[i] == '\n' || ta_buf[i] == '\b')
 			    msg_putchar(ta_buf[i]);
-# ifdef FEAT_MBYTE
 			else if (has_mbyte)
 			{
 			    int l = (*mb_ptr2len)(ta_buf + i);
@@ -4762,7 +4712,6 @@ mch_system_piped(char *cmd, int options)
 			    msg_outtrans_len(ta_buf + i, l);
 			    i += l - 1;
 			}
-# endif
 			else
 			    msg_outtrans_len(ta_buf + i, 1);
 		    }
@@ -4856,7 +4805,6 @@ mch_system(char *cmd, int options)
 }
 #else
 
-# ifdef FEAT_MBYTE
     static int
 mch_system(char *cmd, int options)
 {
@@ -4872,9 +4820,6 @@ mch_system(char *cmd, int options)
     }
     return system(cmd);
 }
-# else
-#  define mch_system(c, o) system(c)
-# endif
 
 #endif
 
@@ -4971,7 +4916,6 @@ mch_call_shell(
     int		tmode = cur_tmode;
 #ifdef FEAT_TITLE
     char	szShellTitle[512];
-# ifdef FEAT_MBYTE
     int		did_set_title = FALSE;
 
     /* Change the title to reflect that we are in a subshell. */
@@ -5002,7 +4946,6 @@ mch_call_shell(
 	}
     }
     if (!did_set_title)
-# endif
 	/* Change the title to reflect that we are in a subshell. */
 	if (GetConsoleTitle(szShellTitle, sizeof(szShellTitle) - 4) > 0)
 	{
@@ -5181,7 +5124,7 @@ mch_call_shell(
 	    else
 	    {
 		x = -1;
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
 		emsg(_("E371: Command not found"));
 #endif
 	    }
@@ -5201,7 +5144,7 @@ mch_call_shell(
 	else
 	{
 	    cmdlen = (
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
 		(!p_stmp ? 0 : STRLEN(vimrun_path)) +
 #endif
 		STRLEN(p_sh) + STRLEN(p_shcf) + STRLEN(cmd) + 10);
@@ -5209,14 +5152,13 @@ mch_call_shell(
 	    newcmd = lalloc(cmdlen, TRUE);
 	    if (newcmd != NULL)
 	    {
-#if defined(FEAT_GUI_W32)
+#if defined(FEAT_GUI_MSWIN)
 		if (need_vimrun_warning)
 		{
 		    char *msg = _("VIMRUN.EXE not found in your $PATH.\n"
 			"External commands will not pause after completion.\n"
 			"See  :help win32-vimrun  for more information.");
 		    char *title = _("Vim Warning");
-# ifdef FEAT_MBYTE
 		    if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
 		    {
 			WCHAR *wmsg = enc_to_utf16((char_u *)msg, NULL);
@@ -5228,7 +5170,6 @@ mch_call_shell(
 			vim_free(wtitle);
 		    }
 		    else
-# endif
 			MessageBox(NULL, msg, title, MB_ICONWARNING);
 		    need_vimrun_warning = FALSE;
 		}
@@ -5255,7 +5196,7 @@ mch_call_shell(
 
     /* Print the return value, unless "vimrun" was used. */
     if (x != 0 && !(options & SHELL_SILENT) && !emsg_silent
-#if defined(FEAT_GUI_W32)
+#if defined(FEAT_GUI_MSWIN)
 		&& ((options & SHELL_DOOUT) || s_dont_use_vimrun || !p_stmp)
 #endif
 	    )
@@ -5293,8 +5234,8 @@ job_io_file_open(
 	DWORD dwFlagsAndAttributes)
 {
     HANDLE h;
-# ifdef FEAT_MBYTE
     WCHAR *wn = NULL;
+
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	wn = enc_to_utf16(fname, NULL);
@@ -5307,7 +5248,6 @@ job_io_file_open(
 	}
     }
     if (wn == NULL)
-# endif
 	h = CreateFile((LPCSTR)fname, dwDesiredAccess, dwShareMode,
 		lpSecurityAttributes, dwCreationDisposition,
 		dwFlagsAndAttributes, NULL);
@@ -5428,6 +5368,49 @@ win32_build_env(dict_T *env, garray_T *gap, int is_terminal)
 # endif
 }
 
+/*
+ * Create a pair of pipes.
+ * Return TRUE for success, FALSE for failure.
+ */
+    static BOOL
+create_pipe_pair(HANDLE handles[2])
+{
+    static LONG		s;
+    char		name[64];
+    SECURITY_ATTRIBUTES sa;
+
+    sprintf(name, "\\\\?\\pipe\\vim-%08lx-%08lx",
+	    GetCurrentProcessId(),
+	    InterlockedIncrement(&s));
+
+    // Create named pipe. Max size of named pipe is 65535.
+    handles[1] = CreateNamedPipe(
+	    name,
+	    PIPE_ACCESS_OUTBOUND | FILE_FLAG_OVERLAPPED,
+	    PIPE_TYPE_BYTE | PIPE_NOWAIT,
+	    1, MAX_NAMED_PIPE_SIZE, 0, 0, NULL);
+
+    if (handles[1] == INVALID_HANDLE_VALUE)
+	return FALSE;
+
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    sa.lpSecurityDescriptor = NULL;
+
+    handles[0] = CreateFile(name,
+	    FILE_GENERIC_READ,
+	    FILE_SHARE_READ, &sa,
+	    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+
+    if (handles[0] == INVALID_HANDLE_VALUE)
+    {
+	CloseHandle(handles[1]);
+	return FALSE;
+    }
+
+    return TRUE;
+}
+
     void
 mch_job_start(char *cmd, job_T *job, jobopt_T *options)
 {
@@ -5493,9 +5476,9 @@ mch_job_start(char *cmd, job_T *job, jobopt_T *options)
 	    goto failed;
 	}
     }
-    else if (!use_null_for_in &&
-	    (!CreatePipe(&ifd[0], &ifd[1], &saAttr, 0)
-	    || !SetHandleInformation(ifd[1], HANDLE_FLAG_INHERIT, 0)))
+    else if (!use_null_for_in
+	    && (!create_pipe_pair(ifd)
+		|| !SetHandleInformation(ifd[1], HANDLE_FLAG_INHERIT, 0)))
 	goto failed;
 
     if (use_file_for_out)
@@ -5719,7 +5702,11 @@ mch_signal_job(job_T *job, char_u *how)
     {
 	/* deadly signal */
 	if (job->jv_job_object != NULL)
+	{
+	    if (job->jv_channel != NULL && job->jv_channel->ch_anonymous_pipe)
+		job->jv_channel->ch_killing = TRUE;
 	    return TerminateJobObject(job->jv_job_object, 0) ? OK : FAIL;
+	}
 	return terminate_all(job->jv_proc_info.hProcess, 0) ? OK : FAIL;
     }
 
@@ -5749,7 +5736,7 @@ mch_clear_job(job_T *job)
 #endif
 
 
-#ifndef FEAT_GUI_W32
+#ifndef FEAT_GUI_MSWIN
 
 /*
  * Start termcap mode
@@ -5865,10 +5852,10 @@ termcap_mode_end(void)
 
     g_fTermcapMode = FALSE;
 }
-#endif /* FEAT_GUI_W32 */
+#endif /* FEAT_GUI_MSWIN */
 
 
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
     void
 mch_write(
     char_u  *s UNUSED,
@@ -6001,9 +5988,30 @@ set_scroll_region(
     g_srScrollRegion.Top =    top;
     g_srScrollRegion.Right =  right;
     g_srScrollRegion.Bottom = bottom;
+}
 
-    if (USE_VTP)
-	vtp_printf("\033[%d;%dr", top + 1, bottom + 1);
+    static void
+set_scroll_region_tb(
+    unsigned top,
+    unsigned bottom)
+{
+    if (top >= bottom || bottom > (unsigned)Rows - 1)
+	return;
+
+    g_srScrollRegion.Top = top;
+    g_srScrollRegion.Bottom = bottom;
+}
+
+    static void
+set_scroll_region_lr(
+    unsigned left,
+    unsigned right)
+{
+    if (left >= right || right > (unsigned)Columns - 1)
+	return;
+
+    g_srScrollRegion.Left = left;
+    g_srScrollRegion.Right = right;
 }
 
 
@@ -6013,47 +6021,52 @@ set_scroll_region(
     static void
 insert_lines(unsigned cLines)
 {
-    SMALL_RECT	    source;
+    SMALL_RECT	    source, clip;
     COORD	    dest;
     CHAR_INFO	    fill;
 
-    dest.X = 0;
+    dest.X = g_srScrollRegion.Left;
     dest.Y = g_coord.Y + cLines;
 
-    source.Left   = 0;
+    source.Left   = g_srScrollRegion.Left;
     source.Top	  = g_coord.Y;
     source.Right  = g_srScrollRegion.Right;
     source.Bottom = g_srScrollRegion.Bottom - cLines;
 
-    if (!USE_VTP)
+    clip.Left   = g_srScrollRegion.Left;
+    clip.Top    = g_coord.Y;
+    clip.Right  = g_srScrollRegion.Right;
+    clip.Bottom = g_srScrollRegion.Bottom;
+
     {
 	fill.Char.AsciiChar = ' ';
-	fill.Attributes = g_attrCurrent;
+	if (!USE_VTP)
+	    fill.Attributes = g_attrCurrent;
+	else
+	    fill.Attributes = g_attrDefault;
 
-	ScrollConsoleScreenBuffer(g_hConOut, &source, NULL, dest, &fill);
-    }
-    else
-    {
 	set_console_color_rgb();
 
-	gotoxy(1, source.Top + 1);
-	vtp_printf("\033[%dT", cLines);
+	ScrollConsoleScreenBuffer(g_hConOut, &source, &clip, dest, &fill);
     }
-
-    /* Here we have to deal with a win32 console flake: If the scroll
-     * region looks like abc and we scroll c to a and fill with d we get
-     * cbd... if we scroll block c one line at a time to a, we get cdd...
-     * vim expects cdd consistently... So we have to deal with that
-     * here... (this also occurs scrolling the same way in the other
-     * direction).  */
+    // Here we have to deal with a win32 console flake: If the scroll
+    // region looks like abc and we scroll c to a and fill with d we get
+    // cbd... if we scroll block c one line at a time to a, we get cdd...
+    // vim expects cdd consistently... So we have to deal with that
+    // here... (this also occurs scrolling the same way in the other
+    // direction).
 
     if (source.Bottom < dest.Y)
     {
 	COORD coord;
+	int   i;
 
-	coord.X = 0;
-	coord.Y = source.Bottom;
-	clear_chars(coord, Columns * (dest.Y - source.Bottom));
+	coord.X = source.Left;
+	for (i = clip.Top; i < dest.Y; ++i)
+	{
+	    coord.Y = i;
+	    clear_chars(coord, source.Right - source.Left + 1);
+	}
     }
 }
 
@@ -6064,50 +6077,51 @@ insert_lines(unsigned cLines)
     static void
 delete_lines(unsigned cLines)
 {
-    SMALL_RECT	    source;
+    SMALL_RECT	    source, clip;
     COORD	    dest;
     CHAR_INFO	    fill;
     int		    nb;
 
-    dest.X = 0;
+    dest.X = g_srScrollRegion.Left;
     dest.Y = g_coord.Y;
 
-    source.Left   = 0;
+    source.Left   = g_srScrollRegion.Left;
     source.Top	  = g_coord.Y + cLines;
     source.Right  = g_srScrollRegion.Right;
     source.Bottom = g_srScrollRegion.Bottom;
 
-    if (!USE_VTP)
+    clip.Left   = g_srScrollRegion.Left;
+    clip.Top    = g_coord.Y;
+    clip.Right  = g_srScrollRegion.Right;
+    clip.Bottom = g_srScrollRegion.Bottom;
+
     {
 	fill.Char.AsciiChar = ' ';
-	fill.Attributes = g_attrCurrent;
+	if (!USE_VTP)
+	    fill.Attributes = g_attrCurrent;
+	else
+	    fill.Attributes = g_attrDefault;
 
-	ScrollConsoleScreenBuffer(g_hConOut, &source, NULL, dest, &fill);
-    }
-    else
-    {
 	set_console_color_rgb();
 
-	gotoxy(1, source.Top + 1);
-	vtp_printf("\033[%dS", cLines);
+	ScrollConsoleScreenBuffer(g_hConOut, &source, &clip, dest, &fill);
     }
-
-    /* Here we have to deal with a win32 console flake: If the scroll
-     * region looks like abc and we scroll c to a and fill with d we get
-     * cbd... if we scroll block c one line at a time to a, we get cdd...
-     * vim expects cdd consistently... So we have to deal with that
-     * here... (this also occurs scrolling the same way in the other
-     * direction).  */
+    // Here we have to deal with a win32 console flake; See insert_lines()
+    // above.
 
     nb = dest.Y + (source.Bottom - source.Top) + 1;
 
     if (nb < source.Top)
     {
 	COORD coord;
+	int   i;
 
-	coord.X = 0;
-	coord.Y = nb;
-	clear_chars(coord, Columns * (source.Top - nb));
+	coord.X = source.Left;
+	for (i = nb; i < clip.Bottom; ++i)
+	{
+	    coord.Y = i;
+	    clear_chars(coord, source.Right - source.Left + 1);
+	}
     }
 }
 
@@ -6295,7 +6309,6 @@ write_chars(
     COORD coord = g_coord;
     DWORD written;
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	static WCHAR	*unicodebuf = NULL;
@@ -6323,7 +6336,7 @@ write_chars(
 	     * character was written, otherwise we get stuck. */
 	    if (WriteConsoleOutputCharacterW(g_hConOut, unicodebuf, length,
 			coord, &cchwritten) == 0
-		    || cchwritten == 0)
+		    || cchwritten == 0 || cchwritten == (DWORD)-1)
 		cchwritten = 1;
 	}
 	else
@@ -6348,7 +6361,6 @@ write_chars(
 	}
     }
     else
-#endif
     {
 	if (!USE_VTP)
 	{
@@ -6358,7 +6370,7 @@ write_chars(
 	     * character was written, otherwise we get stuck. */
 	    if (WriteConsoleOutputCharacter(g_hConOut, (LPCSTR)pchBuf, cbToWrite,
 			coord, &written) == 0
-		    || written == 0)
+		    || written == 0 || written == (DWORD)-1)
 		written = 1;
 	}
 	else
@@ -6535,6 +6547,14 @@ mch_write(
 		{
 		    set_scroll_region(0, arg1 - 1, Columns - 1, arg2 - 1);
 		}
+		else if (argc == 2 && *p == 'R')
+		{
+		    set_scroll_region_tb(arg1, arg2);
+		}
+		else if (argc == 2 && *p == 'V')
+		{
+		    set_scroll_region_lr(arg1, arg2);
+		}
 		else if (argc == 1 && *p == 'A')
 		{
 		    gotoxy(g_coord.X + 1,
@@ -6672,7 +6692,7 @@ mch_write(
 #endif
 }
 
-#endif /* FEAT_GUI_W32 */
+#endif /* FEAT_GUI_MSWIN */
 
 
 /*
@@ -6683,7 +6703,7 @@ mch_delay(
     long    msec,
     int	    ignoreinput UNUSED)
 {
-#ifdef FEAT_GUI_W32
+#ifdef FEAT_GUI_MSWIN
     Sleep((int)msec);	    /* never wait for input */
 #else /* Console */
     if (ignoreinput)
@@ -6719,10 +6739,8 @@ mch_delay(
     int
 mch_remove(char_u *name)
 {
-#ifdef FEAT_MBYTE
     WCHAR	*wn = NULL;
     int		n;
-#endif
 
     /*
      * On Windows, deleting a directory's symbolic link is done by
@@ -6733,7 +6751,6 @@ mch_remove(char_u *name)
 
     win32_setattrs(name, FILE_ATTRIBUTE_NORMAL);
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	wn = enc_to_utf16(name, NULL);
@@ -6744,7 +6761,6 @@ mch_remove(char_u *name)
 	    return n;
 	}
     }
-#endif
     return DeleteFile((LPCSTR)name) ? 0 : -1;
 }
 
@@ -6755,7 +6771,7 @@ mch_remove(char_u *name)
     void
 mch_breakcheck(int force)
 {
-#ifndef FEAT_GUI_W32	    /* never used */
+#ifndef FEAT_GUI_MSWIN	    /* never used */
     if (g_fCtrlCPressed || g_fCBrkPressed)
     {
 	ctrl_break_was_pressed = g_fCBrkPressed;
@@ -6795,7 +6811,6 @@ mch_total_mem(int special UNUSED)
     return (long_u)((ms.ullTotalPhys - WINNT_RESERVE_BYTES) / 1024);
 }
 
-#ifdef FEAT_MBYTE
 /*
  * Same code as below, but with wide functions and no comments.
  * Return 0 for success, non-zero for failure.
@@ -6849,7 +6864,6 @@ mch_wrename(WCHAR *wold, WCHAR *wnew)
 
     return 0;
 }
-#endif
 
 
 /*
@@ -6880,7 +6894,6 @@ mch_rename(
     char	szNewPath[_MAX_PATH+1];
     char	*pszFilePart;
     HANDLE	hf;
-#ifdef FEAT_MBYTE
     WCHAR	*wold = NULL;
     WCHAR	*wnew = NULL;
     int		retval = -1;
@@ -6895,7 +6908,6 @@ mch_rename(
 	vim_free(wnew);
 	return retval;
     }
-#endif
 
     /*
      * No need to play tricks unless the file name contains a "~" as the
@@ -6980,25 +6992,20 @@ mch_access(char *n, int p)
 {
     HANDLE	hFile;
     int		retval = -1;	    /* default: fail */
-#ifdef FEAT_MBYTE
     WCHAR	*wn = NULL;
 
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
 	wn = enc_to_utf16((char_u *)n, NULL);
-#endif
 
     if (mch_isdir((char_u *)n))
     {
 	char TempName[_MAX_PATH + 16] = "";
-#ifdef FEAT_MBYTE
 	WCHAR TempNameW[_MAX_PATH + 16] = L"";
-#endif
 
 	if (p & R_OK)
 	{
 	    /* Read check is performed by seeing if we can do a find file on
 	     * the directory for any file. */
-#ifdef FEAT_MBYTE
 	    if (wn != NULL)
 	    {
 		int		    i;
@@ -7018,7 +7025,6 @@ mch_access(char *n, int p)
 		    (void)FindClose(hFile);
 	    }
 	    else
-#endif
 	    {
 		char		    *pch;
 		WIN32_FIND_DATA	    d;
@@ -7043,7 +7049,6 @@ mch_access(char *n, int p)
 	     * directories on read-only network shares.  However, in
 	     * directories whose ACL allows writes but denies deletes will end
 	     * up keeping the temporary file :-(. */
-#ifdef FEAT_MBYTE
 	    if (wn != NULL)
 	    {
 		if (!GetTempFileNameW(wn, L"VIM", 0, TempNameW))
@@ -7052,7 +7057,6 @@ mch_access(char *n, int p)
 		    DeleteFileW(TempNameW);
 	    }
 	    else
-#endif
 	    {
 		if (!GetTempFileName(n, "VIM", 0, TempName))
 		    goto getout;
@@ -7070,12 +7074,10 @@ mch_access(char *n, int p)
 	DWORD access_mode = ((p & W_OK) ? GENERIC_WRITE : 0)
 					     | ((p & R_OK) ? GENERIC_READ : 0);
 
-#ifdef FEAT_MBYTE
 	if (wn != NULL)
 	    hFile = CreateFileW(wn, access_mode, share_mode,
 						 NULL, OPEN_EXISTING, 0, NULL);
 	else
-#endif
 	    hFile = CreateFile(n, access_mode, share_mode,
 						 NULL, OPEN_EXISTING, 0, NULL);
 	if (hFile == INVALID_HANDLE_VALUE)
@@ -7085,13 +7087,10 @@ mch_access(char *n, int p)
 
     retval = 0;	    /* success */
 getout:
-#ifdef FEAT_MBYTE
     vim_free(wn);
-#endif
     return retval;
 }
 
-#if defined(FEAT_MBYTE) || defined(PROTO)
 /*
  * Version of open() that may use UTF-16 file name.
  */
@@ -7099,7 +7098,7 @@ getout:
 mch_open(const char *name, int flags, int mode)
 {
     /* _wopen() does not work with Borland C 5.5: creates a read-only file. */
-# ifndef __BORLANDC__
+#ifndef __BORLANDC__
     WCHAR	*wn;
     int		f;
 
@@ -7113,7 +7112,7 @@ mch_open(const char *name, int flags, int mode)
 	    return f;
 	}
     }
-# endif
+#endif
 
     /* open() can open a file which name is longer than _MAX_PATH bytes
      * and shorter than _MAX_PATH characters successfully, but sometimes it
@@ -7136,7 +7135,7 @@ mch_fopen(const char *name, const char *mode)
 
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
-# if defined(DEBUG) && _MSC_VER >= 1400
+#if defined(DEBUG) && _MSC_VER >= 1400
 	/* Work around an annoying assertion in the Microsoft debug CRT
 	 * when mode's text/binary setting doesn't match _get_fmode(). */
 	char newMode = mode[strlen(mode) - 1];
@@ -7147,7 +7146,7 @@ mch_fopen(const char *name, const char *mode)
 	    _set_fmode(_O_TEXT);
 	else if (newMode == 'b')
 	    _set_fmode(_O_BINARY);
-# endif
+#endif
 	wn = enc_to_utf16((char_u *)name, NULL);
 	wm = enc_to_utf16((char_u *)mode, NULL);
 	if (wn != NULL && wm != NULL)
@@ -7155,9 +7154,9 @@ mch_fopen(const char *name, const char *mode)
 	vim_free(wn);
 	vim_free(wm);
 
-# if defined(DEBUG) && _MSC_VER >= 1400
+#if defined(DEBUG) && _MSC_VER >= 1400
 	_set_fmode(oldMode);
-# endif
+#endif
 	return f;
     }
 
@@ -7170,9 +7169,7 @@ mch_fopen(const char *name, const char *mode)
 
     return fopen(name, mode);
 }
-#endif
 
-#ifdef FEAT_MBYTE
 /*
  * SUB STREAM (aka info stream) handling:
  *
@@ -7316,7 +7313,6 @@ copy_infostreams(char_u *from, char_u *to)
     vim_free(fromw);
     vim_free(tow);
 }
-#endif
 
 /*
  * Copy file attributes from file "from" to file "to".
@@ -7326,11 +7322,9 @@ copy_infostreams(char_u *from, char_u *to)
     int
 mch_copy_file_attribute(char_u *from, char_u *to)
 {
-#ifdef FEAT_MBYTE
     /* File streams only work on Windows NT and later. */
     PlatformId();
     copy_infostreams(from, to);
-#endif
     return 0;
 }
 
@@ -7420,7 +7414,6 @@ myresetstkoflw(void)
 #endif
 
 
-#if defined(FEAT_MBYTE) || defined(PROTO)
 /*
  * The command line arguments in UCS2
  */
@@ -7647,7 +7640,6 @@ fix_arg_enc(void)
 
     set_alist_count();
 }
-#endif
 
     int
 mch_setenv(char *var, char *value, int x)
@@ -7660,7 +7652,6 @@ mch_setenv(char *var, char *value, int x)
 
     sprintf((char *)envbuf, "%s=%s", var, value);
 
-#ifdef FEAT_MBYTE
     if (enc_codepage >= 0 && (int)GetACP() != enc_codepage)
     {
 	WCHAR	    *p = enc_to_utf16(envbuf, NULL);
@@ -7669,14 +7660,13 @@ mch_setenv(char *var, char *value, int x)
 	if (p == NULL)
 	    return -1;
 	_wputenv(p);
-# ifdef libintl_wputenv
+#ifdef libintl_wputenv
 	libintl_wputenv(p);
-# endif
+#endif
 	/* Unlike Un*x systems, we can free the string for _wputenv(). */
 	vim_free(p);
     }
     else
-#endif
     {
 	_putenv((char *)envbuf);
 #ifdef libintl_putenv
@@ -7689,30 +7679,53 @@ mch_setenv(char *var, char *value, int x)
     return 0;
 }
 
-#ifndef FEAT_GUI_W32
-
 /*
  * Support for 256 colors and 24-bit colors was added in Windows 10
  * version 1703 (Creators update).
  */
-# define VTP_FIRST_SUPPORT_BUILD MAKE_VER(10, 0, 15063)
+#define VTP_FIRST_SUPPORT_BUILD MAKE_VER(10, 0, 15063)
+
+/*
+ * Support for pseudo-console (ConPTY) was added in windows 10
+ * version 1809 (October 2018 update).  However, that version is unstable.
+ */
+#define CONPTY_FIRST_SUPPORT_BUILD  MAKE_VER(10, 0, 17763)
+#define CONPTY_STABLE_BUILD	    MAKE_VER(10, 0, 32767)  // T.B.D.
+
+    static void
+vtp_flag_init(void)
+{
+    DWORD   ver = get_build_number();
+#ifndef FEAT_GUI_MSWIN
+    DWORD   mode;
+    HANDLE  out;
+
+    out = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    vtp_working = (ver >= VTP_FIRST_SUPPORT_BUILD) ? 1 : 0;
+    GetConsoleMode(out, &mode);
+    mode |= (ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+    if (SetConsoleMode(out, mode) == 0)
+	vtp_working = 0;
+#endif
+
+    if (ver >= CONPTY_FIRST_SUPPORT_BUILD)
+	conpty_working = 1;
+    if (ver >= CONPTY_STABLE_BUILD)
+	conpty_stable = 1;
+
+}
+
+#if !defined(FEAT_GUI_MSWIN) || defined(PROTO)
 
     static void
 vtp_init(void)
 {
-    DWORD   ver, mode;
     HMODULE hKerneldll;
     DYN_CONSOLE_SCREEN_BUFFER_INFOEX csbi;
 # ifdef FEAT_TERMGUICOLORS
     COLORREF fg, bg;
 # endif
-
-    ver = get_build_number();
-    vtp_working = (ver >= VTP_FIRST_SUPPORT_BUILD) ? 1 : 0;
-    GetConsoleMode(g_hConOut, &mode);
-    mode |= (ENABLE_PROCESSED_OUTPUT | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-    if (SetConsoleMode(g_hConOut, mode) == 0)
-	vtp_working = 0;
 
     /* Use functions supported from Vista */
     hKerneldll = GetModuleHandle("kernel32.dll");
@@ -7897,12 +7910,6 @@ control_console_color_rgb(void)
 }
 
     int
-has_vtp_working(void)
-{
-    return vtp_working;
-}
-
-    int
 use_vtp(void)
 {
     return USE_VTP;
@@ -7914,4 +7921,47 @@ is_term_win32(void)
     return T_NAME != NULL && STRCMP(T_NAME, "win32") == 0;
 }
 
+    int
+has_vtp_working(void)
+{
+    return vtp_working;
+}
+
+#endif
+
+    int
+has_conpty_working(void)
+{
+    return conpty_working;
+}
+
+    int
+is_conpty_stable(void)
+{
+    return conpty_stable;
+}
+
+#if !defined(FEAT_GUI_MSWIN) || defined(PROTO)
+    void
+resize_console_buf(void)
+{
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    COORD coord;
+    SMALL_RECT newsize;
+
+    if (GetConsoleScreenBufferInfo(g_hConOut, &csbi))
+    {
+	coord.X = SRWIDTH(csbi.srWindow);
+	coord.Y = SRHEIGHT(csbi.srWindow);
+	SetConsoleScreenBufferSize(g_hConOut, coord);
+
+	newsize.Left = 0;
+	newsize.Top = 0;
+	newsize.Right = coord.X - 1;
+	newsize.Bottom = coord.Y - 1;
+	SetConsoleWindowInfo(g_hConOut, TRUE, &newsize);
+
+	SetConsoleScreenBufferSize(g_hConOut, coord);
+    }
+}
 #endif

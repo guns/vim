@@ -143,7 +143,7 @@ do_debug(char_u *cmd)
     debug_mode = TRUE;
 
     if (!debug_did_msg)
-	MSG(_("Entering Debug mode.  Type \"cont\" to continue."));
+	msg(_("Entering Debug mode.  Type \"cont\" to continue."));
     if (debug_oldval != NULL)
     {
 	smsg(_("Oldval = \"%s\""), debug_oldval);
@@ -157,7 +157,7 @@ do_debug(char_u *cmd)
 	debug_newval = NULL;
     }
     if (sourcing_name != NULL)
-	msg(sourcing_name);
+	msg((char *)sourcing_name);
     if (sourcing_lnum != 0)
 	smsg(_("line %ld: %s"), (long)sourcing_lnum, cmd);
     else
@@ -390,7 +390,7 @@ do_checkbacktracelevel(void)
     if (debug_backtrace_level < 0)
     {
 	debug_backtrace_level = 0;
-	MSG(_("frame is zero"));
+	msg(_("frame is zero"));
     }
     else
     {
@@ -857,7 +857,7 @@ ex_breaklist(exarg_T *eap UNUSED)
     int		i;
 
     if (dbg_breakp.ga_len == 0)
-	MSG(_("No breakpoints defined"));
+	msg(_("No breakpoints defined"));
     else
 	for (i = 0; i < dbg_breakp.ga_len; ++i)
 	{
@@ -1048,7 +1048,7 @@ dbg_breakpoint(char_u *name, linenr_T lnum)
     void
 profile_start(proftime_T *tm)
 {
-# ifdef WIN3264
+# ifdef MSWIN
     QueryPerformanceCounter(tm);
 # else
     gettimeofday(tm, NULL);
@@ -1063,7 +1063,7 @@ profile_end(proftime_T *tm)
 {
     proftime_T now;
 
-# ifdef WIN3264
+# ifdef MSWIN
     QueryPerformanceCounter(&now);
     tm->QuadPart = now.QuadPart - tm->QuadPart;
 # else
@@ -1084,7 +1084,7 @@ profile_end(proftime_T *tm)
     void
 profile_sub(proftime_T *tm, proftime_T *tm2)
 {
-# ifdef WIN3264
+# ifdef MSWIN
     tm->QuadPart -= tm2->QuadPart;
 # else
     tm->tv_usec -= tm2->tv_usec;
@@ -1106,7 +1106,7 @@ profile_msg(proftime_T *tm)
 {
     static char buf[50];
 
-# ifdef WIN3264
+# ifdef MSWIN
     LARGE_INTEGER   fr;
 
     QueryPerformanceFrequency(&fr);
@@ -1124,7 +1124,7 @@ profile_msg(proftime_T *tm)
     float_T
 profile_float(proftime_T *tm)
 {
-#  ifdef WIN3264
+#  ifdef MSWIN
     LARGE_INTEGER   fr;
 
     QueryPerformanceFrequency(&fr);
@@ -1145,7 +1145,7 @@ profile_setlimit(long msec, proftime_T *tm)
 	profile_zero(tm);
     else
     {
-# ifdef WIN3264
+# ifdef MSWIN
 	LARGE_INTEGER   fr;
 
 	QueryPerformanceCounter(tm);
@@ -1170,7 +1170,7 @@ profile_passed_limit(proftime_T *tm)
 {
     proftime_T	now;
 
-# ifdef WIN3264
+# ifdef MSWIN
     if (tm->QuadPart == 0)  /* timer was not set */
 	return FALSE;
     QueryPerformanceCounter(&now);
@@ -1190,7 +1190,7 @@ profile_passed_limit(proftime_T *tm)
     void
 profile_zero(proftime_T *tm)
 {
-# ifdef WIN3264
+# ifdef MSWIN
     tm->QuadPart = 0;
 # else
     tm->tv_usec = 0;
@@ -1207,7 +1207,7 @@ static long	last_timer_id = 0;
     long
 proftime_time_left(proftime_T *due, proftime_T *now)
 {
-#  ifdef WIN3264
+#  ifdef MSWIN
     LARGE_INTEGER fr;
 
     if (now->QuadPart > due->QuadPart)
@@ -1359,7 +1359,6 @@ check_due_timer(void)
 	    did_throw = FALSE;
 	    current_exception = NULL;
 	    save_vimvars(&vvsave);
-
 	    timer->tr_firing = TRUE;
 	    timer_callback(timer);
 	    timer->tr_firing = FALSE;
@@ -1578,7 +1577,7 @@ timer_free_all()
 #  endif
 # endif
 
-#if defined(FEAT_SYN_HL) && defined(FEAT_RELTIME) && defined(FEAT_FLOAT)
+#if defined(FEAT_SYN_HL) && defined(FEAT_RELTIME) && defined(FEAT_FLOAT) && defined(FEAT_PROFILE)
 # if defined(HAVE_MATH_H)
 #  include <math.h>
 # endif
@@ -1593,7 +1592,7 @@ profile_divide(proftime_T *tm, int count, proftime_T *tm2)
 	profile_zero(tm2);
     else
     {
-# ifdef WIN3264
+# ifdef MSWIN
 	tm2->QuadPart = tm->QuadPart / count;
 # else
 	double usec = (tm->tv_sec * 1000000.0 + tm->tv_usec) / count;
@@ -1618,7 +1617,7 @@ static proftime_T prof_wait_time;
     void
 profile_add(proftime_T *tm, proftime_T *tm2)
 {
-# ifdef WIN3264
+# ifdef MSWIN
     tm->QuadPart += tm2->QuadPart;
 # else
     tm->tv_usec += tm2->tv_usec;
@@ -1639,7 +1638,7 @@ profile_self(proftime_T *self, proftime_T *total, proftime_T *children)
 {
     /* Check that the result won't be negative.  Can happen with recursive
      * calls. */
-#ifdef WIN3264
+#ifdef MSWIN
     if (total->QuadPart <= children->QuadPart)
 	return;
 #else
@@ -1679,7 +1678,7 @@ profile_sub_wait(proftime_T *tm, proftime_T *tma)
     int
 profile_equal(proftime_T *tm1, proftime_T *tm2)
 {
-# ifdef WIN3264
+# ifdef MSWIN
     return (tm1->QuadPart == tm2->QuadPart);
 # else
     return (tm1->tv_usec == tm2->tv_usec && tm1->tv_sec == tm2->tv_sec);
@@ -1692,7 +1691,7 @@ profile_equal(proftime_T *tm1, proftime_T *tm2)
     int
 profile_cmp(const proftime_T *tm1, const proftime_T *tm2)
 {
-# ifdef WIN3264
+# ifdef MSWIN
     return (int)(tm2->QuadPart - tm1->QuadPart);
 # else
     if (tm1->tv_sec == tm2->tv_sec)
@@ -1957,7 +1956,7 @@ script_dump_profile(FILE *fd)
 		    if (IObuff[IOSIZE - 2] != NUL && IObuff[IOSIZE - 2] != NL)
 		    {
 			int n = IOSIZE - 2;
-# ifdef FEAT_MBYTE
+
 			if (enc_utf8)
 			{
 			    /* Move to the first byte of this char.
@@ -1968,7 +1967,6 @@ script_dump_profile(FILE *fd)
 			}
 			else if (has_mbyte)
 			    n -= mb_head_off(IObuff, IObuff + n);
-# endif
 			IObuff[n] = NL;
 			IObuff[n + 1] = NUL;
 		    }
@@ -2430,7 +2428,7 @@ buf_write_all(buf_T *buf, int forceit)
     if (curbuf != old_curbuf)
     {
 	msg_source(HL_ATTR(HLF_W));
-	MSG(_("Warning: Entered other buffer unexpectedly (check autocommands)"));
+	msg(_("Warning: Entered other buffer unexpectedly (check autocommands)"));
     }
     return retval;
 }
@@ -4112,7 +4110,7 @@ source_pyx_file(exarg_T *eap, char_u *fname)
 	vim_snprintf((char *)IObuff, IOSIZE,
 		_("W20: Required python version 2.x not supported, ignoring file: %s"),
 		fname);
-	MSG(IObuff);
+	msg((char *)IObuff);
 # endif
 	return;
     }
@@ -4124,7 +4122,7 @@ source_pyx_file(exarg_T *eap, char_u *fname)
 	vim_snprintf((char *)IObuff, IOSIZE,
 		_("W21: Required python version 3.x not supported, ignoring file: %s"),
 		fname);
-	MSG(IObuff);
+	msg((char *)IObuff);
 # endif
 	return;
     }
@@ -4244,7 +4242,7 @@ struct source_cookie
     FILE	*fp;		/* opened file for sourcing */
     char_u      *nextline;      /* if not NULL: line that was read ahead */
     int		finished;	/* ":finish" used */
-#if defined(USE_CRNL) || defined(USE_CR)
+#ifdef USE_CRNL
     int		fileformat;	/* EOL_UNKNOWN, EOL_UNIX or EOL_DOS */
     int		error;		/* TRUE if LF found after CR-LF */
 #endif
@@ -4254,9 +4252,7 @@ struct source_cookie
     int		dbg_tick;	/* debug_tick when breakpoint was set */
     int		level;		/* top nesting level of sourced file */
 #endif
-#ifdef FEAT_MBYTE
     vimconv_T	conv;		/* type of conversion */
-#endif
 };
 
 #ifdef FEAT_EVAL
@@ -4290,7 +4286,7 @@ source_level(void *cookie)
 
 static char_u *get_one_sourceline(struct source_cookie *sp);
 
-#if (defined(WIN32) && defined(FEAT_CSCOPE)) || defined(HAVE_FD_CLOEXEC)
+#if (defined(MSWIN) && defined(FEAT_CSCOPE)) || defined(HAVE_FD_CLOEXEC)
 # define USE_FOPEN_NOINH
 /*
  * Special function to open a file without handle inheritance.
@@ -4299,7 +4295,7 @@ static char_u *get_one_sourceline(struct source_cookie *sp);
     static FILE *
 fopen_noinh_readbin(char *filename)
 {
-# ifdef WIN32
+# ifdef MSWIN
     int	fd_tmp = mch_open(filename, O_RDONLY | O_BINARY | O_NOINHERIT, 0);
 # else
     int	fd_tmp = mch_open(filename, O_RDONLY, 0);
@@ -4468,15 +4464,6 @@ do_source(
     cookie.error = FALSE;
 #endif
 
-#ifdef USE_CR
-    /* If no automatic file format: Set default to CR. */
-    if (*p_ffs == NUL)
-	cookie.fileformat = EOL_MAC;
-    else
-	cookie.fileformat = EOL_UNKNOWN;
-    cookie.error = FALSE;
-#endif
-
     cookie.nextline = NULL;
     cookie.finished = FALSE;
 
@@ -4593,7 +4580,6 @@ do_source(
 # endif
 #endif
 
-#ifdef FEAT_MBYTE
     cookie.conv.vc_type = CONV_NONE;		/* no conversion */
 
     /* Read the first line so we can check for a UTF-8 BOM. */
@@ -4612,7 +4598,6 @@ do_source(
 	    firstline = p;
 	}
     }
-#endif
 
     /*
      * Call do_cmdline, which will call getsourceline() to get the lines.
@@ -4683,9 +4668,7 @@ almosttheend:
     fclose(cookie.fp);
     vim_free(cookie.nextline);
     vim_free(firstline);
-#ifdef FEAT_MBYTE
     convert_setup(&cookie.conv, NULL, NULL);
-#endif
 
     if (trigger_source_post)
 	apply_autocmds(EVENT_SOURCEPOST, fname_exp, fname_exp, FALSE, curbuf);
@@ -4773,59 +4756,6 @@ free_scriptnames(void)
 }
 # endif
 
-#endif
-
-#if defined(USE_CR) || defined(PROTO)
-
-# if defined(__MSL__) && (__MSL__ >= 22)
-/*
- * Newer version of the Metrowerks library handle DOS and UNIX files
- * without help.
- * Test with earlier versions, MSL 2.2 is the library supplied with
- * Codewarrior Pro 2.
- */
-    char *
-fgets_cr(char *s, int n, FILE *stream)
-{
-    return fgets(s, n, stream);
-}
-# else
-/*
- * Version of fgets() which also works for lines ending in a <CR> only
- * (Macintosh format).
- * For older versions of the Metrowerks library.
- * At least CodeWarrior 9 needed this code.
- */
-    char *
-fgets_cr(char *s, int n, FILE *stream)
-{
-    int	c = 0;
-    int char_read = 0;
-
-    while (!feof(stream) && c != '\r' && c != '\n' && char_read < n - 1)
-    {
-	c = fgetc(stream);
-	s[char_read++] = c;
-	/* If the file is in DOS format, we need to skip a NL after a CR.  I
-	 * thought it was the other way around, but this appears to work... */
-	if (c == '\n')
-	{
-	    c = fgetc(stream);
-	    if (c != '\r')
-		ungetc(c, stream);
-	}
-    }
-
-    s[char_read] = 0;
-    if (char_read == 0)
-	return NULL;
-
-    if (feof(stream) && char_read == 1)
-	return NULL;
-
-    return s;
-}
-# endif
 #endif
 
 /*
@@ -4924,7 +4854,6 @@ getsourceline(int c UNUSED, void *cookie, int indent UNUSED)
 	}
     }
 
-#ifdef FEAT_MBYTE
     if (line != NULL && sp->conv.vc_type != CONV_NONE)
     {
 	char_u	*s;
@@ -4937,7 +4866,6 @@ getsourceline(int c UNUSED, void *cookie, int indent UNUSED)
 	    line = s;
 	}
     }
-#endif
 
 #ifdef FEAT_EVAL
     /* Did we encounter a breakpoint? */
@@ -4963,9 +4891,6 @@ get_one_sourceline(struct source_cookie *sp)
 #ifdef USE_CRNL
     int			has_cr;		/* CR-LF found */
 #endif
-#ifdef USE_CR
-    char_u		*scan;
-#endif
     int			have_read = FALSE;
 
     /* use a growarray to store the sourced line */
@@ -4982,18 +4907,9 @@ get_one_sourceline(struct source_cookie *sp)
 	    break;
 	buf = (char_u *)ga.ga_data;
 
-#ifdef USE_CR
-	if (sp->fileformat == EOL_MAC)
-	{
-	    if (fgets_cr((char *)buf + ga.ga_len, ga.ga_maxlen - ga.ga_len,
+	if (fgets((char *)buf + ga.ga_len, ga.ga_maxlen - ga.ga_len,
 							      sp->fp) == NULL)
-		break;
-	}
-	else
-#endif
-	    if (fgets((char *)buf + ga.ga_len, ga.ga_maxlen - ga.ga_len,
-							      sp->fp) == NULL)
-		break;
+	    break;
 	len = ga.ga_len + (int)STRLEN(buf + ga.ga_len);
 #ifdef USE_CRNL
 	/* Ignore a trailing CTRL-Z, when in Dos mode.	Only recognize the
@@ -5004,34 +4920,6 @@ get_one_sourceline(struct source_cookie *sp)
 	{
 	    buf[len - 1] = NUL;
 	    break;
-	}
-#endif
-
-#ifdef USE_CR
-	/* If the read doesn't stop on a new line, and there's
-	 * some CR then we assume a Mac format */
-	if (sp->fileformat == EOL_UNKNOWN)
-	{
-	    if (buf[len - 1] != '\n' && vim_strchr(buf, '\r') != NULL)
-		sp->fileformat = EOL_MAC;
-	    else
-		sp->fileformat = EOL_UNIX;
-	}
-
-	if (sp->fileformat == EOL_MAC)
-	{
-	    scan = vim_strchr(buf, '\r');
-
-	    if (scan != NULL)
-	    {
-		*scan = '\n';
-		if (*(scan + 1) != 0)
-		{
-		    *(scan + 1) = 0;
-		    fseek(sp->fp, (long)(scan - buf - len + 1), SEEK_CUR);
-		}
-	    }
-	    len = STRLEN(buf);
 	}
 #endif
 
@@ -5194,7 +5082,6 @@ script_line_end(void)
     void
 ex_scriptencoding(exarg_T *eap UNUSED)
 {
-#ifdef FEAT_MBYTE
     struct source_cookie	*sp;
     char_u			*name;
 
@@ -5219,7 +5106,6 @@ ex_scriptencoding(exarg_T *eap UNUSED)
 
     if (name != eap->arg)
 	vim_free(name);
-#endif
 }
 
 #if defined(FEAT_EVAL) || defined(PROTO)
@@ -5315,7 +5201,7 @@ get_locale_val(int what)
     /* Obtain the locale value from the libraries. */
     loc = (char_u *)setlocale(what, NULL);
 
-# ifdef WIN32
+# ifdef MSWIN
     if (loc != NULL)
     {
 	char_u	*p;
@@ -5344,7 +5230,7 @@ get_locale_val(int what)
 #endif
 
 
-#ifdef WIN32
+#ifdef MSWIN
 /*
  * On MS-Windows locale names are strings like "German_Germany.1252", but
  * gettext expects "de".  Try to translate one into another here for a few
@@ -5421,7 +5307,7 @@ get_mess_lang(void)
 	    p = mch_getenv((char_u *)"LANG");
     }
 # endif
-# ifdef WIN32
+# ifdef MSWIN
     p = gettext_lang(p);
 # endif
     return is_valid_mess_lang(p) ? p : NULL;
@@ -5432,7 +5318,6 @@ get_mess_lang(void)
 #if (defined(FEAT_EVAL) && !((defined(HAVE_LOCALE_H) || defined(X_LOCALE)) \
 	    && defined(LC_MESSAGES))) \
 	|| ((defined(HAVE_LOCALE_H) || defined(X_LOCALE)) \
-		&& (defined(FEAT_GETTEXT) || defined(FEAT_MBYTE)) \
 		&& !defined(LC_MESSAGES))
 /*
  * Get the language used for messages from the environment.
@@ -5496,8 +5381,7 @@ set_lang_var(void)
 }
 #endif
 
-#if (defined(HAVE_LOCALE_H) || defined(X_LOCALE)) \
-	&& (defined(FEAT_GETTEXT) || defined(FEAT_MBYTE))
+#if defined(HAVE_LOCALE_H) || defined(X_LOCALE) \
 /*
  * ":language":  Set the language (locale).
  */
@@ -5595,7 +5479,7 @@ ex_language(exarg_T *eap)
 
 		    /* Clear $LANGUAGE because GNU gettext uses it. */
 		    vim_setenv((char_u *)"LANGUAGE", (char_u *)"");
-# ifdef WIN32
+# ifdef MSWIN
 		    /* Apparently MS-Windows printf() may cause a crash when
 		     * we give it 8-bit text while it's expecting text in the
 		     * current locale.  This call avoids that. */
@@ -5605,7 +5489,7 @@ ex_language(exarg_T *eap)
 		if (what != LC_CTYPE)
 		{
 		    char_u	*mname;
-#ifdef WIN32
+#ifdef MSWIN
 		    mname = gettext_lang(name);
 #else
 		    mname = name;
@@ -5632,7 +5516,7 @@ ex_language(exarg_T *eap)
 
 static char_u	**locales = NULL;	/* Array of all available locales */
 
-#  ifndef WIN32
+#  ifndef MSWIN
 static int	did_init_locales = FALSE;
 
 /* Return an array of strings for all available locales + NULL for the
@@ -5683,7 +5567,7 @@ find_locales(void)
     static void
 init_locales(void)
 {
-#  ifndef WIN32
+#  ifndef MSWIN
     if (!did_init_locales)
     {
 	did_init_locales = TRUE;

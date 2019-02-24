@@ -25,6 +25,7 @@ RM =		rm
 	${CC} ${CFLAGS} $< -o $@
 
 SRC =	arabic.c						\
+	autocmd.c						\
 	blowfish.c						\
 	buffer.c						\
 	charset.c						\
@@ -41,12 +42,13 @@ SRC =	arabic.c						\
 	ex_docmd.c						\
 	ex_eval.c						\
 	ex_getln.c						\
-	farsi.c							\
 	fileio.c						\
+	findfile.c						\
 	fold.c							\
 	getchar.c						\
 	hardcopy.c						\
 	hashtab.c						\
+	indent.c						\
 	json.c							\
 	list.c							\
 	main.c							\

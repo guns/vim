@@ -20,7 +20,7 @@
 #endif
 
 /* Note: when making changes here also adjust configure.ac. */
-#ifdef WIN32
+#ifdef MSWIN
 /* WinSock API is separated from C API, thus we can't use read(), write(),
  * errno... */
 # define SOCK_ERRNO errno = WSAGetLastError()
@@ -65,7 +65,7 @@ static int safe_to_invoke_callback = 0;
 
 static char *part_names[] = {"sock", "out", "err", "in"};
 
-#ifdef WIN32
+#ifdef MSWIN
     static int
 fd_read(sock_T fd, char *buf, size_t len)
 {
@@ -80,12 +80,39 @@ fd_read(sock_T fd, char *buf, size_t len)
     static int
 fd_write(sock_T fd, char *buf, size_t len)
 {
-    HANDLE h = (HANDLE)fd;
-    DWORD nwrite;
+    size_t	todo = len;
+    HANDLE	h = (HANDLE)fd;
+    DWORD	nwrite, size, done = 0;
+    OVERLAPPED	ov;
 
-    if (!WriteFile(h, buf, (DWORD)len, &nwrite, NULL))
-	return -1;
-    return (int)nwrite;
+    while (todo > 0)
+    {
+	if (todo > MAX_NAMED_PIPE_SIZE)
+	    size = MAX_NAMED_PIPE_SIZE;
+	else
+	    size = (DWORD)todo;
+	// If the pipe overflows while the job does not read the data,
+	// WriteFile() will block forever. This abandons the write.
+	memset(&ov, 0, sizeof(ov));
+	nwrite = 0;
+	if (!WriteFile(h, buf + done, size, &nwrite, &ov))
+	{
+	    DWORD err = GetLastError();
+
+	    if (err != ERROR_IO_PENDING)
+		return -1;
+	    if (!GetOverlappedResult(h, &ov, &nwrite, FALSE))
+		return -1;
+	    FlushFileBuffers(h);
+	}
+	else if (nwrite == 0)
+	    // WriteFile() returns TRUE but did not write anything. This causes
+	    // a hang, so bail out.
+	    break;
+	todo -= nwrite;
+	done += nwrite;
+    }
+    return (int)done;
 }
 
     static void
@@ -164,7 +191,7 @@ ch_log_lead(const char *what, channel_T *ch, ch_part_T part)
 
 static int did_log_msg = TRUE;
 
-#ifndef PROTO  /* prototype is in vim.h */
+#ifndef PROTO  // prototype is in proto.h
     void
 ch_log(channel_T *ch, const char *fmt, ...)
 {
@@ -207,7 +234,7 @@ ch_error(channel_T *ch, const char *fmt, ...)
     }
 }
 
-#ifdef _WIN32
+#ifdef MSWIN
 # undef PERROR
 # define PERROR(msg) (void)semsg("%s: %s", msg, strerror_win32(errno))
 
@@ -660,7 +687,7 @@ channel_open(
     int			sd = -1;
     struct sockaddr_in	server;
     struct hostent	*host;
-#ifdef WIN32
+#ifdef MSWIN
     u_short		port = port_in;
     u_long		val = 1;
 #else
@@ -669,7 +696,7 @@ channel_open(
     channel_T		*channel;
     int			ret;
 
-#ifdef WIN32
+#ifdef MSWIN
     channel_init_winsock();
 #endif
 
@@ -731,7 +758,7 @@ channel_open(
 	{
 	    /* Make connect() non-blocking. */
 	    if (
-#ifdef _WIN32
+#ifdef MSWIN
 		ioctlsocket(sd, FIONBIO, &val) < 0
 #else
 		fcntl(sd, F_SETFL, O_NONBLOCK) < 0
@@ -777,14 +804,14 @@ channel_open(
 
 	/* If connect() didn't finish then try using select() to wait for the
 	 * connection to be made. For Win32 always use select() to wait. */
-#ifndef WIN32
+#ifndef MSWIN
 	if (errno != ECONNREFUSED)
 #endif
 	{
 	    struct timeval	tv;
 	    fd_set		rfds;
 	    fd_set		wfds;
-#ifndef WIN32
+#ifndef MSWIN
 	    int			so_error = 0;
 	    socklen_t		so_error_len = sizeof(so_error);
 	    struct timeval	start_tv;
@@ -797,7 +824,7 @@ channel_open(
 
 	    tv.tv_sec = waitnow / 1000;
 	    tv.tv_usec = (waitnow % 1000) * 1000;
-#ifndef WIN32
+#ifndef MSWIN
 	    gettimeofday(&start_tv, NULL);
 #endif
 	    ch_log(channel,
@@ -815,7 +842,7 @@ channel_open(
 		return NULL;
 	    }
 
-#ifdef WIN32
+#ifdef MSWIN
 	    /* On Win32: select() is expected to work and wait for up to
 	     * "waitnow" msec for the socket to be open. */
 	    if (FD_ISSET(sd, &wfds))
@@ -866,7 +893,7 @@ channel_open(
 #endif
 	}
 
-#ifndef WIN32
+#ifndef MSWIN
 	if (waittime > 1 && elapsed_msec < waittime)
 	{
 	    /* The port isn't ready but we also didn't get an error.
@@ -903,7 +930,7 @@ channel_open(
 
     if (waittime >= 0)
     {
-#ifdef _WIN32
+#ifdef MSWIN
 	val = 0;
 	ioctlsocket(sd, FIONBIO, &val);
 #else
@@ -1002,7 +1029,7 @@ ch_close_part(channel_T *channel, ch_part_T part)
 		    && (part == PART_OUT || channel->CH_OUT_FD != *fd)
 		    && (part == PART_ERR || channel->CH_ERR_FD != *fd))
 	    {
-#ifdef WIN32
+#ifdef MSWIN
 		if (channel->ch_named_pipe)
 		    DisconnectNamedPipe((HANDLE)fd);
 #endif
@@ -1026,7 +1053,7 @@ channel_set_pipes(channel_T *channel, sock_T in, sock_T out, sock_T err)
 # if defined(UNIX)
 	/* Do not end the job when all output channels are closed, wait until
 	 * the job ended. */
-	if (isatty(in))
+	if (mch_isatty(in))
 	    channel->ch_to_be_closed |= (1U << PART_IN);
 # endif
     }
@@ -1400,7 +1427,7 @@ can_write_buf_line(channel_T *channel)
 	in_part->ch_block_write = 1;
 
     /* TODO: Win32 implementation, probably using WaitForMultipleObjects() */
-#ifndef WIN32
+#ifndef MSWIN
     {
 # if defined(HAVE_SELECT)
 	struct timeval	tval;
@@ -1698,11 +1725,7 @@ channel_get_all(channel_T *channel, ch_part_T part, int *outlen)
     char_u  *res;
     char_u  *p;
 
-    /* If there is only one buffer just get that one. */
-    if (head->rq_next == NULL || head->rq_next->rq_next == NULL)
-	return channel_get(channel, part, outlen);
-
-    /* Concatenate everything into one buffer. */
+    // Concatenate everything into one buffer.
     for (node = head->rq_next; node != NULL; node = node->rq_next)
 	len += node->rq_buflen;
     res = lalloc(len + 1, TRUE);
@@ -1716,7 +1739,7 @@ channel_get_all(channel_T *channel, ch_part_T part, int *outlen)
     }
     *p = NUL;
 
-    /* Free all buffers */
+    // Free all buffers
     do
     {
 	p = channel_get(channel, part, NULL);
@@ -1725,16 +1748,37 @@ channel_get_all(channel_T *channel, ch_part_T part, int *outlen)
 
     if (outlen != NULL)
     {
+	// Returning the length, keep NUL characters.
 	*outlen += len;
 	return res;
     }
 
-    /* turn all NUL into NL */
-    while (len > 0)
+    // Turn all NUL into NL, so that the result can be used as a string.
+    p = res;
+    while (p < res + len)
     {
-	--len;
-	if (res[len] == NUL)
-	    res[len] = NL;
+	if (*p == NUL)
+	    *p = NL;
+#ifdef MSWIN
+	else if (*p == 0x1b)
+	{
+	    // crush the escape sequence OSC 0/1/2: ESC ]0;
+	    if (p + 3 < res + len
+		    && p[1] == ']'
+		    && (p[2] == '0' || p[2] == '1' || p[2] == '2')
+		    && p[3] == ';')
+	    {
+		// '\a' becomes a NL
+	        while (p < res + (len - 1) && *p != '\a')
+		    ++p;
+		// BEL is zero width characters, suppress display mistake
+		// ConPTY (after 10.0.18317) requires advance checking
+		if (p[-1] == NUL)
+		    p[-1] = 0x07;
+	    }
+	}
+#endif
+	++p;
     }
 
     return res;
@@ -2020,7 +2064,7 @@ channel_parse_json(channel_T *channel, ch_part_T part)
 		    (int)buflen);
 	    reader.js_used = 0;
 	    chanpart->ch_wait_len = buflen;
-#ifdef WIN32
+#ifdef MSWIN
 	    chanpart->ch_deadline = GetTickCount() + 100L;
 #else
 	    gettimeofday(&chanpart->ch_deadline, NULL);
@@ -2035,7 +2079,7 @@ channel_parse_json(channel_T *channel, ch_part_T part)
 	else
 	{
 	    int timeout;
-#ifdef WIN32
+#ifdef MSWIN
 	    timeout = GetTickCount() > chanpart->ch_deadline;
 #else
 	    {
@@ -2738,6 +2782,7 @@ may_invoke_callback(channel_T *channel, ch_part_T part)
     return TRUE;
 }
 
+#if defined(FEAT_NETBEANS_INTG) || defined(PROTO)
 /*
  * Return TRUE when channel "channel" is open for writing to.
  * Also returns FALSE or invalid "channel".
@@ -2748,6 +2793,7 @@ channel_can_write_to(channel_T *channel)
     return channel != NULL && (channel->CH_SOCK_FD != INVALID_FD
 			  || channel->CH_IN_FD != INVALID_FD);
 }
+#endif
 
 /*
  * Return TRUE when channel "channel" is open for reading or writing.
@@ -3152,7 +3198,7 @@ channel_wait(channel_T *channel, sock_T fd, int timeout)
     if (timeout > 0)
 	ch_log(channel, "Waiting for up to %d msec", timeout);
 
-# ifdef WIN32
+# ifdef MSWIN
     if (fd != channel->CH_SOCK_FD)
     {
 	DWORD	nread;
@@ -3167,21 +3213,14 @@ channel_wait(channel_T *channel, sock_T fd, int timeout)
 
 	    if (r && nread > 0)
 		return CW_READY;
-	    if (r == 0)
+
+	    if (channel->ch_named_pipe)
 	    {
-		DWORD err = GetLastError();
-
-		if (err != ERROR_BAD_PIPE && err != ERROR_BROKEN_PIPE)
-		    return CW_ERROR;
-
-		if (channel->ch_named_pipe)
-		{
-		    DisconnectNamedPipe((HANDLE)fd);
-		    ConnectNamedPipe((HANDLE)fd, NULL);
-		}
-		else
-		    return CW_ERROR;
+		DisconnectNamedPipe((HANDLE)fd);
+		ConnectNamedPipe((HANDLE)fd, NULL);
 	    }
+	    else if (r == 0)
+		return CW_ERROR;
 
 	    /* perhaps write some buffer lines */
 	    channel_write_any_lines();
@@ -3515,7 +3554,7 @@ channel_read_json_block(
 	    timeout = timeout_arg;
 	    if (chanpart->ch_wait_len > 0)
 	    {
-#ifdef WIN32
+#ifdef MSWIN
 		timeout = chanpart->ch_deadline - GetTickCount() + 1;
 #else
 		{
@@ -3641,7 +3680,7 @@ theend:
     free_job_options(&opt);
 }
 
-# if defined(WIN32) || defined(FEAT_GUI_X11) || defined(FEAT_GUI_GTK) \
+# if defined(MSWIN) || defined(FEAT_GUI_X11) || defined(FEAT_GUI_GTK) \
 	|| defined(PROTO)
 /*
  * Lookup the channel from the socket.  Set "partp" to the fd index.
@@ -3668,7 +3707,7 @@ channel_fd2channel(sock_T fd, ch_part_T *partp)
 }
 # endif
 
-# if defined(WIN32) || defined(FEAT_GUI) || defined(PROTO)
+# if defined(MSWIN) || defined(FEAT_GUI) || defined(PROTO)
 /*
  * Check the channels for anything that is ready to be read.
  * The data is put in the read queue.
@@ -3733,7 +3772,7 @@ channel_set_nonblock(channel_T *channel, ch_part_T part)
 
     if (fd != INVALID_FD)
     {
-#ifdef _WIN32
+#ifdef MSWIN
 	u_long	val = 1;
 
 	ioctlsocket(fd, FIONBIO, &val);
@@ -3814,14 +3853,13 @@ channel_send(
 	else
 	{
 	    res = fd_write(fd, (char *)buf, len);
-#ifdef WIN32
+#ifdef MSWIN
 	    if (channel->ch_named_pipe && res < 0)
 	    {
 		DisconnectNamedPipe((HANDLE)fd);
 		ConnectNamedPipe((HANDLE)fd, NULL);
 	    }
 #endif
-
 	}
 	if (res < 0 && (errno == EWOULDBLOCK
 #ifdef EAGAIN
@@ -4064,7 +4102,7 @@ ch_raw_common(typval_T *argvars, typval_T *rettv, int eval)
     else
     {
 	text = tv_get_string_buf(&argvars[1], buf);
-	len = STRLEN(text);
+	len = (int)STRLEN(text);
     }
     channel = send_common(argvars, text, len, 0, eval, &opt,
 			      eval ? "ch_evalraw" : "ch_sendraw", &part_read);
@@ -4175,7 +4213,7 @@ channel_poll_check(int ret_in, void *fds_in)
 }
 # endif /* UNIX && !HAVE_SELECT */
 
-# if (!defined(WIN32) && defined(HAVE_SELECT)) || defined(PROTO)
+# if (!defined(MSWIN) && defined(HAVE_SELECT)) || defined(PROTO)
 
 /*
  * The "fd_set" type is hidden to avoid problems with the function proto.
@@ -4275,7 +4313,7 @@ channel_select_check(int ret_in, void *rfds_in, void *wfds_in)
 
     return ret;
 }
-# endif /* !WIN32 && HAVE_SELECT */
+# endif /* !MSWIN && HAVE_SELECT */
 
 /*
  * Execute queued up commands.
@@ -4290,7 +4328,7 @@ channel_parse_messages(void)
     int		r;
     ch_part_T	part = PART_SOCK;
 #ifdef ELAPSED_FUNC
-    ELAPSED_TYPE  start_tv;
+    elapsed_T	start_tv;
 
     ELAPSED_INIT(start_tv);
 #endif
@@ -4310,20 +4348,25 @@ channel_parse_messages(void)
 	{
 	    channel->ch_to_be_closed = (1U << PART_COUNT);
 	    channel_close_now(channel);
-	    /* channel may have been freed, start over */
+	    // channel may have been freed, start over
 	    channel = first_channel;
 	    continue;
 	}
-	if (channel->ch_to_be_freed)
+	if (channel->ch_to_be_freed || channel->ch_killing)
 	{
+	    if (channel->ch_killing)
+	    {
+		channel_free_contents(channel);
+		channel->ch_job->jv_channel = NULL;
+	    }
 	    channel_free(channel);
-	    /* channel has been freed, start over */
+	    // channel has been freed, start over
 	    channel = first_channel;
 	    continue;
 	}
 	if (channel->ch_refcount == 0 && !channel_still_useful(channel))
 	{
-	    /* channel is no longer useful, free it */
+	    // channel is no longer useful, free it
 	    channel_free(channel);
 	    channel = first_channel;
 	    part = PART_SOCK;
@@ -4914,6 +4957,28 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported, int supported2)
 		opt->jo_set2 |= JO2_TERM_KILL;
 		opt->jo_term_kill = tv_get_string_chk(item);
 	    }
+	    else if (STRCMP(hi->hi_key, "tty_type") == 0)
+	    {
+		char_u *p;
+
+		if (!(supported2 & JO2_TTY_TYPE))
+		    break;
+		opt->jo_set2 |= JO2_TTY_TYPE;
+		p = tv_get_string_chk(item);
+		if (p == NULL)
+		{
+		    semsg(_(e_invargval), "tty_type");
+		    return FAIL;
+		}
+		// Allow empty string, "winpty", "conpty".
+		if (!(*p == NUL || STRCMP(p, "winpty") == 0
+					          || STRCMP(p, "conpty") == 0))
+		{
+		    semsg(_(e_invargval), "tty_type");
+		    return FAIL;
+		}
+		opt->jo_tty_type = p[0];
+	    }
 # if defined(FEAT_GUI) || defined(FEAT_TERMGUICOLORS)
 	    else if (STRCMP(hi->hi_key, "ansi_colors") == 0)
 	    {
@@ -4979,7 +5044,7 @@ get_job_options(typval_T *tv, jobopt_T *opt, int supported, int supported2)
 		    break;
 		opt->jo_cwd = tv_get_string_buf_chk(item, opt->jo_cwd_buf);
 		if (opt->jo_cwd == NULL || !mch_isdir(opt->jo_cwd)
-#ifndef WIN32  // Win32 directories don't have the concept of "executable"
+#ifndef MSWIN  // Win32 directories don't have the concept of "executable"
 				|| mch_access((char *)opt->jo_cwd, X_OK) != 0
 #endif
 				)
@@ -5136,6 +5201,12 @@ job_free_contents(job_T *job)
     vim_free(job->jv_tty_in);
     vim_free(job->jv_tty_out);
     vim_free(job->jv_stoponexit);
+#ifdef UNIX
+    vim_free(job->jv_termsig);
+#endif
+#ifdef MSWIN
+    vim_free(job->jv_tty_type);
+#endif
     free_callback(job->jv_exit_cb, job->jv_exit_partial);
     if (job->jv_argv != NULL)
     {
@@ -5145,8 +5216,11 @@ job_free_contents(job_T *job)
     }
 }
 
+/*
+ * Remove "job" from the list of jobs.
+ */
     static void
-job_free_job(job_T *job)
+job_unlink(job_T *job)
 {
     if (job->jv_next != NULL)
 	job->jv_next->jv_prev = job->jv_prev;
@@ -5154,6 +5228,12 @@ job_free_job(job_T *job)
 	first_job = job->jv_next;
     else
 	job->jv_prev->jv_next = job->jv_next;
+}
+
+    static void
+job_free_job(job_T *job)
+{
+    job_unlink(job);
     vim_free(job);
 }
 
@@ -5167,12 +5247,44 @@ job_free(job_T *job)
     }
 }
 
+job_T *jobs_to_free = NULL;
+
+/*
+ * Put "job" in a list to be freed later, when it's no longer referenced.
+ */
+    static void
+job_free_later(job_T *job)
+{
+    job_unlink(job);
+    job->jv_next = jobs_to_free;
+    jobs_to_free = job;
+}
+
+    static void
+free_jobs_to_free_later(void)
+{
+    job_T *job;
+
+    while (jobs_to_free != NULL)
+    {
+	job = jobs_to_free;
+	jobs_to_free = job->jv_next;
+	job_free_contents(job);
+	vim_free(job);
+    }
+}
+
 #if defined(EXITFREE) || defined(PROTO)
     void
 job_free_all(void)
 {
     while (first_job != NULL)
 	job_free(first_job);
+    free_jobs_to_free_later();
+
+# ifdef FEAT_TERMINAL
+    free_unused_terminals();
+# endif
 }
 #endif
 
@@ -5343,6 +5455,8 @@ win32_build_cmd(list_T *l, garray_T *gap)
  * NOTE: Must call job_cleanup() only once right after the status of "job"
  * changed to JOB_ENDED (i.e. after job_status() returned "dead" first or
  * mch_detect_ended_job() returned non-NULL).
+ * If the job is no longer used it will be removed from the list of jobs, and
+ * deleted a bit later.
  */
     void
 job_cleanup(job_T *job)
@@ -5378,15 +5492,16 @@ job_cleanup(job_T *job)
 	channel_need_redraw = TRUE;
     }
 
-    /* Do not free the job in case the close callback of the associated channel
-     * isn't invoked yet and may get information by job_info(). */
+    if (job->jv_channel != NULL && job->jv_channel->ch_anonymous_pipe)
+	job->jv_channel->ch_killing = TRUE;
+
+    // Do not free the job in case the close callback of the associated channel
+    // isn't invoked yet and may get information by job_info().
     if (job->jv_refcount == 0 && !job_channel_still_useful(job))
-    {
-	/* The job was already unreferenced and the associated channel was
-	 * detached, now that it ended it can be freed. Careful: caller must
-	 * not use "job" after this! */
-	job_free(job);
-    }
+	// The job was already unreferenced and the associated channel was
+	// detached, now that it ended it can be freed. However, a caller might
+	// still use it, thus free it a bit later.
+	job_free_later(job);
 }
 
 /*
@@ -5593,8 +5708,11 @@ job_check_ended(void)
 	if (job == NULL)
 	    break;
 	did_end = TRUE;
-	job_cleanup(job); // may free "job"
+	job_cleanup(job); // may add "job" to jobs_to_free
     }
+
+    // Actually free jobs that were cleaned up.
+    free_jobs_to_free_later();
 
     if (channel_need_redraw)
     {
@@ -5848,6 +5966,12 @@ job_info(job_T *job, dict_T *dict)
     dict_add_number(dict, "exitval", job->jv_exitval);
     dict_add_string(dict, "exit_cb", job->jv_exit_cb);
     dict_add_string(dict, "stoponexit", job->jv_stoponexit);
+#ifdef UNIX
+    dict_add_string(dict, "termsig", job->jv_termsig);
+#endif
+#ifdef MSWIN
+    dict_add_string(dict, "tty_type", job->jv_tty_type);
+#endif
 
     l = list_alloc();
     if (l != NULL)

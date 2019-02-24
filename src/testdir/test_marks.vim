@@ -122,9 +122,6 @@ func Test_marks_cmd()
 endfunc
 
 func Test_marks_cmd_multibyte()
-  if !has('multi_byte')
-    return
-  endif
   new Xone
   call setline(1, [repeat('á', &columns)])
   norm! ma
@@ -135,4 +132,45 @@ func Test_marks_cmd_multibyte()
   call assert_equal(expected, a[1])
 
   bwipe!
+endfunc
+
+func Test_delmarks()
+  new
+  norm mx
+  norm `x
+  delmarks x
+  call assert_fails('norm `x', 'E20:')
+
+  " Deleting an already deleted mark should not fail.
+  delmarks x
+
+  " Test deleting a range of marks.
+  norm ma
+  norm mb
+  norm mc
+  norm mz
+  delmarks b-z
+  norm `a
+  call assert_fails('norm `b', 'E20:')
+  call assert_fails('norm `c', 'E20:')
+  call assert_fails('norm `z', 'E20:')
+  call assert_fails('delmarks z-b', 'E475:')
+
+  call assert_fails('delmarks', 'E471:')
+  call assert_fails('delmarks /', 'E475:')
+
+  " Test delmarks!
+  norm mx
+  norm `x
+  delmarks!
+  call assert_fails('norm `x', 'E20:')
+  call assert_fails('delmarks! x', 'E474:')
+
+  bwipe!
+endfunc
+
+func Test_mark_error()
+  call assert_fails('mark', 'E471:')
+  call assert_fails('mark xx', 'E488:')
+  call assert_fails('mark _', 'E191:')
 endfunc

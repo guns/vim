@@ -48,6 +48,7 @@ struct qfline_S
  */
 #define LISTCOUNT   10
 #define INVALID_QFIDX (-1)
+#define INVALID_QFBUFNR (0)
 
 /*
  * Quickfix list type.
@@ -107,6 +108,7 @@ struct qf_info_S
     int		qf_curlist;	    // current error list
     qf_list_T	qf_lists[LISTCOUNT];
     qfltype_T	qfl_type;	    // type of list
+    int		qf_bufnr;	    // quickfix window buffer number
 };
 
 static qf_info_T ql_info;	// global quickfix list
@@ -804,7 +806,6 @@ qf_get_next_file_line(qfstate_T *state)
     else
 	state->linebuf = IObuff;
 
-#ifdef FEAT_MBYTE
     // Convert a line if it contains a non-ASCII character.
     if (state->vc.vc_type != CONV_NONE && has_non_ascii(state->linebuf))
     {
@@ -827,7 +828,6 @@ qf_get_next_file_line(qfstate_T *state)
 	    }
 	}
     }
-#endif
 
     return QF_OK;
 }
@@ -872,9 +872,7 @@ qf_get_nextline(qfstate_T *state)
 #endif
     }
 
-#ifdef FEAT_MBYTE
     remove_bom(state->linebuf);
-#endif
 
     return QF_OK;
 }
@@ -1538,11 +1536,9 @@ qf_setup_state(
 	linenr_T	lnumfirst,
 	linenr_T	lnumlast)
 {
-#ifdef FEAT_MBYTE
     pstate->vc.vc_type = CONV_NONE;
     if (enc != NULL && *enc != NUL)
 	convert_setup(&pstate->vc, enc, p_enc);
-#endif
 
     if (efile != NULL && (pstate->fd = mch_fopen((char *)efile, "r")) == NULL)
     {
@@ -1576,10 +1572,8 @@ qf_cleanup_state(qfstate_T *pstate)
 	fclose(pstate->fd);
 
     vim_free(pstate->growbuf);
-#ifdef FEAT_MBYTE
     if (pstate->vc.vc_type != CONV_NONE)
 	convert_setup(&pstate->vc, NULL, NULL);
-#endif
 }
 
 /*
@@ -1861,6 +1855,37 @@ locstack_queue_delreq(qf_info_T *qi)
 }
 
 /*
+ * Return the global quickfix stack window buffer number.
+ */
+    int
+qf_stack_get_bufnr(void)
+{
+    return ql_info.qf_bufnr;
+}
+
+/*
+ * Wipe the quickfix window buffer (if present) for the specified
+ * quickfix/location list.
+ */
+    static void
+wipe_qf_buffer(qf_info_T *qi)
+{
+    buf_T	*qfbuf;
+
+    if (qi->qf_bufnr != INVALID_QFBUFNR)
+    {
+	qfbuf = buflist_findnr(qi->qf_bufnr);
+	if (qfbuf != NULL && qfbuf->b_nwindows == 0)
+	{
+	    // If the quickfix buffer is not loaded in any window, then
+	    // wipe the buffer.
+	    close_buffer(NULL, qfbuf, DOBUF_WIPE, FALSE);
+	    qi->qf_bufnr = INVALID_QFBUFNR;
+	}
+    }
+}
+
+/*
  * Free a location list stack
  */
     static void
@@ -1874,20 +1899,24 @@ ll_free_all(qf_info_T **pqi)
 	return;
     *pqi = NULL;	// Remove reference to this list
 
+    // If the location list is still in use, then queue the delete request
+    // to be processed later.
+    if (quickfix_busy > 0)
+    {
+	locstack_queue_delreq(qi);
+	return;
+    }
+
     qi->qf_refcount--;
     if (qi->qf_refcount < 1)
     {
 	// No references to this location list.
-	// If the location list is still in use, then queue the delete request
-	// to be processed later.
-	if (quickfix_busy > 0)
-	    locstack_queue_delreq(qi);
-	else
-	{
-	    for (i = 0; i < qi->qf_listcount; ++i)
-		qf_free(&qi->qf_lists[i]);
-	    vim_free(qi);
-	}
+	// If the quickfix window buffer is loaded, then wipe it
+	wipe_qf_buffer(qi);
+
+	for (i = 0; i < qi->qf_listcount; ++i)
+	    qf_free(&qi->qf_lists[i]);
+	vim_free(qi);
     }
 }
 
@@ -2074,6 +2103,7 @@ qf_alloc_stack(qfltype_T qfltype)
     {
 	qi->qf_refcount++;
 	qi->qfl_type = qfltype;
+	qi->qf_bufnr = INVALID_QFBUFNR;
     }
     return qi;
 }
@@ -2749,7 +2779,8 @@ jump_to_help_window(qf_info_T *qi, int newwin, int *opened_window)
 }
 
 /*
- * Find a non-quickfix window using the given location list.
+ * Find a non-quickfix window in the current tabpage using the given location
+ * list stack.
  * Returns NULL if a matching window is not found.
  */
     static win_T *
@@ -2988,7 +3019,7 @@ qf_jump_edit_buffer(
 	qf_info_T	*qi,
 	qfline_T	*qf_ptr,
 	int		forceit,
-	win_T		*oldwin,
+	int		prev_winid,
 	int		*opened_window)
 {
     qf_list_T	*qfl = &qi->qf_lists[qi->qf_curlist];
@@ -3009,7 +3040,7 @@ qf_jump_edit_buffer(
 
 	retval = do_ecmd(qf_ptr->qf_fnum, NULL, NULL, NULL, (linenr_T)1,
 		ECMD_HIDE + ECMD_SET_HELP,
-		oldwin == curwin ? curwin : NULL);
+		prev_winid == curwin->w_id ? curwin : NULL);
     }
     else
 	retval = buflist_getfile(qf_ptr->qf_fnum,
@@ -3017,11 +3048,15 @@ qf_jump_edit_buffer(
 
     // If a location list, check whether the associated window is still
     // present.
-    if (qfl_type == QFLT_LOCATION && !win_valid_any_tab(oldwin))
+    if (qfl_type == QFLT_LOCATION)
     {
-	emsg(_("E924: Current window was closed"));
-	*opened_window = FALSE;
-	return NOTDONE;
+	win_T	*wp = win_id2wp(prev_winid);
+	if (wp == NULL && curwin->w_llist != qi)
+	{
+	    emsg(_("E924: Current window was closed"));
+	    *opened_window = FALSE;
+	    return NOTDONE;
+	}
     }
 
     if (qfl_type == QFLT_QUICKFIX && !qflist_valid(NULL, save_qfid))
@@ -3055,9 +3090,6 @@ qf_jump_goto_line(
 	char_u		*qf_pattern)
 {
     linenr_T		i;
-    char_u		*line;
-    colnr_T		screen_col;
-    colnr_T		char_col;
 
     if (qf_pattern == NULL)
     {
@@ -3071,31 +3103,11 @@ qf_jump_goto_line(
 	}
 	if (qf_col > 0)
 	{
-	    curwin->w_cursor.col = qf_col - 1;
-#ifdef FEAT_VIRTUALEDIT
 	    curwin->w_cursor.coladd = 0;
-#endif
 	    if (qf_viscol == TRUE)
-	    {
-		// Check each character from the beginning of the error
-		// line up to the error column.  For each tab character
-		// found, reduce the error column value by the length of
-		// a tab character.
-		line = ml_get_curline();
-		screen_col = 0;
-		for (char_col = 0; char_col < curwin->w_cursor.col; ++char_col)
-		{
-		    if (*line == NUL)
-			break;
-		    if (*line++ == '\t')
-		    {
-			curwin->w_cursor.col -= 7 - (screen_col % 8);
-			screen_col += 8 - (screen_col % 8);
-		    }
-		    else
-			++screen_col;
-		}
-	    }
+		coladvance(qf_col - 1);
+	    else
+		curwin->w_cursor.col = qf_col - 1;
 	    curwin->w_set_curswant = TRUE;
 	    check_cursor();
 	}
@@ -3149,7 +3161,7 @@ qf_jump_print_msg(
 	msg_scroll = TRUE;
     else if (!msg_scrolled && shortmess(SHM_OVERALL))
 	msg_scroll = FALSE;
-    msg_attr_keep(IObuff, 0, TRUE);
+    msg_attr_keep((char *)IObuff, 0, TRUE);
     msg_scroll = i;
 }
 
@@ -3204,7 +3216,7 @@ qf_jump_to_buffer(
 	int		qf_index,
 	qfline_T	*qf_ptr,
 	int		forceit,
-	win_T		*oldwin,
+	int		prev_winid,
 	int		*opened_window,
 	int		openfold,
 	int		print_message)
@@ -3220,7 +3232,7 @@ qf_jump_to_buffer(
 
     if (qf_ptr->qf_fnum != 0)
     {
-	retval = qf_jump_edit_buffer(qi, qf_ptr, forceit, oldwin,
+	retval = qf_jump_edit_buffer(qi, qf_ptr, forceit, prev_winid,
 						opened_window);
 	if (retval != OK)
 	    return retval;
@@ -3280,8 +3292,8 @@ qf_jump_newwin(qf_info_T	*qi,
     int			old_qf_index;
     char_u		*old_swb = p_swb;
     unsigned		old_swb_flags = swb_flags;
+    int			prev_winid;
     int			opened_window = FALSE;
-    win_T		*oldwin = curwin;
     int			print_message = TRUE;
 #ifdef FEAT_FOLDING
     int			old_KeyTyped = KeyTyped; // getting file may reset it
@@ -3296,6 +3308,8 @@ qf_jump_newwin(qf_info_T	*qi,
 	emsg(_(e_quickfix));
 	return;
     }
+
+    incr_quickfix_busy();
 
     qfl = &qi->qf_lists[qi->qf_curlist];
 
@@ -3318,13 +3332,15 @@ qf_jump_newwin(qf_info_T	*qi,
 	// window
 	print_message = FALSE;
 
+    prev_winid = curwin->w_id;
+
     retval = qf_jump_open_window(qi, qf_ptr, newwin, &opened_window);
     if (retval == FAIL)
 	goto failed;
     if (retval == NOTDONE)
 	goto theend;
 
-    retval = qf_jump_to_buffer(qi, qf_index, qf_ptr, forceit, oldwin,
+    retval = qf_jump_to_buffer(qi, qf_index, qf_ptr, forceit, prev_winid,
 	    &opened_window, old_KeyTyped, print_message);
     if (retval == NOTDONE)
     {
@@ -3352,7 +3368,7 @@ theend:
 	qfl->qf_ptr = qf_ptr;
 	qfl->qf_index = qf_index;
     }
-    if (p_swb != old_swb && opened_window)
+    if (p_swb != old_swb)
     {
 	// Restore old 'switchbuf' value, but not when an autocommand or
 	// modeline has changed the value.
@@ -3364,6 +3380,7 @@ theend:
 	else
 	    free_string_option(old_swb);
     }
+    decr_quickfix_busy();
 }
 
 // Highlight attributes used for displaying entries from the quickfix list.
@@ -3422,7 +3439,7 @@ qf_list_entry(qfline_T *qfp, int qf_idx, int cursel)
     msg_outtrans_attr(IObuff, cursel ? HL_ATTR(HLF_QFL) : qfFileAttr);
 
     if (qfp->qf_lnum != 0)
-	msg_puts_attr((char_u *)":", qfSepAttr);
+	msg_puts_attr(":", qfSepAttr);
     if (qfp->qf_lnum == 0)
 	IObuff[0] = NUL;
     else if (qfp->qf_col == 0)
@@ -3432,15 +3449,15 @@ qf_list_entry(qfline_T *qfp, int qf_idx, int cursel)
 		qfp->qf_lnum, qfp->qf_col);
     sprintf((char *)IObuff + STRLEN(IObuff), "%s",
 	    (char *)qf_types(qfp->qf_type, qfp->qf_nr));
-    msg_puts_attr(IObuff, qfLineAttr);
-    msg_puts_attr((char_u *)":", qfSepAttr);
+    msg_puts_attr((char *)IObuff, qfLineAttr);
+    msg_puts_attr(":", qfSepAttr);
     if (qfp->qf_pattern != NULL)
     {
 	qf_fmt_text(qfp->qf_pattern, IObuff, IOSIZE);
-	msg_puts(IObuff);
-	msg_puts_attr((char_u *)":", qfSepAttr);
+	msg_puts((char *)IObuff);
+	msg_puts_attr(":", qfSepAttr);
     }
-    msg_puts((char_u *)" ");
+    msg_puts(" ");
 
     // Remove newlines and leading whitespace from the text.  For an
     // unrecognized line keep the indent, the compiler may mark a word
@@ -3601,7 +3618,7 @@ qf_msg(qf_info_T *qi, int which, char *lead)
 	vim_strcat(buf, (char_u *)title, IOSIZE);
     }
     trunc_string(buf, buf, Columns - 1, IOSIZE);
-    msg(buf);
+    msg((char *)buf);
 }
 
 /*
@@ -3667,7 +3684,7 @@ qf_history(exarg_T *eap)
     if (is_loclist_cmd(eap->cmdidx))
 	qi = GET_LOC_LIST(curwin);
     if (qf_stack_empty(qi))
-	MSG(_("No entries"));
+	msg(_("No entries"));
     else
 	for (i = 0; i < qi->qf_listcount; ++i)
 	    qf_msg(qi, i, i == qi->qf_curlist ? "> " : "  ");
@@ -3997,9 +4014,9 @@ qf_open_new_cwindow(qf_info_T *qi, int height)
     if (IS_LL_STACK(qi))
     {
 	// For the location list window, create a reference to the
-	// location list from the window 'win'.
-	curwin->w_llist_ref = win->w_llist;
-	win->w_llist->qf_refcount++;
+	// location list stack from the window 'win'.
+	curwin->w_llist_ref = qi;
+	qi->qf_refcount++;
     }
 
     if (oldwin != curwin)
@@ -4019,7 +4036,7 @@ qf_open_new_cwindow(qf_info_T *qi, int height)
 	set_option_value((char_u *)"swf", 0L, NULL, OPT_LOCAL);
 	set_option_value((char_u *)"bt", 0L, (char_u *)"quickfix",
 		OPT_LOCAL);
-	set_option_value((char_u *)"bh", 0L, (char_u *)"wipe", OPT_LOCAL);
+	set_option_value((char_u *)"bh", 0L, (char_u *)"hide", OPT_LOCAL);
 	RESET_BINDING(curwin);
 #ifdef FEAT_DIFF
 	curwin->w_p_diff = FALSE;
@@ -4028,6 +4045,8 @@ qf_open_new_cwindow(qf_info_T *qi, int height)
 	set_option_value((char_u *)"fdm", 0L, (char_u *)"manual",
 		OPT_LOCAL);
 #endif
+	// save the number of the new buffer
+	qi->qf_bufnr = curbuf->b_fnum;
     }
 
     // Only set the height when still in the same tab page and there is no
@@ -4116,9 +4135,7 @@ qf_win_goto(win_T *win, linenr_T lnum)
     curbuf = win->w_buffer;
     curwin->w_cursor.lnum = lnum;
     curwin->w_cursor.col = 0;
-#ifdef FEAT_VIRTUALEDIT
     curwin->w_cursor.coladd = 0;
-#endif
     curwin->w_curswant = 0;
     update_topline();		// scroll to show the line
     redraw_later(VALID);
@@ -4244,6 +4261,16 @@ qf_find_buf(qf_info_T *qi)
 {
     tabpage_T	*tp;
     win_T	*win;
+
+    if (qi->qf_bufnr != INVALID_QFBUFNR)
+    {
+	buf_T	*qfbuf;
+	qfbuf = buflist_findnr(qi->qf_bufnr);
+	if (qfbuf != NULL)
+	    return qfbuf;
+	// buffer is no longer present
+	qi->qf_bufnr = INVALID_QFBUFNR;
+    }
 
     FOR_ALL_TAB_WINDOWS(tp, win)
 	if (is_qf_win(win, qi))
@@ -4653,7 +4680,7 @@ make_get_fullcmd(char_u *makecmd, char_u *fname)
     if (msg_col == 0)
 	msg_didout = FALSE;
     msg_start();
-    MSG_PUTS(":!");
+    msg_puts(":!");
     msg_outtrans(cmd);		// show what we are doing
 
     return cmd;
@@ -4690,9 +4717,7 @@ ex_make(exarg_T *eap)
 	    return;
 #endif
     }
-#ifdef FEAT_MBYTE
     enc = (*curbuf->b_p_menc != NUL) ? curbuf->b_p_menc : p_menc;
-#endif
 
     if (is_loclist_cmd(eap->cmdidx))
 	wp = curwin;
@@ -5032,9 +5057,7 @@ ex_cfile(exarg_T *eap)
     }
     if (au_name != NULL)
 	apply_autocmds(EVENT_QUICKFIXCMDPRE, au_name, NULL, FALSE, curbuf);
-#ifdef FEAT_MBYTE
     enc = (*curbuf->b_p_menc != NUL) ? curbuf->b_p_menc : p_menc;
-#endif
 #ifdef FEAT_BROWSE
     if (cmdmod.browse)
     {
@@ -6263,7 +6286,7 @@ qf_add_entry_from_dict(
 	if (!did_bufnr_emsg)
 	{
 	    did_bufnr_emsg = TRUE;
-	    semsg(_("E92: Buffer %ld not found"), bufnum);
+	    semsg(_("E92: Buffer %d not found"), bufnum);
 	}
 	valid = FALSE;
 	bufnum = 0;
@@ -6618,22 +6641,6 @@ qf_set_properties(qf_info_T *qi, dict_T *what, int action, char_u *title)
 }
 
 /*
- * Find the non-location list window with the specified location list stack in
- * the current tabpage.
- */
-    static win_T *
-find_win_with_ll(qf_info_T *qi)
-{
-    win_T	*wp = NULL;
-
-    FOR_ALL_WINDOWS(wp)
-	if ((wp->w_llist == qi) && !bt_quickfix(wp->w_buffer))
-	    return wp;
-
-    return NULL;
-}
-
-/*
  * Free the entire quickfix/location list stack.
  * If the quickfix/location list window is open, then clear it.
  */
@@ -6642,7 +6649,6 @@ qf_free_stack(win_T *wp, qf_info_T *qi)
 {
     win_T	*qfwin = qf_find_win(qi);
     win_T	*llwin = NULL;
-    win_T	*orig_wp = wp;
 
     if (qfwin != NULL)
     {
@@ -6656,7 +6662,7 @@ qf_free_stack(win_T *wp, qf_info_T *qi)
     {
 	// If in the location list window, then use the non-location list
 	// window with this location list (if present)
-	llwin = find_win_with_ll(qi);
+	llwin = qf_find_win_with_loclist(qi);
 	if (llwin != NULL)
 	    wp = llwin;
     }
@@ -6668,19 +6674,20 @@ qf_free_stack(win_T *wp, qf_info_T *qi)
 	qi->qf_curlist = 0;
 	qi->qf_listcount = 0;
     }
-    else if (IS_LL_WINDOW(orig_wp))
+    else if (qfwin != NULL)
     {
 	// If the location list window is open, then create a new empty
 	// location list
 	qf_info_T *new_ll = qf_alloc_stack(QFLT_LOCATION);
+	new_ll->qf_bufnr = qfwin->w_buffer->b_fnum;
 
 	// first free the list reference in the location list window
-	ll_free_all(&orig_wp->w_llist_ref);
+	ll_free_all(&qfwin->w_llist_ref);
 
-	orig_wp->w_llist_ref = new_ll;
-	if (llwin != NULL)
+	qfwin->w_llist_ref = new_ll;
+	if (wp != qfwin)
 	{
-	    llwin->w_llist = new_ll;
+	    wp->w_llist = new_ll;
 	    new_ll->qf_refcount++;
 	}
     }
@@ -7035,9 +7042,7 @@ hgr_get_ll(int *new_ll)
 hgr_search_file(
 	qf_info_T *qi,
 	char_u *fname,
-#ifdef FEAT_MBYTE
 	vimconv_T *p_vc,
-#endif
 	regmatch_T *p_regmatch)
 {
     FILE	*fd;
@@ -7051,7 +7056,7 @@ hgr_search_file(
     while (!vim_fgets(IObuff, IOSIZE, fd) && !got_int)
     {
 	char_u    *line = IObuff;
-#ifdef FEAT_MBYTE
+
 	// Convert a line if 'encoding' is not utf-8 and
 	// the line contains a non-ASCII character.
 	if (p_vc->vc_type != CONV_NONE
@@ -7061,7 +7066,6 @@ hgr_search_file(
 	    if (line == NULL)
 		line = IObuff;
 	}
-#endif
 
 	if (vim_regexec(p_regmatch, line, (colnr_T)0))
 	{
@@ -7089,17 +7093,13 @@ hgr_search_file(
 			) == FAIL)
 	    {
 		got_int = TRUE;
-#ifdef FEAT_MBYTE
 		if (line != IObuff)
 		    vim_free(line);
-#endif
 		break;
 	    }
 	}
-#ifdef FEAT_MBYTE
 	if (line != IObuff)
 	    vim_free(line);
-#endif
 	++lnum;
 	line_breakcheck();
     }
@@ -7114,10 +7114,8 @@ hgr_search_file(
 hgr_search_files_in_dir(
 	qf_info_T *qi,
 	char_u *dirname,
-	regmatch_T *p_regmatch
-#ifdef FEAT_MBYTE
-	, vimconv_T *p_vc
-#endif
+	regmatch_T *p_regmatch,
+	vimconv_T *p_vc
 #ifdef FEAT_MULTI_LANG
 	, char_u *lang
 #endif
@@ -7147,11 +7145,7 @@ hgr_search_files_in_dir(
 		continue;
 #endif
 
-	    hgr_search_file(qi, fnames[fi],
-#ifdef FEAT_MBYTE
-		    p_vc,
-#endif
-		    p_regmatch);
+	    hgr_search_file(qi, fnames[fi], p_vc, p_regmatch);
 	}
 	FreeWild(fcount, fnames);
     }
@@ -7168,7 +7162,6 @@ hgr_search_in_rtp(qf_info_T *qi, regmatch_T *p_regmatch, char_u *lang)
 {
     char_u	*p;
 
-#ifdef FEAT_MBYTE
     vimconv_T	vc;
 
     // Help files are in utf-8 or latin1, convert lines when 'encoding'
@@ -7176,7 +7169,6 @@ hgr_search_in_rtp(qf_info_T *qi, regmatch_T *p_regmatch, char_u *lang)
     vc.vc_type = CONV_NONE;
     if (!enc_utf8)
 	convert_setup(&vc, (char_u *)"utf-8", p_enc);
-#endif
 
     // Go through all the directories in 'runtimepath'
     p = p_rtp;
@@ -7184,20 +7176,15 @@ hgr_search_in_rtp(qf_info_T *qi, regmatch_T *p_regmatch, char_u *lang)
     {
 	copy_option_part(&p, NameBuff, MAXPATHL, ",");
 
-	hgr_search_files_in_dir(qi, NameBuff, p_regmatch
-#ifdef FEAT_MBYTE
-		, &vc
-#endif
+	hgr_search_files_in_dir(qi, NameBuff, p_regmatch, &vc
 #ifdef FEAT_MULTI_LANG
 		, lang
 #endif
 		);
     }
 
-#ifdef FEAT_MBYTE
     if (vc.vc_type != CONV_NONE)
 	convert_setup(&vc, NULL, NULL);
-#endif
 }
 
 /*

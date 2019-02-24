@@ -17,12 +17,15 @@ use the CTRL-] command.  Use CTRL-T or CTRL-O to jump back.
 To jump to a file, move the cursor on its name and use the "gf" command.
 
 Most code can be found in a file with an obvious name (incomplete list):
+	autocmd.c	autocommands
 	buffer.c	manipulating buffers (loaded files)
 	diff.c		diff mode (vimdiff)
 	eval.c		expression evaluation
 	fileio.c	reading and writing files
+	findfile.c	search for files in 'path'
 	fold.c		folding
 	getchar.c	getting characters and key mapping
+	indent.c	C and Lisp indentation
 	mark.c		marks
 	mbyte.c		multi-byte character handling
 	memfile.c	storing lines for buffers in a swapfile

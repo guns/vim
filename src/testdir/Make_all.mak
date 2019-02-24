@@ -105,6 +105,7 @@ NEW_TESTS = \
 	test_erasebackword \
 	test_escaped_glob \
 	test_eval_stuff \
+	test_ex_equal \
 	test_ex_undo \
 	test_ex_z \
 	test_exit \
@@ -117,10 +118,10 @@ NEW_TESTS = \
 	test_expand_func \
 	test_expr \
 	test_expr_utf8 \
-	test_farsi \
 	test_feedkeys \
 	test_file_perm \
 	test_file_size \
+	test_filechanged \
 	test_fileformat \
 	test_filetype \
 	test_filter_cmd \
@@ -211,6 +212,7 @@ NEW_TESTS = \
 	test_regexp_utf8 \
 	test_registers \
 	test_reltime \
+	test_restricted \
 	test_retab \
 	test_ruby \
 	test_scriptnames \
@@ -243,6 +245,7 @@ NEW_TESTS = \
 	test_tagjump \
 	test_taglist \
 	test_tcl \
+	test_termencoding \
 	test_terminal \
 	test_terminal_fail \
 	test_textformat \
@@ -265,6 +268,7 @@ NEW_TESTS = \
 	test_window_cmd \
 	test_window_id \
 	test_windows_home \
+	test_wnext \
 	test_wordcount \
 	test_writefile \
 	test_xxd \
@@ -313,8 +317,8 @@ NEW_TESTS_RES = \
 	test_exists.res \
 	test_exists_autocmd.res \
 	test_exit.res \
-	test_farsi.res \
 	test_file_size.res \
+	test_filechanged.res \
 	test_find_complete.res \
 	test_fixeol.res \
 	test_fnameescape.res \
@@ -371,6 +375,7 @@ NEW_TESTS_RES = \
 	test_quotestar.res \
 	test_regex_char_classes.res \
 	test_registers.res \
+	test_restricted.res \
 	test_retab.res \
 	test_ruby.res \
 	test_scriptnames.res \
@@ -389,6 +394,7 @@ NEW_TESTS_RES = \
 	test_system.res \
 	test_tab.res \
 	test_tcl.res \
+	test_termencoding.res \
 	test_terminal.res \
 	test_terminal_fail.res \
 	test_textformat.res \

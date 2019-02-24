@@ -29,7 +29,7 @@ endfunc
 func s:get_resources()
   let pid = getpid()
 
-  if has('mac')
+  if executable('lsof')
     return systemlist('lsof -p ' . pid . ' | awk ''$4~/^[0-9]*[rwu]$/&&$5=="REG"{print$NF}''')
   elseif isdirectory('/proc/' . pid . '/fd/')
     return systemlist('readlink /proc/' . pid . '/fd/* | grep -v ''^/dev/''')
@@ -879,19 +879,19 @@ endfunc
 func Test_pipe_err_to_buffer_name()
   call Run_test_pipe_err_to_buffer(1, 0, 1)
 endfunc
-  
+
 func Test_pipe_err_to_buffer_nr()
   call Run_test_pipe_err_to_buffer(0, 0, 1)
 endfunc
-  
+
 func Test_pipe_err_to_buffer_name_nomod()
   call Run_test_pipe_err_to_buffer(1, 1, 1)
 endfunc
-  
+
 func Test_pipe_err_to_buffer_name_nomsg()
   call Run_test_pipe_err_to_buffer(1, 0, 0)
 endfunc
-  
+
 func Test_pipe_both_to_buffer()
   if !has('job')
     return
@@ -966,15 +966,15 @@ func Run_pipe_through_sort(all, use_buffer)
     let options.in_top = 2
     let options.in_bot = 4
   endif
-  let g:job = job_start('sort', options)
+  let job = job_start('sort', options)
 
   if !a:use_buffer
-    call assert_equal("run", job_status(g:job))
-    call ch_sendraw(g:job, "ccc\naaa\nddd\nbbb\neee\n")
-    call ch_close_in(g:job)
+    call assert_equal("run", job_status(job))
+    call ch_sendraw(job, "ccc\naaa\nddd\nbbb\neee\n")
+    call ch_close_in(job)
   endif
 
-  call WaitForAssert({-> assert_equal("dead", job_status(g:job))})
+  call WaitForAssert({-> assert_equal("dead", job_status(job))})
 
   sp sortout
   call WaitFor('line("$") > 3')
@@ -985,8 +985,7 @@ func Run_pipe_through_sort(all, use_buffer)
     call assert_equal(['aaa', 'bbb', 'ddd'], getline(2, 4))
   endif
 
-  call job_stop(g:job)
-  unlet g:job
+  call job_stop(job)
   if a:use_buffer
     bwipe! sortin
   endif
@@ -1186,7 +1185,8 @@ func Test_pipe_to_buffer_raw()
   split testout
   let job = job_start([s:python, '-c', 
         \ 'import sys; [sys.stdout.write(".") and sys.stdout.flush() for _ in range(10000)]'], options)
-  call assert_equal("run", job_status(job))
+  " the job may be done quickly, also accept "dead"
+  call assert_match('^\%(dead\|run\)$', job_status(job))
   call WaitFor('len(join(getline(1, "$"), "")) >= 10000')
   try
     let totlen = 0
@@ -1247,9 +1247,9 @@ func Test_out_cb()
   endfunc
   let job = job_start(s:python . " test_channel_pipe.py",
 	\ {'out_cb': dict.outHandler,
-	\ 'out_mode': 'json',
-	\ 'err_cb': dict.errHandler,
-	\ 'err_mode': 'json'})
+	\  'out_mode': 'json',
+	\  'err_cb': dict.errHandler,
+	\  'err_mode': 'json'})
   call assert_equal("run", job_status(job))
   try
     let g:Ch_outmsg = ''
@@ -1290,8 +1290,9 @@ func Test_out_close_cb()
   endfunc
   let job = job_start(s:python . " test_channel_pipe.py quit now",
 	\ {'out_cb': 'OutHandler',
-	\ 'close_cb': 'CloseHandler'})
-  call assert_equal("run", job_status(job))
+	\  'close_cb': 'CloseHandler'})
+  " the job may be done quickly, also accept "dead"
+  call assert_match('^\%(dead\|run\)$', job_status(job))
   try
     call WaitForAssert({-> assert_equal('quit', g:Ch_msg1)})
     call WaitForAssert({-> assert_equal(2, g:Ch_closemsg)})
@@ -1314,7 +1315,8 @@ func Test_read_in_close_cb()
   endfunc
   let job = job_start(s:python . " test_channel_pipe.py quit now",
 	\ {'close_cb': 'CloseHandler'})
-  call assert_equal("run", job_status(job))
+  " the job may be done quickly, also accept "dead"
+  call assert_match('^\%(dead\|run\)$', job_status(job))
   try
     call WaitForAssert({-> assert_equal('quit', g:Ch_received)})
   finally
@@ -1338,7 +1340,8 @@ func Test_read_in_close_cb_incomplete()
   endfunc
   let job = job_start(s:python . " test_channel_pipe.py incomplete",
 	\ {'close_cb': 'CloseHandler'})
-  call assert_equal("run", job_status(job))
+  " the job may be done quickly, also accept "dead"
+  call assert_match('^\%(dead\|run\)$', job_status(job))
   try
     call WaitForAssert({-> assert_equal('incomplete', g:Ch_received)})
   finally
@@ -1354,10 +1357,10 @@ func Test_out_cb_lambda()
   call ch_log('Test_out_cb_lambda()')
 
   let job = job_start(s:python . " test_channel_pipe.py",
-  \ {'out_cb': {ch, msg -> execute("let g:Ch_outmsg = 'lambda: ' . msg")},
-  \ 'out_mode': 'json',
-  \ 'err_cb': {ch, msg -> execute(":let g:Ch_errmsg = 'lambda: ' . msg")},
-  \ 'err_mode': 'json'})
+        \ {'out_cb': {ch, msg -> execute("let g:Ch_outmsg = 'lambda: ' . msg")},
+        \  'out_mode': 'json',
+        \  'err_cb': {ch, msg -> execute(":let g:Ch_errmsg = 'lambda: ' . msg")},
+        \  'err_mode': 'json'})
   call assert_equal("run", job_status(job))
   try
     let g:Ch_outmsg = ''
@@ -1385,14 +1388,13 @@ func Test_close_and_exit_cb()
     let self.ret['exit_cb'] = job_status(a:job)
   endfunc
 
-  let g:job = job_start(has('win32') ? 'cmd /c echo:' : 'echo', {
-        \ 'close_cb': g:retdict.close_cb,
-        \ 'exit_cb': g:retdict.exit_cb,
-        \ })
-  call assert_equal('run', job_status(g:job))
-  unlet g:job
+  let job = job_start([&shell, &shellcmdflag, 'echo'],
+        \ {'close_cb': g:retdict.close_cb,
+        \  'exit_cb': g:retdict.exit_cb})
+  " the job may be done quickly, also accept "dead"
+  call assert_match('^\%(dead\|run\)$', job_status(job))
   call WaitForAssert({-> assert_equal(2, len(g:retdict.ret))})
-  call assert_match('^\%(dead\|run\)', g:retdict.ret['close_cb'])
+  call assert_match('^\%(dead\|run\)$', g:retdict.ret['close_cb'])
   call assert_equal('dead', g:retdict.ret['exit_cb'])
   unlet g:retdict
 endfunc
@@ -1415,7 +1417,7 @@ func Test_exit_cb_wipes_buf()
   let g:wipe_buf = bufnr('')
 
   let job = job_start(has('win32') ? 'cmd /c echo:' : ['true'],
-			  \ {'exit_cb': 'ExitCbWipe'})
+	\ {'exit_cb': 'ExitCbWipe'})
   let timer = timer_start(300, {-> feedkeys("\<Esc>", 'nt')}, {'repeat': 5})
   call feedkeys(repeat('g', 1000) . 'o', 'ntx!')
   call WaitForAssert({-> assert_equal("dead", job_status(job))})
@@ -1933,7 +1935,8 @@ func Test_keep_pty_open()
     return
   endif
 
-  let job = job_start(s:python . ' -c "import time;time.sleep(0.2)"', {'out_io': 'null', 'err_io': 'null', 'pty': 1})
+  let job = job_start(s:python . ' -c "import time;time.sleep(0.2)"',
+        \ {'out_io': 'null', 'err_io': 'null', 'pty': 1})
   let elapsed = WaitFor({-> job_status(job) ==# 'dead'})
   call assert_inrange(200, 1000, elapsed)
   call job_stop(job)
@@ -1945,10 +1948,11 @@ func Test_job_start_in_timer()
   endif
 
   func OutCb(chan, msg)
+    let g:val += 1
   endfunc
 
   func ExitCb(job, status)
-    let g:val = 1
+    let g:val += 1
     call Resume()
   endfunc
 
@@ -1967,6 +1971,10 @@ func Test_job_start_in_timer()
   call timer_start(1, 'TimerCb')
   let elapsed = Standby(&ut)
   call assert_inrange(1, &ut / 2, elapsed)
+
+  " Wait for both OutCb() and ExitCb() to have been called before deleting
+  " them.
+  call WaitForAssert({-> assert_equal(2, g:val)})
   call job_stop(g:job)
 
   delfunc OutCb
@@ -1974,4 +1982,113 @@ func Test_job_start_in_timer()
   delfunc TimerCb
   unlet! g:val
   unlet! g:job
+endfunc
+
+func Test_raw_large_data()
+  try
+    let g:out = ''
+    let job = job_start(s:python . " test_channel_pipe.py",
+          \ {'mode': 'raw', 'drop': 'never', 'noblock': 1,
+          \  'callback': {ch, msg -> execute('let g:out .= msg')}})
+
+    let outlen = 79999
+    let want = repeat('X', outlen) . "\n"
+    call ch_sendraw(job, want)
+    call WaitFor({-> len(g:out) >= outlen}, 10000)
+    call WaitForAssert({-> assert_equal("dead", job_status(job))})
+    call assert_equal(want, substitute(g:out, '\r', '', 'g'))
+  finally
+    call job_stop(job)
+    unlet g:out
+  endtry
+endfunc
+
+func Test_no_hang_windows()
+  if !has('job') || !has('win32')
+    return
+  endif
+
+  try
+    let job = job_start(s:python . " test_channel_pipe.py busy",
+          \ {'mode': 'raw', 'drop': 'never', 'noblock': 0})
+    call assert_fails('call ch_sendraw(job, repeat("X", 80000))', 'E631:')
+  finally
+    call job_stop(job)
+  endtry
+endfunc
+
+func Test_job_exitval_and_termsig()
+  if !has('unix')
+    return
+  endif
+
+  " Terminate job normally
+  let cmd = ['echo']
+  let job = job_start(cmd)
+  call WaitForAssert({-> assert_equal("dead", job_status(job))})
+  let info = job_info(job)
+  call assert_equal(0, info.exitval)
+  call assert_equal("", info.termsig)
+
+  " Terminate job by signal
+  let cmd = ['sleep', '10']
+  let job = job_start(cmd)
+  sleep 10m
+  call job_stop(job)
+  call WaitForAssert({-> assert_equal("dead", job_status(job))})
+  let info = job_info(job)
+  call assert_equal(-1, info.exitval)
+  call assert_equal("term", info.termsig)
+endfunc
+
+func Test_job_tty_in_out()
+  if !has('job') || !has('unix')
+    return
+  endif
+
+  call writefile(['test'], 'Xtestin')
+  let in_opts = [{},
+        \ {'in_io': 'null'},
+        \ {'in_io': 'file', 'in_name': 'Xtestin'}]
+  let out_opts = [{},
+        \ {'out_io': 'null'},
+        \ {'out_io': 'file', 'out_name': 'Xtestout'}]
+  let err_opts = [{},
+        \ {'err_io': 'null'},
+        \ {'err_io': 'file', 'err_name': 'Xtesterr'},
+        \ {'err_io': 'out'}]
+  let opts = []
+
+  for in_opt in in_opts
+    let x = copy(in_opt)
+    for out_opt in out_opts
+      let x = extend(copy(x), out_opt)
+      for err_opt in err_opts
+        let x = extend(copy(x), err_opt)
+        let opts += [extend({'pty': 1}, x)]
+      endfor
+    endfor
+  endfor
+
+  for opt in opts
+    let job = job_start('echo', opt)
+    let info = job_info(job)
+    let msg = printf('option={"in_io": "%s", "out_io": "%s", "err_io": "%s"}',
+          \ get(opt, 'in_io', 'tty'),
+          \ get(opt, 'out_io', 'tty'),
+          \ get(opt, 'err_io', 'tty'))
+
+    if !has_key(opt, 'in_io') || !has_key(opt, 'out_io') || !has_key(opt, 'err_io')
+      call assert_notequal('', info.tty_in, msg)
+    else
+      call assert_equal('', info.tty_in, msg)
+    endif
+    call assert_equal(info.tty_in, info.tty_out, msg)
+
+    call WaitForAssert({-> assert_equal('dead', job_status(job))})
+  endfor
+
+  call delete('Xtestin')
+  call delete('Xtestout')
+  call delete('Xtesterr')
 endfunc

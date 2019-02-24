@@ -90,10 +90,6 @@ static int parse_diff_ed(char_u *line, linenr_T *lnum_orig, long *count_orig, li
 static int parse_diff_unified(char_u *line, linenr_T *lnum_orig, long *count_orig, linenr_T *lnum_new, long *count_new);
 static int xdiff_out(void *priv, mmbuffer_t *mb, int nbuf);
 
-#ifndef USE_CR
-# define tag_fgets vim_fgets
-#endif
-
 /*
  * Called when deleting or unloading a buffer: No longer make a diff with it.
  */
@@ -173,7 +169,7 @@ diff_buf_add(buf_T *buf)
 	    return;
 	}
 
-    semsg(_("E96: Cannot diff more than %ld buffers"), DB_COUNT);
+    semsg(_("E96: Cannot diff more than %d buffers"), DB_COUNT);
 }
 
 /*
@@ -741,12 +737,10 @@ diff_write_buffer(buf_T *buf, diffin_T *din)
 	    if (diff_flags & DIFF_ICASE)
 	    {
 		int c;
-
-		// xdiff doesn't support ignoring case, fold-case the text.
-#ifdef FEAT_MBYTE
 		int	orig_len;
 		char_u	cbuf[MB_MAXBYTES + 1];
 
+		// xdiff doesn't support ignoring case, fold-case the text.
 		c = PTR2CHAR(s);
 		c = enc_utf8 ? utf_fold(c) : MB_TOLOWER(c);
 		orig_len = MB_PTR2LEN(s);
@@ -758,10 +752,6 @@ diff_write_buffer(buf_T *buf, diffin_T *din)
 
 		s += orig_len;
 		len += orig_len;
-#else
-		c = *s++;
-		ptr[len++] = TOLOWER_LOC(c);
-#endif
 	    }
 	    else
 		ptr[len++] = *s++;
@@ -1002,7 +992,7 @@ check_external_diff(diffio_T *diffio)
 		    for (;;)
 		    {
 			/* There must be a line that contains "1c1". */
-			if (tag_fgets(linebuf, LBUFLEN, fd))
+			if (vim_fgets(linebuf, LBUFLEN, fd))
 			    break;
 			if (STRNCMP(linebuf, "1c1", 3) == 0)
 			    ok = TRUE;
@@ -1610,7 +1600,7 @@ diff_read(
 	}
 	else
 	{
-	    if (tag_fgets(linebuf, LBUFLEN, fd))
+	    if (vim_fgets(linebuf, LBUFLEN, fd))
 		break;		// end of file
 	    line = linebuf;
 	}
@@ -1632,9 +1622,9 @@ diff_read(
 	    else if ((STRNCMP(line, "@@ ", 3) == 0))
 	       diffstyle = DIFF_UNIFIED;
 	    else if ((STRNCMP(line, "--- ", 4) == 0)
-		    && (tag_fgets(linebuf, LBUFLEN, fd) == 0)
+		    && (vim_fgets(linebuf, LBUFLEN, fd) == 0)
 		    && (STRNCMP(line, "+++ ", 4) == 0)
-		    && (tag_fgets(linebuf, LBUFLEN, fd) == 0)
+		    && (vim_fgets(linebuf, LBUFLEN, fd) == 0)
 		    && (STRNCMP(line, "@@ ", 3) == 0))
 		diffstyle = DIFF_UNIFIED;
 	    else
@@ -1946,7 +1936,6 @@ diff_equal_entry(diff_T *dp, int idx1, int idx2)
     static int
 diff_equal_char(char_u *p1, char_u *p2, int *len)
 {
-#ifdef FEAT_MBYTE
     int l  = (*mb_ptr2len)(p1);
 
     if (l != (*mb_ptr2len)(p2))
@@ -1962,7 +1951,6 @@ diff_equal_char(char_u *p1, char_u *p2, int *len)
 	*len = l;
     }
     else
-#endif
     {
 	if ((*p1 != *p2)
 		&& (!(diff_flags & DIFF_ICASE)
@@ -2289,7 +2277,7 @@ diffopt_changed(void)
 	    tp->tp_diff_invalid = TRUE;
 
     diff_flags = diff_flags_new;
-    diff_context = diff_context_new;
+    diff_context = diff_context_new == 0 ? 1 : diff_context_new;
     diff_foldcolumn = diff_foldcolumn_new;
     diff_algorithm = diff_algorithm_new;
 
@@ -2400,7 +2388,6 @@ diff_find_change(
 		    si_new += l;
 		}
 	    }
-#ifdef FEAT_MBYTE
 	    if (has_mbyte)
 	    {
 		/* Move back to first byte of character in both lines (may
@@ -2408,7 +2395,6 @@ diff_find_change(
 		si_org -= (*mb_head_off)(line_org, line_org + si_org);
 		si_new -= (*mb_head_off)(line_new, line_new + si_new);
 	    }
-#endif
 	    if (*startp > si_org)
 		*startp = si_org;
 
@@ -2438,10 +2424,8 @@ diff_find_change(
 		    {
 			p1 = line_org + ei_org;
 			p2 = line_new + ei_new;
-#ifdef FEAT_MBYTE
 			p1 -= (*mb_head_off)(line_org, p1);
 			p2 -= (*mb_head_off)(line_new, p2);
-#endif
 			if (!diff_equal_char(p1, p2, &l))
 			    break;
 			ei_org -= l;

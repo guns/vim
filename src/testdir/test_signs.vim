@@ -210,13 +210,16 @@ func Test_sign_completion()
   call assert_equal('"sign define Sign linehl=SpellBad SpellCap ' .
 	      \ 'SpellLocal SpellRare', @:)
 
-  call writefile(['foo'], 'XsignOne')
-  call writefile(['bar'], 'XsignTwo')
+  call feedkeys(":sign define Sign texthl=Spell\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign define Sign texthl=SpellBad SpellCap ' .
+	      \ 'SpellLocal SpellRare', @:)
+
+  call writefile(repeat(["Sun is shining"], 30), "XsignOne")
+  call writefile(repeat(["Sky is blue"], 30), "XsignTwo")
   call feedkeys(":sign define Sign icon=Xsig\<C-A>\<C-B>\"\<CR>", 'tx')
   call assert_equal('"sign define Sign icon=XsignOne XsignTwo', @:)
-  call delete('XsignOne')
-  call delete('XsignTwo')
 
+  " Test for completion of arguments to ':sign undefine'
   call feedkeys(":sign undefine \<C-A>\<C-B>\"\<CR>", 'tx')
   call assert_equal('"sign undefine Sign1 Sign2', @:)
 
@@ -227,17 +230,70 @@ func Test_sign_completion()
   call feedkeys(":sign place 1 name=\<C-A>\<C-B>\"\<CR>", 'tx')
   call assert_equal('"sign place 1 name=Sign1 Sign2', @:)
 
+  edit XsignOne
+  sign place 1 name=Sign1 line=5
+  sign place 1 name=Sign1 group=g1 line=10
+  edit XsignTwo
+  sign place 1 name=Sign2 group=g2 line=15
+
+  " Test for completion of group= and file= arguments to ':sign place'
+  call feedkeys(":sign place 1 name=Sign1 file=Xsign\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign place 1 name=Sign1 file=XsignOne XsignTwo', @:)
+  call feedkeys(":sign place 1 name=Sign1 group=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign place 1 name=Sign1 group=g1 g2', @:)
+
+  " Test for completion of arguments to 'sign place' without sign identifier
+  call feedkeys(":sign place \<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign place buffer= file= group=', @:)
+  call feedkeys(":sign place file=Xsign\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign place file=XsignOne XsignTwo', @:)
+  call feedkeys(":sign place group=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign place group=g1 g2', @:)
+  call feedkeys(":sign place group=g1 file=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign place group=g1 file=XsignOne XsignTwo', @:)
+
+  " Test for completion of arguments to ':sign unplace'
   call feedkeys(":sign unplace 1 \<C-A>\<C-B>\"\<CR>", 'tx')
   call assert_equal('"sign unplace 1 buffer= file= group=', @:)
+  call feedkeys(":sign unplace 1 file=Xsign\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign unplace 1 file=XsignOne XsignTwo', @:)
+  call feedkeys(":sign unplace 1 group=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign unplace 1 group=g1 g2', @:)
+  call feedkeys(":sign unplace 1 group=g2 file=Xsign\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign unplace 1 group=g2 file=XsignOne XsignTwo', @:)
 
+  " Test for completion of arguments to ':sign list'
   call feedkeys(":sign list \<C-A>\<C-B>\"\<CR>", 'tx')
   call assert_equal('"sign list Sign1 Sign2', @:)
 
+  " Test for completion of arguments to ':sign jump'
   call feedkeys(":sign jump 1 \<C-A>\<C-B>\"\<CR>", 'tx')
   call assert_equal('"sign jump 1 buffer= file= group=', @:)
+  call feedkeys(":sign jump 1 file=Xsign\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign jump 1 file=XsignOne XsignTwo', @:)
+  call feedkeys(":sign jump 1 group=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign jump 1 group=g1 g2', @:)
 
+  " Error cases
+  call feedkeys(":sign here\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal('"sign here', @:)
+  call feedkeys(":sign define Sign here=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal("\"sign define Sign here=\<C-A>", @:)
+  call feedkeys(":sign place 1 here=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal("\"sign place 1 here=\<C-A>", @:)
+  call feedkeys(":sign jump 1 here=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal("\"sign jump 1 here=\<C-A>", @:)
+  call feedkeys(":sign here there\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal("\"sign here there\<C-A>", @:)
+  call feedkeys(":sign here there=\<C-A>\<C-B>\"\<CR>", 'tx')
+  call assert_equal("\"sign here there=\<C-A>", @:)
+
+  sign unplace * group=*
   sign undefine Sign1
   sign undefine Sign2
+  enew
+  call delete('XsignOne')
+  call delete('XsignTwo')
 endfunc
 
 func Test_sign_invalid_commands()
@@ -1202,13 +1258,13 @@ func Test_sign_lnum_adjust()
   enew! | only!
 
   sign define sign1 text=#> linehl=Comment
-  call setline(1, ['A', 'B', 'C', 'D'])
+  call setline(1, ['A', 'B', 'C', 'D', 'E'])
   exe 'sign place 5 line=3 name=sign1 buffer=' . bufnr('')
   let l = sign_getplaced(bufnr(''))
   call assert_equal(3, l[0].signs[0].lnum)
 
   " Add some lines before the sign and check the sign line number
-  call append(2, ['AA', 'AB', 'AC'])
+  call append(2, ['BA', 'BB', 'BC'])
   let l = sign_getplaced(bufnr(''))
   call assert_equal(6, l[0].signs[0].lnum)
 
@@ -1216,6 +1272,44 @@ func Test_sign_lnum_adjust()
   call deletebufline('%', 1, 2)
   let l = sign_getplaced(bufnr(''))
   call assert_equal(4, l[0].signs[0].lnum)
+
+  " Insert some lines after the sign and check the sign line number
+  call append(5, ['DA', 'DB'])
+  let l = sign_getplaced(bufnr(''))
+  call assert_equal(4, l[0].signs[0].lnum)
+
+  " Delete some lines after the sign and check the sign line number
+  call deletebufline('', 6, 7)
+  let l = sign_getplaced(bufnr(''))
+  call assert_equal(4, l[0].signs[0].lnum)
+
+  " Break the undo. Otherwise the undo operation below will undo all the
+  " changes made by this function.
+  let &undolevels=&undolevels
+
+  " Delete the line with the sign
+  call deletebufline('', 4)
+  let l = sign_getplaced(bufnr(''))
+  call assert_equal(4, l[0].signs[0].lnum)
+
+  " Undo the delete operation
+  undo
+  let l = sign_getplaced(bufnr(''))
+  call assert_equal(5, l[0].signs[0].lnum)
+
+  " Break the undo
+  let &undolevels=&undolevels
+
+  " Delete few lines at the end of the buffer including the line with the sign
+  " Sign line number should not change (as it is placed outside of the buffer)
+  call deletebufline('', 3, 6)
+  let l = sign_getplaced(bufnr(''))
+  call assert_equal(5, l[0].signs[0].lnum)
+
+  " Undo the delete operation. Sign should be restored to the previous line
+  undo
+  let l = sign_getplaced(bufnr(''))
+  call assert_equal(5, l[0].signs[0].lnum)
 
   sign unplace * group=*
   sign undefine sign1

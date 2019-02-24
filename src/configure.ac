@@ -1996,22 +1996,6 @@ if test "$enable_cscope" = "yes"; then
   AC_DEFINE(FEAT_CSCOPE)
 fi
 
-AC_MSG_CHECKING(--enable-workshop argument)
-AC_ARG_ENABLE(workshop,
-	[  --enable-workshop       Include Sun Visual Workshop support.], ,
-	[enable_workshop="no"])
-AC_MSG_RESULT($enable_workshop)
-if test "$enable_workshop" = "yes"; then
-  AC_DEFINE(FEAT_SUN_WORKSHOP)
-  WORKSHOP_SRC="workshop.c integration.c"
-  AC_SUBST(WORKSHOP_SRC)
-  WORKSHOP_OBJ="objects/workshop.o objects/integration.o"
-  AC_SUBST(WORKSHOP_OBJ)
-  if test "${enable_gui-xxx}" = xxx; then
-    enable_gui=motif
-  fi
-fi
-
 AC_MSG_CHECKING(--disable-netbeans argument)
 AC_ARG_ENABLE(netbeans,
 	[  --disable-netbeans      Disable NetBeans integration support.],
@@ -2140,9 +2124,7 @@ AC_ARG_ENABLE(multibyte,
 	[  --enable-multibyte      Include multibyte editing support.], ,
 	[enable_multibyte="yes"])
 AC_MSG_RESULT($enable_multibyte)
-if test "$enable_multibyte" = "yes"; then
-  AC_DEFINE(FEAT_MBYTE)
-else
+if test "$enable_multibyte" != "yes"; then
   AC_MSG_ERROR([The multi-byte feature can no longer be disabled. If you have
 		a problem with this, discuss on the Vim mailing list.])
 fi
@@ -2173,18 +2155,9 @@ else
 	AC_DEFINE(DISABLE_ARABIC)
 fi
 
-dnl Farsi language support for vim will be included with big features,
-dnl unless ENABLE_FARSI is undefined.
-AC_MSG_CHECKING(--disable-farsi argument)
+dnl Farsi language support has been removed, ignore --disable-farsi
 AC_ARG_ENABLE(farsi,
-	[  --disable-farsi         Do not include Farsi language support.],
-	, [enable_farsi="yes"])
-if test "$enable_farsi" = "yes"; then
-	AC_MSG_RESULT(no)
-else
-	AC_MSG_RESULT(yes)
-	AC_DEFINE(DISABLE_FARSI)
-fi
+	[  --disable-farsi         Deprecated.],,)
 
 AC_MSG_CHECKING(--enable-hangulinput argument)
 AC_ARG_ENABLE(hangulinput,
@@ -3283,7 +3256,7 @@ AC_CHECK_HEADERS(stdint.h stdlib.h string.h \
 	unistd.h stropts.h errno.h sys/resource.h \
 	sys/systeminfo.h locale.h sys/stream.h termios.h \
 	libc.h sys/statfs.h poll.h sys/poll.h pwd.h \
-	utime.h sys/param.h libintl.h libgen.h \
+	utime.h sys/param.h sys/ptms.h libintl.h libgen.h \
 	util/debug.h util/msg18n.h frame.h sys/acl.h \
 	sys/access.h sys/sysinfo.h wchar.h wctype.h)
 

@@ -405,7 +405,7 @@ DEFINES = $(DEFINES) -DFEAT_CSCOPE
 !endif
 
 !if ("$(GUI)"=="yes")
-DEFINES = $(DEFINES) -DFEAT_GUI_W32 -DFEAT_CLIPBOARD
+DEFINES = $(DEFINES) -DFEAT_GUI_MSWIN -DFEAT_CLIPBOARD
 !if ("$(DEBUG)"=="yes")
 TARGET = gvimd.exe
 !else
@@ -525,6 +525,7 @@ vimwinmain = \
 
 vimobj =  \
 	$(OBJDIR)\arabic.obj \
+	$(OBJDIR)\autocmd.obj \
 	$(OBJDIR)\blowfish.obj \
 	$(OBJDIR)\buffer.obj \
 	$(OBJDIR)\charset.obj \
@@ -541,12 +542,13 @@ vimobj =  \
 	$(OBJDIR)\ex_docmd.obj \
 	$(OBJDIR)\ex_eval.obj \
 	$(OBJDIR)\ex_getln.obj \
-	$(OBJDIR)\farsi.obj \
 	$(OBJDIR)\fileio.obj \
+	$(OBJDIR)\findfile.obj \
 	$(OBJDIR)\fold.obj \
 	$(OBJDIR)\getchar.obj \
 	$(OBJDIR)\hardcopy.obj \
 	$(OBJDIR)\hashtab.obj \
+	$(OBJDIR)\indent.obj \
 	$(OBJDIR)\json.obj \
 	$(OBJDIR)\list.obj \
 	$(OBJDIR)\main.obj \

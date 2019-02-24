@@ -50,7 +50,6 @@ do_ascii(exarg_T *eap UNUSED)
 #ifdef FEAT_DIGRAPHS
     char_u      *dig;
 #endif
-#ifdef FEAT_MBYTE
     int		cc[MAX_MCO];
     int		ci = 0;
     int		len;
@@ -58,18 +57,15 @@ do_ascii(exarg_T *eap UNUSED)
     if (enc_utf8)
 	c = utfc_ptr2char(ml_get_cursor(), cc);
     else
-#endif
 	c = gchar_cursor();
     if (c == NUL)
     {
-	MSG("NUL");
+	msg("NUL");
 	return;
     }
 
-#ifdef FEAT_MBYTE
     IObuff[0] = NUL;
     if (!has_mbyte || (enc_dbcs != 0 && c < 0x100) || c < 0x80)
-#endif
     {
 	if (c == NL)	    /* NUL is stored as NL */
 	    c = NUL;
@@ -106,15 +102,12 @@ do_ascii(exarg_T *eap UNUSED)
 	    vim_snprintf((char *)IObuff, IOSIZE,
 		_("<%s>%s%s  %d,  Hex %02x,  Octal %03o"),
 				  transchar(c), buf1, buf2, cval, cval, cval);
-#ifdef FEAT_MBYTE
 	if (enc_utf8)
 	    c = cc[ci++];
 	else
 	    c = 0;
-#endif
     }
 
-#ifdef FEAT_MBYTE
     /* Repeat for combining characters. */
     while (has_mbyte && (c >= 0x100 || (enc_utf8 && c >= 0x80)))
     {
@@ -150,9 +143,8 @@ do_ascii(exarg_T *eap UNUSED)
 	else
 	    c = 0;
     }
-#endif
 
-    msg(IObuff);
+    msg((char *)IObuff);
 }
 
 /*
@@ -304,16 +296,20 @@ static int	sort_abort;	/* flag to indicate if sorting has been interrupted */
 /* Struct to store info to be sorted. */
 typedef struct
 {
-    linenr_T	lnum;			/* line number */
+    linenr_T	lnum;			// line number
     union {
 	struct
 	{
-	    varnumber_T	start_col_nr;		/* starting column number */
-	    varnumber_T	end_col_nr;		/* ending column number */
+	    varnumber_T	start_col_nr;	// starting column number
+	    varnumber_T	end_col_nr;	// ending column number
 	} line;
-	varnumber_T	value;		/* value if sorting by integer */
+	struct
+	{
+	    varnumber_T	value;		// value if sorting by integer
+	    int is_number;		// TRUE when line contains a number
+	} num;
 #ifdef FEAT_FLOAT
-	float_T value_flt;	/* value if sorting by float */
+	float_T value_flt;		// value if sorting by float
 #endif
     } st_u;
 } sorti_T;
@@ -343,11 +339,14 @@ sort_compare(const void *s1, const void *s2)
     if (got_int)
 	sort_abort = TRUE;
 
-    /* When sorting numbers "start_col_nr" is the number, not the column
-     * number. */
     if (sort_nr)
-	result = l1.st_u.value == l2.st_u.value ? 0
-				 : l1.st_u.value > l2.st_u.value ? 1 : -1;
+    {
+	if (l1.st_u.num.is_number != l2.st_u.num.is_number)
+	    result = l1.st_u.num.is_number - l2.st_u.num.is_number;
+	else
+	    result = l1.st_u.num.value == l2.st_u.num.value ? 0
+			     : l1.st_u.num.value > l2.st_u.num.value ? 1 : -1;
+    }
 #ifdef FEAT_FLOAT
     else if (sort_flt)
 	result = l1.st_u.value_flt == l2.st_u.value_flt ? 0
@@ -561,11 +560,17 @@ ex_sort(exarg_T *eap)
 		if (s > p && s[-1] == '-')
 		    --s;  /* include preceding negative sign */
 		if (*s == NUL)
-		    /* empty line should sort before any number */
-		    nrs[lnum - eap->line1].st_u.value = -MAXLNUM;
+		{
+		    /* line without number should sort before any number */
+		    nrs[lnum - eap->line1].st_u.num.is_number = FALSE;
+		    nrs[lnum - eap->line1].st_u.num.value = 0;
+		}
 		else
+		{
+		    nrs[lnum - eap->line1].st_u.num.is_number = TRUE;
 		    vim_str2nr(s, NULL, NULL, sort_what,
-			       &nrs[lnum - eap->line1].st_u.value, NULL, 0);
+			       &nrs[lnum - eap->line1].st_u.num.value, NULL, 0);
+		}
 	    }
 #ifdef FEAT_FLOAT
 	    else
@@ -823,11 +828,9 @@ ex_retab(exarg_T *eap)
 	    if (ptr[col] == NUL)
 		break;
 	    vcol += chartabsize(ptr + col, (colnr_T)vcol);
-#ifdef FEAT_MBYTE
 	    if (has_mbyte)
 		col += (*mb_ptr2len)(ptr + col);
 	    else
-#endif
 		++col;
 	}
 	if (new_line == NULL)		    /* out of memory */
@@ -1490,11 +1493,11 @@ do_filter(
 	{
 	    if (do_in)
 	    {
-		vim_snprintf((char *)msg_buf, sizeof(msg_buf),
+		vim_snprintf(msg_buf, sizeof(msg_buf),
 				    _("%ld lines filtered"), (long)linecount);
 		if (msg(msg_buf) && !msg_scroll)
 		    /* save message to display it after redraw */
-		    set_keep_msg(msg_buf, 0);
+		    set_keep_msg((char_u *)msg_buf, 0);
 	    }
 	    else
 		msgmore((long)linecount);
@@ -1586,7 +1589,7 @@ do_shell(
 		if (!winstart)
 		    starttermcap();	/* don't want a message box here */
 #endif
-		MSG_PUTS(_("[No write since last change]\n"));
+		msg_puts(_("[No write since last change]\n"));
 #ifdef FEAT_GUI_MSWIN
 		if (!winstart)
 		    stoptermcap();
@@ -1628,7 +1631,7 @@ do_shell(
 	 */
 #ifndef FEAT_GUI_MSWIN
 	if (cmd == NULL
-# ifdef WIN3264
+# ifdef MSWIN
 		|| (winstart && !need_wait_return)
 # endif
 	   )
@@ -1658,7 +1661,7 @@ do_shell(
 # endif
 	    no_wait_return = save_nwr;
 	}
-#endif /* FEAT_GUI_W32 */
+#endif /* FEAT_GUI_MSWIN */
 
 #ifdef MSWIN
 	if (!winstart) /* if winstart==TRUE, never stopped termcap! */
@@ -1950,7 +1953,7 @@ write_viminfo(char_u *file, int forceit)
     int		shortname = FALSE;	/* use 8.3 file name */
     stat_T	st_old;		/* mch_stat() of existing viminfo file */
 #endif
-#ifdef WIN3264
+#ifdef MSWIN
     int		hidden = FALSE;
 #endif
 
@@ -2014,7 +2017,7 @@ write_viminfo(char_u *file, int forceit)
 	    goto end;
 	}
 #endif
-#ifdef WIN3264
+#ifdef MSWIN
 	/* Get the file attributes of the existing viminfo file. */
 	hidden = mch_ishidden(fname);
 #endif
@@ -2113,7 +2116,7 @@ write_viminfo(char_u *file, int forceit)
 			fp_out = NULL;
 # ifdef EEXIST
 			/* Avoid trying lots of names while the problem is lack
-			 * of premission, only retry if the file already
+			 * of permission, only retry if the file already
 			 * exists. */
 			if (errno != EEXIST)
 			    break;
@@ -2210,7 +2213,7 @@ write_viminfo(char_u *file, int forceit)
 		++viminfo_errcnt;
 		semsg(_("E886: Can't rename viminfo file to %s!"), fname);
 	    }
-# ifdef WIN3264
+# ifdef MSWIN
 	    /* If the viminfo file was hidden then also hide the new file. */
 	    else if (hidden)
 		mch_hide(fname);
@@ -2287,9 +2290,7 @@ do_viminfo(FILE *fp_in, FILE *fp_out, int flags)
     if ((vir.vir_line = alloc(LSIZE)) == NULL)
 	return;
     vir.vir_fd = fp_in;
-#ifdef FEAT_MBYTE
     vir.vir_conv.vc_type = CONV_NONE;
-#endif
     ga_init2(&vir.vir_barlines, (int)sizeof(char_u *), 100);
     vir.vir_version = -1;
 
@@ -2326,10 +2327,8 @@ do_viminfo(FILE *fp_in, FILE *fp_out, int flags)
 							  VIM_VERSION_MEDIUM);
 	fputs(_("# You may edit it if you're careful!\n\n"), fp_out);
 	write_viminfo_version(fp_out);
-#ifdef FEAT_MBYTE
 	fputs(_("# Value of 'encoding' when this file was written\n"), fp_out);
 	fprintf(fp_out, "*encoding=%s\n\n", p_enc);
-#endif
 	write_viminfo_search_pattern(fp_out);
 	write_viminfo_sub_string(fp_out);
 #ifdef FEAT_CMDHIST
@@ -2358,10 +2357,8 @@ do_viminfo(FILE *fp_in, FILE *fp_out, int flags)
     }
 
     vim_free(vir.vir_line);
-#ifdef FEAT_MBYTE
     if (vir.vir_conv.vc_type != CONV_NONE)
 	convert_setup(&vir.vir_conv, NULL, NULL);
-#endif
     ga_clear_strings(&vir.vir_barlines);
 }
 
@@ -2489,7 +2486,6 @@ read_viminfo_up_to_marks(
     static int
 viminfo_encoding(vir_T *virp)
 {
-#ifdef FEAT_MBYTE
     char_u	*p;
     int		i;
 
@@ -2507,7 +2503,6 @@ viminfo_encoding(vir_T *virp)
 	    convert_setup(&virp->vir_conv, p, p_enc);
 	}
     }
-#endif
     return viminfo_readline(virp);
 }
 
@@ -2579,7 +2574,6 @@ viminfo_readstring(
     }
     *d = NUL;
 
-#ifdef FEAT_MBYTE
     if (convert && virp->vir_conv.vc_type != CONV_NONE && *retval != NUL)
     {
 	d = string_convert(&virp->vir_conv, retval, NULL);
@@ -2589,7 +2583,6 @@ viminfo_readstring(
 	    retval = d;
 	}
     }
-#endif
 
     return retval;
 }
@@ -2713,10 +2706,8 @@ barline_parse(vir_T *virp, char_u *text, garray_T *values)
     int	    i;
     int	    allocated = FALSE;
     int	    eof;
-#ifdef FEAT_MBYTE
     char_u  *sconv;
     int	    converted;
-#endif
 
     while (*p == ',')
     {
@@ -2840,7 +2831,6 @@ barline_parse(vir_T *virp, char_u *text, garray_T *values)
 	    ++p;
 	    s[len] = NUL;
 
-#ifdef FEAT_MBYTE
 	    converted = FALSE;
 	    if (virp->vir_conv.vc_type != CONV_NONE && *s != NUL)
 	    {
@@ -2854,7 +2844,7 @@ barline_parse(vir_T *virp, char_u *text, garray_T *values)
 		    converted = TRUE;
 		}
 	    }
-#endif
+
 	    /* Need to copy in allocated memory if the string wasn't allocated
 	     * above and we did allocate before, thus vir_line may change. */
 	    if (s != buf && allocated)
@@ -2862,11 +2852,7 @@ barline_parse(vir_T *virp, char_u *text, garray_T *values)
 	    value->bv_string = s;
 	    value->bv_type = BVAL_STRING;
 	    value->bv_len = len;
-	    value->bv_allocated = allocated
-#ifdef FEAT_MBYTE
-					    || converted
-#endif
-						;
+	    value->bv_allocated = allocated || converted;
 	    ++values->ga_len;
 	    if (nextp != NULL)
 	    {
@@ -3033,11 +3019,11 @@ print_line_no_prefix(
     int		use_number,
     int		list)
 {
-    char_u	numbuf[30];
+    char	numbuf[30];
 
     if (curwin->w_p_nu || use_number)
     {
-	vim_snprintf((char *)numbuf, sizeof(numbuf),
+	vim_snprintf(numbuf, sizeof(numbuf),
 				   "%*ld ", number_width(curwin), (long)lnum);
 	msg_puts_attr(numbuf, HL_ATTR(HLF_N));	/* Highlight line nrs */
     }
@@ -3810,15 +3796,13 @@ do_ecmd(
     int		newcol = -1;
     int		solcol = -1;
     pos_T	*pos;
-#ifdef FEAT_SUN_WORKSHOP
-    char_u	*cp;
-#endif
     char_u	*command = NULL;
 #ifdef FEAT_SPELL
     int		did_get_winopts = FALSE;
 #endif
     int		readfile_flags = 0;
     int		did_inc_redrawing_disabled = FALSE;
+    long        *so_ptr = curwin->w_p_so >= 0 ? &curwin->w_p_so : &p_so;
 
     if (eap != NULL)
 	command = eap->do_ecmd_cmd;
@@ -3860,11 +3844,8 @@ do_ecmd(
 	if (sfname == NULL)
 	    sfname = ffname;
 #ifdef USE_FNAME_CASE
-# ifdef USE_LONG_FNAME
-	if (USE_LONG_FNAME)
-# endif
-	    if (sfname != NULL)
-		fname_case(sfname, 0);   /* set correct case for sfname */
+	if (sfname != NULL)
+	    fname_case(sfname, 0);   /* set correct case for sfname */
 #endif
 
 	if ((flags & ECMD_ADDBUF) && (ffname == NULL || *ffname == NUL))
@@ -3886,11 +3867,6 @@ do_ecmd(
 	    if (free_fname != NULL)
 		ffname = free_fname;
 	    other_file = otherfile(ffname);
-#ifdef FEAT_SUN_WORKSHOP
-	    if (usingSunWorkShop && p_acd
-				   && (cp = vim_strrchr(sfname, '/')) != NULL)
-		sfname = ++cp;
-#endif
 	}
     }
 
@@ -4107,9 +4083,7 @@ do_ecmd(
 		    if (!oldbuf && eap != NULL)
 		    {
 			set_file_options(TRUE, eap);
-#ifdef FEAT_MBYTE
 			set_forced_fenc(eap);
-#endif
 		    }
 		}
 
@@ -4374,9 +4348,7 @@ do_ecmd(
 		/* 'sol' is off: Use last known column. */
 		curwin->w_cursor.col = solcol;
 		check_cursor_col();
-#ifdef FEAT_VIRTUALEDIT
 		curwin->w_cursor.coladd = 0;
-#endif
 		curwin->w_set_curswant = TRUE;
 	    }
 	    else
@@ -4433,12 +4405,12 @@ do_ecmd(
     did_inc_redrawing_disabled = FALSE;
     if (!skip_redraw)
     {
-	n = p_so;
+	n = *so_ptr;
 	if (topline == 0 && command == NULL)
-	    p_so = 999;			/* force cursor halfway the window */
+	    *so_ptr = 9999;		// force cursor halfway the window
 	update_topline();
 	curwin->w_scbind_pos = curwin->w_topline;
-	p_so = n;
+	*so_ptr = n;
 	redraw_curbuf_later(NOT_VALID);	/* redraw this buffer later */
     }
 
@@ -4462,13 +4434,9 @@ do_ecmd(
     }
 #endif
 
-#if defined(FEAT_SUN_WORKSHOP) || defined(FEAT_NETBEANS_INTG)
+#if defined(FEAT_NETBEANS_INTG)
     if (curbuf->b_ffname != NULL)
     {
-# ifdef FEAT_SUN_WORKSHOP
-	if (gui.in_use && usingSunWorkShop)
-	    workshop_file_opened((char *)curbuf->b_ffname, curbuf->b_p_ro);
-# endif
 # ifdef FEAT_NETBEANS_INTG
 	if ((flags & ECMD_SET_HELP) != ECMD_SET_HELP)
 	    netbeans_file_opened(curbuf);
@@ -4822,7 +4790,7 @@ check_restricted(void)
 {
     if (restricted)
     {
-	emsg(_("E145: Shell commands not allowed in rvim"));
+	emsg(_("E145: Shell commands and some functionality not allowed in rvim"));
 	return TRUE;
     }
     return FALSE;
@@ -4961,10 +4929,6 @@ do_sub(exarg_T *eap)
 	}
 	else		/* find the end of the regexp */
 	{
-#ifdef FEAT_FKMAP	/* reverse the flow of the Farsi characters */
-	    if (p_altkeymap && curwin->w_p_rl)
-		lrF_sub(cmd);
-#endif
 	    which_pat = RE_LAST;	    /* use last used regexp */
 	    delimiter = *cmd++;		    /* remember delimiter character */
 	    pat = cmd;			    /* remember start of search pat */
@@ -5087,6 +5051,7 @@ do_sub(exarg_T *eap)
 	}
 	subflags.do_error = TRUE;
 	subflags.do_print = FALSE;
+	subflags.do_list = FALSE;
 	subflags.do_count = FALSE;
 	subflags.do_number = FALSE;
 	subflags.do_ic = 0;
@@ -5334,11 +5299,9 @@ do_sub(exarg_T *eap)
 		    else
 		    {
 			 /* search for a match at next column */
-#ifdef FEAT_MBYTE
 			if (has_mbyte)
 			    matchcol += mb_ptr2len(sub_firstline + matchcol);
 			else
-#endif
 			    ++matchcol;
 		    }
 		    goto skip;
@@ -5776,10 +5739,8 @@ do_sub(exarg_T *eap)
 			    p1 = new_start - 1;
 			}
 		    }
-#ifdef FEAT_MBYTE
 		    else if (has_mbyte)
 			p1 += (*mb_ptr2len)(p1) - 1;
-#endif
 		}
 
 		/*
@@ -5943,7 +5904,7 @@ outofmem:
 		    beginline(BL_WHITE | BL_FIX);
 	    }
 	    if (!do_sub_msg(subflags.do_count) && subflags.do_ask)
-		MSG("");
+		msg("");
 	}
 	else
 	    global_need_beginline = TRUE;
@@ -5956,7 +5917,7 @@ outofmem:
 	if (got_int)		/* interrupted */
 	    emsg(_(e_interr));
 	else if (got_match)	/* did find something but nothing substituted */
-	    MSG("");
+	    msg("");
 	else if (subflags.do_error)	/* nothing found */
 	    semsg(_(e_patnotf2), get_search_pat());
     }
@@ -6012,13 +5973,13 @@ do_sub_msg(
 		    : NGETTEXT("%ld substitution on %ld lines",
 				  "%ld substitutions on %ld lines", sub_nsubs);
 
-	vim_snprintf_add((char *)msg_buf, sizeof(msg_buf),
+	vim_snprintf_add(msg_buf, sizeof(msg_buf),
 				 NGETTEXT(msg_single, msg_plural, sub_nlines),
 				 sub_nsubs, (long)sub_nlines);
 
 	if (msg(msg_buf))
 	    /* save message to display it after redraw */
-	    set_keep_msg(msg_buf, 0);
+	    set_keep_msg((char_u *)msg_buf, 0);
 	return TRUE;
     }
     if (got_int)
@@ -6123,11 +6084,6 @@ ex_global(exarg_T *eap)
 	    *cmd++ = NUL;		    /* replace it with a NUL */
     }
 
-#ifdef FEAT_FKMAP	/* when in Farsi mode, reverse the character flow */
-    if (p_altkeymap && curwin->w_p_rl)
-	lrFswap(pat,0);
-#endif
-
     if (search_regcomp(pat, RE_BOTH, which_pat, SEARCH_HIS, &regmatch) == FAIL)
     {
 	emsg(_(e_invcmd));
@@ -6164,7 +6120,7 @@ ex_global(exarg_T *eap)
 	 * pass 2: execute the command for each line that has been marked
 	 */
 	if (got_int)
-	    MSG(_(e_interr));
+	    msg(_(e_interr));
 	else if (ndone == 0)
 	{
 	    if (type == 'v')
@@ -7034,10 +6990,8 @@ fix_help_buffer(void)
 		    FILE	*fd;
 		    char_u	*s;
 		    int		fi;
-#ifdef FEAT_MBYTE
 		    vimconv_T	vc;
 		    char_u	*cp;
-#endif
 
 		    /* Find all "doc/ *.txt" files in this directory. */
 		    add_pathsep(NameBuff);
@@ -7103,9 +7057,8 @@ fix_help_buffer(void)
 					&& (s = vim_strchr(IObuff + 1, '*'))
 								  != NULL)
 				{
-#ifdef FEAT_MBYTE
 				    int	this_utf = MAYBE;
-#endif
+
 				    /* Change tag definition to a
 				     * reference and remove <CR>/<NL>. */
 				    IObuff[0] = '|';
@@ -7114,7 +7067,6 @@ fix_help_buffer(void)
 				    {
 					if (*s == '\r' || *s == '\n')
 					    *s = NUL;
-#ifdef FEAT_MBYTE
 					/* The text is utf-8 when a byte
 					 * above 127 is found and no
 					 * illegal byte sequence is found.
@@ -7129,10 +7081,9 @@ fix_help_buffer(void)
 						this_utf = FALSE;
 					    s += l - 1;
 					}
-#endif
 					++s;
 				    }
-#ifdef FEAT_MBYTE
+
 				    /* The help file is latin1 or utf-8;
 				     * conversion to the current
 				     * 'encoding' may be required. */
@@ -7157,10 +7108,6 @@ fix_help_buffer(void)
 				    ml_append(lnum, cp, (colnr_T)0, FALSE);
 				    if (cp != IObuff)
 					vim_free(cp);
-#else
-				    ml_append(lnum, IObuff, (colnr_T)0,
-								   FALSE);
-#endif
 				    ++lnum;
 				}
 				fclose(fd);
@@ -7216,12 +7163,10 @@ helptags_one(
     int		i;
     char_u	*fname;
     int		dirlen;
-# ifdef FEAT_MBYTE
     int		utf8 = MAYBE;
     int		this_utf8;
     int		firstline;
     int		mix = FALSE;	/* detected mixed encodings */
-# endif
 
     /*
      * Find all *.txt files.
@@ -7291,12 +7236,9 @@ helptags_one(
 	}
 	fname = files[fi] + dirlen + 1;
 
-# ifdef FEAT_MBYTE
 	firstline = TRUE;
-# endif
 	while (!vim_fgets(IObuff, IOSIZE, fd) && !got_int)
 	{
-# ifdef FEAT_MBYTE
 	    if (firstline)
 	    {
 		/* Detect utf-8 file by a non-ASCII char in the first line. */
@@ -7328,7 +7270,6 @@ helptags_one(
 		}
 		firstline = FALSE;
 	    }
-# endif
 	    p1 = vim_strchr(IObuff, '*');	/* find first '*' */
 	    while (p1 != NULL)
 	    {
@@ -7415,10 +7356,8 @@ helptags_one(
 	    }
 	}
 
-# ifdef FEAT_MBYTE
 	if (utf8 == TRUE)
 	    fprintf(fd_tags, "!_TAG_FILE_ENCODING\tutf-8\t//\n");
-# endif
 
 	/*
 	 * Write the tags into the file.
@@ -7443,10 +7382,8 @@ helptags_one(
 	    }
 	}
     }
-#ifdef FEAT_MBYTE
     if (mix)
 	got_int = FALSE;    /* continue with other languages */
-#endif
 
     for (i = 0; i < ga.ga_len; ++i)
 	vim_free(((char_u **)ga.ga_data)[i]);
@@ -7772,7 +7709,7 @@ ex_oldfiles(exarg_T *eap UNUSED)
     char_u	*fname;
 
     if (l == NULL)
-	msg((char_u *)_("No old files"));
+	msg(_("No old files"));
     else
     {
 	msg_start();
@@ -7784,7 +7721,7 @@ ex_oldfiles(exarg_T *eap UNUSED)
 	    if (!message_filtered(fname))
 	    {
 		msg_outnum((long)nr);
-		MSG_PUTS(": ");
+		msg_puts(": ");
 		msg_outtrans(fname);
 		msg_clr_eos();
 		msg_putchar('\n');
