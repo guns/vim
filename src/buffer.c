@@ -1595,9 +1595,7 @@ do_buffer(
     set_curbuf(buf, action);
 
     if (action == DOBUF_SPLIT)
-    {
 	RESET_BINDING(curwin);	/* reset 'scrollbind' and 'cursorbind' */
-    }
 
 #if defined(FEAT_EVAL)
     if (aborting())	    /* autocmds may abort script processing */
@@ -1855,6 +1853,9 @@ curbuf_reusable(void)
 	&& curbuf->b_ffname == NULL
 	&& curbuf->b_nwindows <= 1
 	&& (curbuf->b_ml.ml_mfp == NULL || BUFEMPTY())
+#if defined(FEAT_QUICKFIX)
+	&& !bt_quickfix(curbuf)
+#endif
 	&& !curbufIsChanged());
 }
 
@@ -3054,9 +3055,8 @@ buflist_list(exarg_T *eap)
 	/* put "line 999" in column 40 or after the file name */
 	i = 40 - vim_strsize(IObuff);
 	do
-	{
 	    IObuff[len++] = ' ';
-	} while (--i > 0 && len < IOSIZE - 18);
+	while (--i > 0 && len < IOSIZE - 18);
 	vim_snprintf((char *)IObuff + len, (size_t)(IOSIZE - len),
 		_("line %ld"), buf == curbuf ? curwin->w_cursor.lnum
 					       : (long)buflist_findlnum(buf));
@@ -5496,9 +5496,10 @@ chk_modeline(
 		current_sctx.sc_sid = SID_MODELINE;
 		current_sctx.sc_seq = 0;
 		current_sctx.sc_lnum = 0;
+		current_sctx.sc_version = 1;
 #endif
 		// Make sure no risky things are executed as a side effect.
-		++secure;
+		secure = 1;
 
 		retval = do_set(s, OPT_MODELINE | OPT_LOCAL | flags);
 

@@ -1699,6 +1699,7 @@ do_one_cmd(
     exarg_T		ea;			/* Ex command arguments */
     int			save_msg_scroll = msg_scroll;
     cmdmod_T		save_cmdmod;
+    int			save_reg_executing = reg_executing;
     int			ni;			/* set when Not Implemented */
     char_u		*cmd;
 
@@ -2579,6 +2580,7 @@ doend:
 
     free_cmdmod();
     cmdmod = save_cmdmod;
+    reg_executing = save_reg_executing;
 
     if (ea.save_msg_silent != -1)
     {
@@ -8405,9 +8407,7 @@ ex_splitview(exarg_T *eap)
 		|| cmdmod.browse
 # endif
 	   )
-	{
 	    RESET_BINDING(curwin);
-	}
 	else
 	    do_check_scrollbind(FALSE);
 	do_exedit(eap, old_curwin);
@@ -10487,12 +10487,15 @@ exec_normal_cmd(char_u *cmd, int remap, int silent)
 exec_normal(int was_typed, int use_vpeekc, int may_use_terminal_loop UNUSED)
 {
     oparg_T	oa;
+    int		c;
 
+    // When calling vpeekc() from feedkeys() it will return Ctrl_C when there
+    // is nothing to get, so also check for Ctrl_C.
     clear_oparg(&oa);
     finish_op = FALSE;
     while ((!stuff_empty()
 		|| ((was_typed || !typebuf_typed()) && typebuf.tb_len > 0)
-		|| (use_vpeekc && vpeekc() != NUL))
+		|| (use_vpeekc && (c = vpeekc()) != NUL && c != Ctrl_C))
 	    && !got_int)
     {
 	update_topline_cursor();
