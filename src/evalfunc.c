@@ -63,6 +63,7 @@ static void f_atan(typval_T *argvars, typval_T *rettv);
 static void f_atan2(typval_T *argvars, typval_T *rettv);
 #endif
 #ifdef FEAT_BEVAL
+static void f_balloon_gettext(typval_T *argvars, typval_T *rettv);
 static void f_balloon_show(typval_T *argvars, typval_T *rettv);
 # if defined(FEAT_BEVAL_TERM)
 static void f_balloon_split(typval_T *argvars, typval_T *rettv);
@@ -107,6 +108,7 @@ static void f_ch_status(typval_T *argvars, typval_T *rettv);
 #endif
 static void f_changenr(typval_T *argvars, typval_T *rettv);
 static void f_char2nr(typval_T *argvars, typval_T *rettv);
+static void f_chdir(typval_T *argvars, typval_T *rettv);
 static void f_cindent(typval_T *argvars, typval_T *rettv);
 static void f_clearmatches(typval_T *argvars, typval_T *rettv);
 static void f_col(typval_T *argvars, typval_T *rettv);
@@ -135,6 +137,7 @@ static void f_did_filetype(typval_T *argvars, typval_T *rettv);
 static void f_diff_filler(typval_T *argvars, typval_T *rettv);
 static void f_diff_hlID(typval_T *argvars, typval_T *rettv);
 static void f_empty(typval_T *argvars, typval_T *rettv);
+static void f_environ(typval_T *argvars, typval_T *rettv);
 static void f_escape(typval_T *argvars, typval_T *rettv);
 static void f_eval(typval_T *argvars, typval_T *rettv);
 static void f_eventhandler(typval_T *argvars, typval_T *rettv);
@@ -185,6 +188,7 @@ static void f_getcmdpos(typval_T *argvars, typval_T *rettv);
 static void f_getcmdtype(typval_T *argvars, typval_T *rettv);
 static void f_getcmdwintype(typval_T *argvars, typval_T *rettv);
 static void f_getcwd(typval_T *argvars, typval_T *rettv);
+static void f_getenv(typval_T *argvars, typval_T *rettv);
 static void f_getfontname(typval_T *argvars, typval_T *rettv);
 static void f_getfperm(typval_T *argvars, typval_T *rettv);
 static void f_getfsize(typval_T *argvars, typval_T *rettv);
@@ -363,6 +367,7 @@ static void f_setbufline(typval_T *argvars, typval_T *rettv);
 static void f_setbufvar(typval_T *argvars, typval_T *rettv);
 static void f_setcharsearch(typval_T *argvars, typval_T *rettv);
 static void f_setcmdpos(typval_T *argvars, typval_T *rettv);
+static void f_setenv(typval_T *argvars, typval_T *rettv);
 static void f_setfperm(typval_T *argvars, typval_T *rettv);
 static void f_setline(typval_T *argvars, typval_T *rettv);
 static void f_setloclist(typval_T *argvars, typval_T *rettv);
@@ -437,6 +442,7 @@ static void f_tempname(typval_T *argvars, typval_T *rettv);
 static void f_test_alloc_fail(typval_T *argvars, typval_T *rettv);
 static void f_test_autochdir(typval_T *argvars, typval_T *rettv);
 static void f_test_feedinput(typval_T *argvars, typval_T *rettv);
+static void f_test_getvalue(typval_T *argvars, typval_T *rettv);
 static void f_test_option_not_set(typval_T *argvars, typval_T *rettv);
 static void f_test_override(typval_T *argvars, typval_T *rettv);
 static void f_test_refcount(typval_T *argvars, typval_T *rettv);
@@ -455,6 +461,9 @@ static void f_test_null_partial(typval_T *argvars, typval_T *rettv);
 static void f_test_null_string(typval_T *argvars, typval_T *rettv);
 #ifdef FEAT_GUI
 static void f_test_scrollbar(typval_T *argvars, typval_T *rettv);
+#endif
+#ifdef FEAT_MOUSE
+static void f_test_setmouse(typval_T *argvars, typval_T *rettv);
 #endif
 static void f_test_settime(typval_T *argvars, typval_T *rettv);
 #ifdef FEAT_FLOAT
@@ -548,6 +557,7 @@ static struct fst
     {"atan2",		2, 2, f_atan2},
 #endif
 #ifdef FEAT_BEVAL
+    {"balloon_gettext",	0, 0, f_balloon_gettext},
     {"balloon_show",	1, 1, f_balloon_show},
 # if defined(FEAT_BEVAL_TERM)
     {"balloon_split",	1, 1, f_balloon_split},
@@ -594,6 +604,7 @@ static struct fst
 #endif
     {"changenr",	0, 0, f_changenr},
     {"char2nr",		1, 2, f_char2nr},
+    {"chdir",		1, 1, f_chdir},
     {"cindent",		1, 1, f_cindent},
     {"clearmatches",	0, 1, f_clearmatches},
     {"col",		1, 1, f_col},
@@ -622,6 +633,7 @@ static struct fst
     {"diff_filler",	1, 1, f_diff_filler},
     {"diff_hlID",	2, 2, f_diff_hlID},
     {"empty",		1, 1, f_empty},
+    {"environ",		0, 0, f_environ},
     {"escape",		2, 2, f_escape},
     {"eval",		1, 1, f_eval},
     {"eventhandler",	0, 0, f_eventhandler},
@@ -674,6 +686,7 @@ static struct fst
 #endif
     {"getcurpos",	0, 0, f_getcurpos},
     {"getcwd",		0, 2, f_getcwd},
+    {"getenv",		1, 1, f_getenv},
     {"getfontname",	0, 1, f_getfontname},
     {"getfperm",	1, 1, f_getfperm},
     {"getfsize",	1, 1, f_getfsize},
@@ -755,6 +768,9 @@ static struct fst
     {"line2byte",	1, 1, f_line2byte},
     {"lispindent",	1, 1, f_lispindent},
     {"list2str",	1, 2, f_list2str},
+    {"listener_add",	1, 2, f_listener_add},
+    {"listener_flush",	0, 1, f_listener_flush},
+    {"listener_remove",	1, 1, f_listener_remove},
     {"localtime",	0, 0, f_localtime},
 #ifdef FEAT_FLOAT
     {"log",		1, 1, f_log},
@@ -866,6 +882,7 @@ static struct fst
     {"setbufvar",	3, 3, f_setbufvar},
     {"setcharsearch",	1, 1, f_setcharsearch},
     {"setcmdpos",	1, 1, f_setcmdpos},
+    {"setenv",		2, 2, f_setenv},
     {"setfperm",	2, 2, f_setfperm},
     {"setline",		2, 2, f_setline},
     {"setloclist",	2, 4, f_setloclist},
@@ -975,6 +992,7 @@ static struct fst
     {"test_autochdir",	0, 0, f_test_autochdir},
     {"test_feedinput",	1, 1, f_test_feedinput},
     {"test_garbagecollect_now",	0, 0, f_test_garbagecollect_now},
+    {"test_getvalue",	1, 1, f_test_getvalue},
     {"test_ignore_error",	1, 1, f_test_ignore_error},
     {"test_null_blob",	0, 0, f_test_null_blob},
 #ifdef FEAT_JOB_CHANNEL
@@ -992,6 +1010,9 @@ static struct fst
     {"test_refcount",	1, 1, f_test_refcount},
 #ifdef FEAT_GUI
     {"test_scrollbar",	3, 3, f_test_scrollbar},
+#endif
+#ifdef FEAT_MOUSE
+    {"test_setmouse",	2, 2, f_test_setmouse},
 #endif
     {"test_settime",	1, 1, f_test_settime},
 #ifdef FEAT_TIMERS
@@ -1529,7 +1550,7 @@ f_arglistid(typval_T *argvars, typval_T *rettv)
     win_T	*wp;
 
     rettv->vval.v_number = -1;
-    wp = find_tabwin(&argvars[0], &argvars[1]);
+    wp = find_tabwin(&argvars[0], &argvars[1], NULL);
     if (wp != NULL)
 	rettv->vval.v_number = wp->w_alist->id;
 }
@@ -1756,6 +1777,19 @@ f_atan2(typval_T *argvars, typval_T *rettv)
  */
 #ifdef FEAT_BEVAL
     static void
+f_balloon_gettext(typval_T *argvars UNUSED, typval_T *rettv)
+{
+    rettv->v_type = VAR_STRING;
+    if (balloonEval != NULL)
+    {
+	if (balloonEval->msg == NULL)
+	    rettv->vval.v_string = NULL;
+	else
+	    rettv->vval.v_string = vim_strsave(balloonEval->msg);
+    }
+}
+
+    static void
 f_balloon_show(typval_T *argvars, typval_T *rettv UNUSED)
 {
     if (balloonEval != NULL)
@@ -1765,9 +1799,21 @@ f_balloon_show(typval_T *argvars, typval_T *rettv UNUSED)
 		&& !gui.in_use
 # endif
 	   )
-	    post_balloon(balloonEval, NULL, argvars[0].vval.v_list);
+	{
+	    list_T *l = argvars[0].vval.v_list;
+
+	    // empty list removes the balloon
+	    post_balloon(balloonEval, NULL,
+				       l == NULL || l->lv_len == 0 ? NULL : l);
+	}
 	else
-	    post_balloon(balloonEval, tv_get_string_chk(&argvars[0]), NULL);
+	{
+	    char_u *mesg = tv_get_string_chk(&argvars[0]);
+
+	    if (mesg != NULL)
+		// empty string removes the balloon
+		post_balloon(balloonEval, *mesg == NUL ? NULL : mesg, NULL);
+	}
     }
 }
 
@@ -1966,12 +2012,11 @@ tv_get_buf(typval_T *tv, int curtab_only)
     return buf;
 }
 
-#ifdef FEAT_SIGNS
 /*
  * Get the buffer from "arg" and give an error and return NULL if it is not
  * valid.
  */
-    static buf_T *
+    buf_T *
 get_buf_arg(typval_T *arg)
 {
     buf_T *buf;
@@ -1983,7 +2028,6 @@ get_buf_arg(typval_T *arg)
 	semsg(_("E158: Invalid buffer name: %s"), tv_get_string(arg));
     return buf;
 }
-#endif
 
 /*
  * "bufname(expr)" function
@@ -2482,6 +2526,45 @@ f_char2nr(typval_T *argvars, typval_T *rettv)
     }
     else
 	rettv->vval.v_number = tv_get_string(&argvars[0])[0];
+}
+
+/*
+ * "chdir(dir)" function
+ */
+    static void
+f_chdir(typval_T *argvars, typval_T *rettv)
+{
+    char_u	*cwd;
+    cdscope_T	scope = CDSCOPE_GLOBAL;
+
+    rettv->v_type = VAR_STRING;
+    rettv->vval.v_string = NULL;
+
+    if (argvars[0].v_type != VAR_STRING)
+	return;
+
+    // Return the current directory
+    cwd = alloc(MAXPATHL);
+    if (cwd != NULL)
+    {
+	if (mch_dirname(cwd, MAXPATHL) != FAIL)
+	{
+#ifdef BACKSLASH_IN_FILENAME
+	    slash_adjust(cwd);
+#endif
+	    rettv->vval.v_string = vim_strsave(cwd);
+	}
+	vim_free(cwd);
+    }
+
+    if (curwin->w_localdir != NULL)
+	scope = CDSCOPE_WINDOW;
+    else if (curtab->tp_localdir != NULL)
+	scope = CDSCOPE_TABPAGE;
+
+    if (!changedir_func(argvars[0].vval.v_string, TRUE, scope))
+	// Directory change failed
+	VIM_CLEAR(rettv->vval.v_string);
 }
 
 /*
@@ -3263,6 +3346,59 @@ f_empty(typval_T *argvars, typval_T *rettv)
     }
 
     rettv->vval.v_number = n;
+}
+
+/*
+ * "environ()" function
+ */
+    static void
+f_environ(typval_T *argvars UNUSED, typval_T *rettv)
+{
+#if !defined(AMIGA)
+    int			i = 0;
+    char_u		*entry, *value;
+# ifdef MSWIN
+    extern wchar_t	**_wenviron;
+# else
+    extern char		**environ;
+# endif
+
+    if (rettv_dict_alloc(rettv) != OK)
+	return;
+
+# ifdef MSWIN
+    if (*_wenviron == NULL)
+	return;
+# else
+    if (*environ == NULL)
+	return;
+# endif
+
+    for (i = 0; ; ++i)
+    {
+# ifdef MSWIN
+	short_u		*p;
+
+	if ((p = (short_u *)_wenviron[i]) == NULL)
+	    return;
+	entry = utf16_to_enc(p, NULL);
+# else
+	if ((entry = (char_u *)environ[i]) == NULL)
+	    return;
+	entry = vim_strsave(entry);
+# endif
+	if (entry == NULL) // out of memory
+	    return;
+	if ((value = vim_strchr(entry, '=')) == NULL)
+	{
+	    vim_free(entry);
+	    continue;
+	}
+	*value++ = NUL;
+	dict_add_string(rettv->vval.v_dict, (char *)entry, value);
+	vim_free(entry);
+    }
+#endif
 }
 
 /*
@@ -4201,11 +4337,13 @@ f_foreground(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 {
 #ifdef FEAT_GUI
     if (gui.in_use)
+    {
 	gui_mch_set_foreground();
-#else
-# ifdef MSWIN
+	return;
+    }
+#endif
+#if defined(MSWIN) && (!defined(FEAT_GUI) || defined(VIMDLL))
     win32_set_foreground();
-# endif
 #endif
 }
 
@@ -5126,25 +5264,44 @@ f_getcompletion(typval_T *argvars, typval_T *rettv)
 
 /*
  * "getcwd()" function
+ *
+ * Return the current working directory of a window in a tab page.
+ * First optional argument 'winnr' is the window number or -1 and the second
+ * optional argument 'tabnr' is the tab page number.
+ *
+ * If no arguments are supplied, then return the directory of the current
+ * window.
+ * If only 'winnr' is specified and is not -1 or 0 then return the directory of
+ * the specified window.
+ * If 'winnr' is 0 then return the directory of the current window.
+ * If both 'winnr and 'tabnr' are specified and 'winnr' is -1 then return the
+ * directory of the specified tab page.  Otherwise return the directory of the
+ * specified window in the specified tab page.
+ * If the window or the tab page doesn't exist then return NULL.
  */
     static void
 f_getcwd(typval_T *argvars, typval_T *rettv)
 {
     win_T	*wp = NULL;
+    tabpage_T	*tp = NULL;
     char_u	*cwd;
     int		global = FALSE;
 
     rettv->v_type = VAR_STRING;
     rettv->vval.v_string = NULL;
 
-    if (argvars[0].v_type == VAR_NUMBER && argvars[0].vval.v_number == -1)
+    if (argvars[0].v_type == VAR_NUMBER
+	    && argvars[0].vval.v_number == -1
+	    && argvars[1].v_type == VAR_UNKNOWN)
 	global = TRUE;
     else
-	wp = find_tabwin(&argvars[0], &argvars[1]);
+	wp = find_tabwin(&argvars[0], &argvars[1], &tp);
 
     if (wp != NULL && wp->w_localdir != NULL)
 	rettv->vval.v_string = vim_strsave(wp->w_localdir);
-    else if (wp != NULL || global)
+    else if (tp != NULL && tp->tp_localdir != NULL)
+	rettv->vval.v_string = vim_strsave(tp->tp_localdir);
+    else if (wp != NULL || tp != NULL || global)
     {
 	if (globaldir != NULL)
 	    rettv->vval.v_string = vim_strsave(globaldir);
@@ -5163,6 +5320,27 @@ f_getcwd(typval_T *argvars, typval_T *rettv)
     if (rettv->vval.v_string != NULL)
 	slash_adjust(rettv->vval.v_string);
 #endif
+}
+
+/*
+ * "getenv()" function
+ */
+    static void
+f_getenv(typval_T *argvars, typval_T *rettv)
+{
+    int	    mustfree = FALSE;
+    char_u  *p = vim_getenv(tv_get_string(&argvars[0]), &mustfree);
+
+    if (p == NULL)
+    {
+	rettv->v_type = VAR_SPECIAL;
+	rettv->vval.v_number = VVAL_NULL;
+	return;
+    }
+    if (!mustfree)
+	p = vim_strsave(p);
+    rettv->vval.v_string = p;
+    rettv->v_type = VAR_STRING;
 }
 
 /*
@@ -5333,7 +5511,7 @@ f_getjumplist(typval_T *argvars, typval_T *rettv)
 	return;
 
 #ifdef FEAT_JUMPLIST
-    wp = find_tabwin(&argvars[0], &argvars[1]);
+    wp = find_tabwin(&argvars[0], &argvars[1], NULL);
     if (wp == NULL)
 	return;
 
@@ -5460,7 +5638,7 @@ f_getmatches(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 	    for (i = 0; i < MAXPOSMATCH; ++i)
 	    {
 		llpos_T	*llpos;
-		char	buf[6];
+		char	buf[30];  // use 30 to avoid compiler warning
 		list_T	*l;
 
 		llpos = &cur->pos.pos[i];
@@ -6611,10 +6789,8 @@ f_has(typval_T *argvars, typval_T *rettv)
 #if defined(FEAT_CLIPBOARD) && defined(FEAT_X11)
 	"unnamedplus",
 #endif
-#ifdef FEAT_USR_CMDS
 	"user-commands",    /* was accidentally included in 5.4 */
 	"user_commands",
-#endif
 #ifdef FEAT_VARTABS
 	"vartabs",
 #endif
@@ -6624,6 +6800,7 @@ f_has(typval_T *argvars, typval_T *rettv)
 #endif
 	"vimscript-1",
 	"vimscript-2",
+	"vimscript-3",
 	"virtualedit",
 	"visual",
 	"visualextra",
@@ -6788,6 +6965,10 @@ f_has(typval_T *argvars, typval_T *rettv)
 	else if (STRICMP(name, "netbeans_enabled") == 0)
 	    n = netbeans_active();
 #endif
+#ifdef FEAT_MOUSE_GPM
+	else if (STRICMP(name, "mouse_gpm_enabled") == 0)
+	    n = gpm_enabled();
+#endif
 #if defined(FEAT_TERMINAL) && defined(MSWIN)
 	else if (STRICMP(name, "terminal") == 0)
 	    n = terminal_enabled();
@@ -6825,10 +7006,18 @@ f_has_key(typval_T *argvars, typval_T *rettv)
     static void
 f_haslocaldir(typval_T *argvars, typval_T *rettv)
 {
+    tabpage_T	*tp = NULL;
     win_T	*wp = NULL;
 
-    wp = find_tabwin(&argvars[0], &argvars[1]);
-    rettv->vval.v_number = (wp != NULL && wp->w_localdir != NULL);
+    wp = find_tabwin(&argvars[0], &argvars[1], &tp);
+
+    // Check for window-local and tab-local directories
+    if (wp != NULL && wp->w_localdir != NULL)
+	rettv->vval.v_number = 1;
+    else if (tp != NULL && tp->tp_localdir != NULL)
+	rettv->vval.v_number = 2;
+    else
+	rettv->vval.v_number = 0;
 }
 
 /*
@@ -9324,10 +9513,8 @@ f_readdir(typval_T *argvars, typval_T *rettv)
     }
 #endif
 
-    rettv->vval.v_list = list_alloc();
-    if (!failed && rettv->vval.v_list != NULL)
+    if (!failed && rettv->vval.v_list != NULL && ga.ga_len > 0)
     {
-	++rettv->vval.v_list->lv_refcount;
 	sort_strings((char_u **)ga.ga_data, ga.ga_len);
 	for (i = 0; i < ga.ga_len; i++)
 	{
@@ -9335,10 +9522,7 @@ f_readdir(typval_T *argvars, typval_T *rettv)
 	    list_append_string(rettv->vval.v_list, p, -1);
 	}
     }
-    for (i = 0; i < ga.ga_len; i++)
-	vim_free(((char_u **)ga.ga_data)[i]);
-
-    ga_clear(&ga);
+    ga_clear_strings(&ga);
 }
 
 /*
@@ -9565,9 +9749,9 @@ f_readfile(typval_T *argvars, typval_T *rettv)
 
     if (failed)
     {
+	// an empty list is returned on error
 	list_free(rettv->vval.v_list);
-	/* readfile doc says an empty list is returned on error */
-	rettv->vval.v_list = list_alloc();
+	rettv_list_alloc(rettv);
     }
 
     vim_free(prev);
@@ -11324,6 +11508,23 @@ f_setcmdpos(typval_T *argvars, typval_T *rettv)
 }
 
 /*
+ * "setenv()" function
+ */
+    static void
+f_setenv(typval_T *argvars, typval_T *rettv UNUSED)
+{
+    char_u   namebuf[NUMBUFLEN];
+    char_u   valbuf[NUMBUFLEN];
+    char_u  *name = tv_get_string_buf(&argvars[0], namebuf);
+
+    if (argvars[1].v_type == VAR_SPECIAL
+				      && argvars[1].vval.v_number == VVAL_NULL)
+	vim_unsetenv(name);
+    else
+	vim_setenv(name, tv_get_string_buf(&argvars[1], valbuf));
+}
+
+/*
  * "setfperm({fname}, {mode})" function
  */
     static void
@@ -11506,7 +11707,7 @@ f_setmatches(typval_T *argvars UNUSED, typval_T *rettv UNUSED)
 	while (li != NULL)
 	{
 	    int		i = 0;
-	    char_u	buf[5];
+	    char	buf[30];  // use 30 to avoid compiler warning
 	    dictitem_T  *di;
 	    char_u	*group;
 	    int		priority;
@@ -12302,16 +12503,8 @@ f_sinh(typval_T *argvars, typval_T *rettv)
 }
 #endif
 
-static int
-#ifdef __BORLANDC__
-    _RTLENTRYF
-#endif
-	item_compare(const void *s1, const void *s2);
-static int
-#ifdef __BORLANDC__
-    _RTLENTRYF
-#endif
-	item_compare2(const void *s1, const void *s2);
+static int item_compare(const void *s1, const void *s2);
+static int item_compare2(const void *s1, const void *s2);
 
 /* struct used in the array that's given to qsort() */
 typedef struct
@@ -12342,9 +12535,6 @@ static sortinfo_T	*sortinfo = NULL;
  * Compare functions for f_sort() and f_uniq() below.
  */
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 item_compare(const void *s1, const void *s2)
 {
     sortItem_T  *si1, *si2;
@@ -12429,9 +12619,6 @@ item_compare(const void *s1, const void *s2)
 }
 
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 item_compare2(const void *s1, const void *s2)
 {
     sortItem_T  *si1, *si2;
@@ -12460,8 +12647,7 @@ item_compare2(const void *s1, const void *s2)
     copy_tv(&si2->item->li_tv, &argv[1]);
 
     rettv.v_type = VAR_UNKNOWN;		/* clear_tv() uses this */
-    res = call_func(func_name, (int)STRLEN(func_name),
-				 &rettv, 2, argv, NULL, 0L, 0L, &dummy, TRUE,
+    res = call_func(func_name, -1, &rettv, 2, argv, NULL, 0L, 0L, &dummy, TRUE,
 				 partial, sortinfo->item_compare_selfdict);
     clear_tv(&argv[0]);
     clear_tv(&argv[1]);
@@ -13013,7 +13199,8 @@ f_str2nr(typval_T *argvars, typval_T *rettv)
 	case 16: what = STR2NR_HEX + STR2NR_FORCE; break;
 	default: what = 0;
     }
-    vim_str2nr(p, NULL, NULL, what, &n, NULL, 0);
+    vim_str2nr(p, NULL, NULL, what, &n, NULL, 0, FALSE);
+    // Text after the number is silently ignored.
     if (isneg)
 	rettv->vval.v_number = -n;
     else
@@ -13029,6 +13216,9 @@ f_str2nr(typval_T *argvars, typval_T *rettv)
 f_strftime(typval_T *argvars, typval_T *rettv)
 {
     char_u	result_buf[256];
+# ifdef HAVE_LOCALTIME_R
+    struct tm	tmval;
+# endif
     struct tm	*curtime;
     time_t	seconds;
     char_u	*p;
@@ -13040,7 +13230,11 @@ f_strftime(typval_T *argvars, typval_T *rettv)
 	seconds = time(NULL);
     else
 	seconds = (time_t)tv_get_number(&argvars[1]);
+# ifdef HAVE_LOCALTIME_R
+    curtime = localtime_r(&seconds, &tmval);
+# else
     curtime = localtime(&seconds);
+# endif
     /* MSVC returns NULL for an invalid value of seconds. */
     if (curtime == NULL)
 	rettv->vval.v_string = vim_strsave((char_u *)_("(Invalid)"));
@@ -13982,6 +14176,8 @@ get_winnr(tabpage_T *tp, typval_T *argvar)
     twin = (tp == curtab) ? curwin : tp->tp_curwin;
     if (argvar->v_type != VAR_UNKNOWN)
     {
+	int	invalid_arg = FALSE;
+
 	arg = tv_get_string_chk(argvar);
 	if (arg == NULL)
 	    nr = 0;		/* type error; errmsg already given */
@@ -13994,6 +14190,32 @@ get_winnr(tabpage_T *tp, typval_T *argvar)
 		nr = 0;
 	}
 	else
+	{
+	    long	count;
+	    char_u	*endp;
+
+	    // Extract the window count (if specified). e.g. winnr('3j')
+	    count = strtol((char *)arg, (char **)&endp, 10);
+	    if (count <= 0)
+		count = 1;	// if count is not specified, default to 1
+	    if (endp != NULL && *endp != '\0')
+	    {
+		if (STRCMP(endp, "j") == 0)
+		    twin = win_vert_neighbor(tp, twin, FALSE, count);
+		else if (STRCMP(endp, "k") == 0)
+		    twin = win_vert_neighbor(tp, twin, TRUE, count);
+		else if (STRCMP(endp, "h") == 0)
+		    twin = win_horz_neighbor(tp, twin, TRUE, count);
+		else if (STRCMP(endp, "l") == 0)
+		    twin = win_horz_neighbor(tp, twin, FALSE, count);
+		else
+		    invalid_arg = TRUE;
+	    }
+	    else
+		invalid_arg = TRUE;
+	}
+
+	if (invalid_arg)
 	{
 	    semsg(_(e_invexpr2), arg);
 	    nr = 0;
@@ -14194,6 +14416,25 @@ f_test_feedinput(typval_T *argvars, typval_T *rettv UNUSED)
 }
 
 /*
+ * "test_getvalue({name})" function
+ */
+    static void
+f_test_getvalue(typval_T *argvars, typval_T *rettv)
+{
+    if (argvars[0].v_type != VAR_STRING)
+	emsg(_(e_invarg));
+    else
+    {
+	char_u *name = tv_get_string(&argvars[0]);
+
+	if (STRCMP(name, (char_u *)"need_fileinfo") == 0)
+	    rettv->vval.v_number = need_fileinfo;
+	else
+	    semsg(_(e_invarg2), name);
+    }
+}
+
+/*
  * "test_option_not_set({name})" function
  */
     static void
@@ -14251,12 +14492,15 @@ f_test_override(typval_T *argvars, typval_T *rettv UNUSED)
 	}
 	else if (STRCMP(name, (char_u *)"nfa_fail") == 0)
 	    nfa_fail_for_testing = val;
+	else if (STRCMP(name, (char_u *)"no_query_mouse") == 0)
+	    no_query_mouse_for_testing = val;
 	else if (STRCMP(name, (char_u *)"ALL") == 0)
 	{
 	    disable_char_avail_for_testing = FALSE;
 	    disable_redraw_for_testing = FALSE;
 	    ignore_redraw_flag_for_testing = FALSE;
 	    nfa_fail_for_testing = FALSE;
+	    no_query_mouse_for_testing = FALSE;
 	    if (save_starting >= 0)
 	    {
 		starting = save_starting;
@@ -14439,13 +14683,21 @@ f_test_scrollbar(typval_T *argvars, typval_T *rettv UNUSED)
 }
 #endif
 
+#ifdef FEAT_MOUSE
+    static void
+f_test_setmouse(typval_T *argvars, typval_T *rettv UNUSED)
+{
+    mouse_row = (time_t)tv_get_number(&argvars[0]) - 1;
+    mouse_col = (time_t)tv_get_number(&argvars[1]) - 1;
+}
+#endif
+
     static void
 f_test_settime(typval_T *argvars, typval_T *rettv UNUSED)
 {
     time_for_testing = (time_t)tv_get_number(&argvars[0]);
 }
 
-#if defined(FEAT_JOB_CHANNEL) || defined(FEAT_TIMERS) || defined(PROTO)
 /*
  * Get a callback from "arg".  It can be a Funcref or a function name.
  * When "arg" is zero return an empty string.
@@ -14486,7 +14738,6 @@ free_callback(char_u *callback, partial_T *partial)
 	vim_free(callback);
     }
 }
-#endif
 
 #ifdef FEAT_TIMERS
 /*
@@ -14878,7 +15129,7 @@ f_undofile(typval_T *argvars UNUSED, typval_T *rettv)
 	}
 	else
 	{
-	    char_u *ffname = FullName_save(fname, FALSE);
+	    char_u *ffname = FullName_save(fname, TRUE);
 
 	    if (ffname != NULL)
 		rettv->vval.v_string = u_get_undo_file_name(ffname, FALSE);

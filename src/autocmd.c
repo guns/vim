@@ -112,6 +112,7 @@ static struct event_name
     {"CmdUndefined",	EVENT_CMDUNDEFINED},
     {"ColorScheme",	EVENT_COLORSCHEME},
     {"ColorSchemePre",	EVENT_COLORSCHEMEPRE},
+    {"CompleteChanged",	EVENT_COMPLETECHANGED},
     {"CompleteDone",	EVENT_COMPLETEDONE},
     {"CursorHold",	EVENT_CURSORHOLD},
     {"CursorHoldI",	EVENT_CURSORHOLDI},
@@ -1794,6 +1795,17 @@ has_textyankpost(void)
 }
 #endif
 
+#if defined(FEAT_EVAL) || defined(PROTO)
+/*
+ * Return TRUE when there is a CompleteChanged autocommand defined.
+ */
+    int
+has_completechanged(void)
+{
+    return (first_autopat[(int)EVENT_COMPLETECHANGED] != NULL);
+}
+#endif
+
 /*
  * Execute autocommands for "event" and file name "fname".
  * Return TRUE if some commands were executed.
@@ -2111,9 +2123,16 @@ apply_autocmds_group(
 	for (ap = patcmd.curpat; ap->next != NULL; ap = ap->next)
 	    ap->last = FALSE;
 	ap->last = TRUE;
-	check_lnums(TRUE);	// make sure cursor and topline are valid
+
+	// make sure cursor and topline are valid
+	check_lnums(TRUE);
+
 	do_cmdline(NULL, getnextac, (void *)&patcmd,
 				     DOCMD_NOWAIT|DOCMD_VERBOSE|DOCMD_REPEAT);
+
+	// restore cursor and topline, unless they were changed
+	reset_lnums();
+
 #ifdef FEAT_EVAL
 	if (eap != NULL)
 	{

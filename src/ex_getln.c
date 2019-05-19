@@ -111,7 +111,7 @@ static int	ExpandPackAddDir(char_u *pat, int *num_file, char_u ***file);
 # ifdef FEAT_CMDHIST
 static char_u	*get_history_arg(expand_T *xp, int idx);
 # endif
-# if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL)
+# if defined(FEAT_EVAL)
 static int	ExpandUserDefined(expand_T *xp, regmatch_T *regmatch, int *num_file, char_u ***file);
 static int	ExpandUserList(expand_T *xp, int *num_file, char_u ***file);
 # endif
@@ -125,11 +125,7 @@ static int	open_cmdwin(void);
 #endif
 
 #if defined(FEAT_CMDL_COMPL) || defined(PROTO)
-static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
-sort_func_compare(const void *s1, const void *s2);
+static int	sort_func_compare(const void *s1, const void *s2);
 #endif
 
 
@@ -745,39 +741,35 @@ may_add_char_to_search(int firstc, int *c, incsearch_state_T *is_state)
     if (is_state->did_incsearch)
     {
 	curwin->w_cursor = is_state->match_end;
-	if (!EQUAL_POS(curwin->w_cursor, is_state->search_start))
+	*c = gchar_cursor();
+	if (*c != NUL)
 	{
-	    *c = gchar_cursor();
-
 	    // If 'ignorecase' and 'smartcase' are set and the
 	    // command line has no uppercase characters, convert
 	    // the character to lowercase.
 	    if (p_ic && p_scs && !pat_has_uppercase(ccline.cmdbuff + skiplen))
 		*c = MB_TOLOWER(*c);
-	    if (*c != NUL)
+	    if (*c == firstc || vim_strchr((char_u *)(
+			       p_magic ? "\\~^$.*[" : "\\^$"), *c) != NULL)
 	    {
-		if (*c == firstc || vim_strchr((char_u *)(
-				   p_magic ? "\\~^$.*[" : "\\^$"), *c) != NULL)
-		{
-		    // put a backslash before special characters
-		    stuffcharReadbuff(*c);
-		    *c = '\\';
-		}
-		// add any composing characters
-		if (mb_char2len(*c) != mb_ptr2len(ml_get_cursor()))
-		{
-		    int save_c = *c;
-
-		    while (mb_char2len(*c) != mb_ptr2len(ml_get_cursor()))
-		    {
-			curwin->w_cursor.col += mb_char2len(*c);
-			*c = gchar_cursor();
-			stuffcharReadbuff(*c);
-		    }
-		    *c = save_c;
-		}
-		return FAIL;
+		// put a backslash before special characters
+		stuffcharReadbuff(*c);
+		*c = '\\';
 	    }
+	    // add any composing characters
+	    if (mb_char2len(*c) != mb_ptr2len(ml_get_cursor()))
+	    {
+		int save_c = *c;
+
+		while (mb_char2len(*c) != mb_ptr2len(ml_get_cursor()))
+		{
+		    curwin->w_cursor.col += mb_char2len(*c);
+		    *c = gchar_cursor();
+		    stuffcharReadbuff(*c);
+		}
+		*c = save_c;
+	    }
+	    return FAIL;
 	}
     }
     return OK;
@@ -943,7 +935,7 @@ getcmdline_int(
     {
 	xpc.xp_context = ccline.xp_context;
 	xpc.xp_pattern = ccline.cmdbuff;
-# if defined(FEAT_USR_CMDS) && defined(FEAT_CMDL_COMPL)
+# if defined(FEAT_CMDL_COMPL)
 	xpc.xp_arg = ccline.xp_arg;
 # endif
     }
@@ -3807,9 +3799,6 @@ ccheck_abbr(int c)
 
 #if defined(FEAT_CMDL_COMPL) || defined(PROTO)
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 sort_func_compare(const void *s1, const void *s2)
 {
     char_u *p1 = *(char_u **)s1;
@@ -4214,7 +4203,7 @@ ExpandInit(expand_T *xp)
 #endif
     xp->xp_numfiles = -1;
     xp->xp_files = NULL;
-#if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
+#if defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
     xp->xp_arg = NULL;
 #endif
     xp->xp_line = NULL;
@@ -4883,7 +4872,7 @@ set_cmd_context(
     {
 	xp->xp_context = ccline.xp_context;
 	xp->xp_pattern = ccline.cmdbuff;
-# if defined(FEAT_USR_CMDS) && defined(FEAT_CMDL_COMPL)
+# if defined(FEAT_CMDL_COMPL)
 	xp->xp_arg = ccline.xp_arg;
 # endif
     }
@@ -5134,7 +5123,7 @@ ExpandFromContext(
 	char *directories[] = {"syntax", "indent", "ftplugin", NULL};
 	return ExpandRTDir(pat, 0, num_file, file, directories);
     }
-# if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL)
+# if defined(FEAT_EVAL)
     if (xp->xp_context == EXPAND_USER_LIST)
 	return ExpandUserList(xp, num_file, file);
 # endif
@@ -5153,7 +5142,7 @@ ExpandFromContext(
 	ret = ExpandSettings(xp, &regmatch, num_file, file);
     else if (xp->xp_context == EXPAND_MAPPINGS)
 	ret = ExpandMappings(&regmatch, num_file, file);
-# if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL)
+# if defined(FEAT_EVAL)
     else if (xp->xp_context == EXPAND_USER_DEFINED)
 	ret = ExpandUserDefined(xp, &regmatch, num_file, file);
 # endif
@@ -5174,13 +5163,11 @@ ExpandFromContext(
 #ifdef FEAT_CMDHIST
 	    {EXPAND_HISTORY, get_history_arg, TRUE, TRUE},
 #endif
-#ifdef FEAT_USR_CMDS
 	    {EXPAND_USER_COMMANDS, get_user_commands, FALSE, TRUE},
 	    {EXPAND_USER_ADDR_TYPE, get_user_cmd_addr_type, FALSE, TRUE},
 	    {EXPAND_USER_CMD_FLAGS, get_user_cmd_flags, FALSE, TRUE},
 	    {EXPAND_USER_NARGS, get_user_cmd_nargs, FALSE, TRUE},
 	    {EXPAND_USER_COMPLETE, get_user_cmd_complete, FALSE, TRUE},
-#endif
 #ifdef FEAT_EVAL
 	    {EXPAND_USER_VARS, get_user_var_name, FALSE, TRUE},
 	    {EXPAND_FUNCTIONS, get_function_name, FALSE, TRUE},
@@ -5477,7 +5464,7 @@ expand_shellcmd(
 }
 
 
-# if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL)
+# if defined(FEAT_EVAL)
 /*
  * Call "user_expand_func()" to invoke a user defined Vim script function and
  * return the result (either a string or a List).
@@ -6483,7 +6470,7 @@ get_list_range(char_u **str, int *num1, int *num2)
     *str = skipwhite(*str);
     if (**str == '-' || vim_isdigit(**str))  /* parse "from" part of range */
     {
-	vim_str2nr(*str, NULL, &len, 0, &num, NULL, 0);
+	vim_str2nr(*str, NULL, &len, 0, &num, NULL, 0, FALSE);
 	*str += len;
 	*num1 = (int)num;
 	first = TRUE;
@@ -6492,7 +6479,7 @@ get_list_range(char_u **str, int *num1, int *num2)
     if (**str == ',')			/* parse "to" part of range */
     {
 	*str = skipwhite(*str + 1);
-	vim_str2nr(*str, NULL, &len, 0, &num, NULL, 0);
+	vim_str2nr(*str, NULL, &len, 0, &num, NULL, 0, FALSE);
 	if (len > 0)
 	{
 	    *num2 = (int)num;
@@ -6861,9 +6848,6 @@ concat_history(int type)
 
 #if defined(FEAT_CMDL_COMPL) || defined(PROTO)
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 sort_hist(const void *s1, const void *s2)
 {
     histentry_T *p1 = *(histentry_T **)s1;

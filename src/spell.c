@@ -2308,10 +2308,13 @@ did_set_spelllang(win_T *wp)
     /* Loop over comma separated language names. */
     for (splp = spl_copy; *splp != NUL; )
     {
-	/* Get one language name. */
+	// Get one language name.
 	copy_option_part(&splp, lang, MAXWLEN, ",");
 	region = NULL;
 	len = (int)STRLEN(lang);
+
+	if (!valid_spellang(lang))
+	    continue;
 
 	if (STRCMP(lang, "cjk") == 0)
 	{
@@ -6770,20 +6773,13 @@ rescore_one(suginfo_T *su, suggest_T *stp)
     }
 }
 
-static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
-sug_compare(const void *s1, const void *s2);
+static int sug_compare(const void *s1, const void *s2);
 
 /*
  * Function given to qsort() to sort the suggestions on st_score.
  * First on "st_score", then "st_altscore" then alphabetically.
  */
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 sug_compare(const void *s1, const void *s2)
 {
     suggest_T	*p1 = (suggest_T *)s1;

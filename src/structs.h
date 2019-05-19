@@ -147,10 +147,11 @@ typedef struct xfilemark
  */
 typedef struct taggy
 {
-    char_u	*tagname;	/* tag name */
-    fmark_T	fmark;		/* cursor position BEFORE ":tag" */
-    int		cur_match;	/* match number */
-    int		cur_fnum;	/* buffer number used for cur_match */
+    char_u	*tagname;	// tag name
+    fmark_T	fmark;		// cursor position BEFORE ":tag"
+    int		cur_match;	// match number
+    int		cur_fnum;	// buffer number used for cur_match
+    char_u	*user_data;	// used with tagfunc
 } taggy_T;
 
 /*
@@ -549,7 +550,7 @@ typedef struct expand
     int		xp_context;		/* type of expansion */
     char_u	*xp_pattern;		/* start of item to expand */
     int		xp_pattern_len;		/* bytes in xp_pattern before cursor */
-#if defined(FEAT_USR_CMDS) && defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
+#if defined(FEAT_EVAL) && defined(FEAT_CMDL_COMPL)
     char_u	*xp_arg;		/* completion function */
     sctx_T	xp_script_ctx;		/* SCTX for completion function */
 #endif
@@ -726,6 +727,7 @@ typedef struct proptype_S
 
 #define PT_FLAG_INS_START_INCL	1	// insert at start included in property
 #define PT_FLAG_INS_END_INCL	2	// insert at end included in property
+#define PT_FLAG_COMBINE		4	// combine with syntax highlight
 
 // Sign group
 typedef struct signgroup_S
@@ -1400,42 +1402,43 @@ typedef struct funccall_S funccall_T;
  */
 typedef struct
 {
-    int		uf_varargs;	/* variable nr of arguments */
+    int		uf_varargs;	// variable nr of arguments
     int		uf_flags;
-    int		uf_calls;	/* nr of active calls */
-    int		uf_cleared;	/* func_clear() was already called */
-    garray_T	uf_args;	/* arguments */
-    garray_T	uf_lines;	/* function lines */
+    int		uf_calls;	// nr of active calls
+    int		uf_cleared;	// func_clear() was already called
+    garray_T	uf_args;	// arguments
+    garray_T	uf_def_args;	// default argument expressions
+    garray_T	uf_lines;	// function lines
 # ifdef FEAT_PROFILE
-    int		uf_profiling;	/* TRUE when func is being profiled */
+    int		uf_profiling;	// TRUE when func is being profiled
     int		uf_prof_initialized;
-    /* profiling the function as a whole */
-    int		uf_tm_count;	/* nr of calls */
-    proftime_T	uf_tm_total;	/* time spent in function + children */
-    proftime_T	uf_tm_self;	/* time spent in function itself */
-    proftime_T	uf_tm_children;	/* time spent in children this call */
-    /* profiling the function per line */
-    int		*uf_tml_count;	/* nr of times line was executed */
-    proftime_T	*uf_tml_total;	/* time spent in a line + children */
-    proftime_T	*uf_tml_self;	/* time spent in a line itself */
-    proftime_T	uf_tml_start;	/* start time for current line */
-    proftime_T	uf_tml_children; /* time spent in children for this line */
-    proftime_T	uf_tml_wait;	/* start wait time for current line */
-    int		uf_tml_idx;	/* index of line being timed; -1 if none */
-    int		uf_tml_execed;	/* line being timed was executed */
+    // profiling the function as a whole
+    int		uf_tm_count;	// nr of calls
+    proftime_T	uf_tm_total;	// time spent in function + children
+    proftime_T	uf_tm_self;	// time spent in function itself
+    proftime_T	uf_tm_children;	// time spent in children this call
+    // profiling the function per line
+    int		*uf_tml_count;	// nr of times line was executed
+    proftime_T	*uf_tml_total;	// time spent in a line + children
+    proftime_T	*uf_tml_self;	// time spent in a line itself
+    proftime_T	uf_tml_start;	// start time for current line
+    proftime_T	uf_tml_children; // time spent in children for this line
+    proftime_T	uf_tml_wait;	// start wait time for current line
+    int		uf_tml_idx;	// index of line being timed; -1 if none
+    int		uf_tml_execed;	// line being timed was executed
 # endif
-    sctx_T	uf_script_ctx;	/* SCTX where function was defined,
-				   used for s: variables */
-    int		uf_refcount;	/* reference count, see func_name_refcount() */
-    funccall_T	*uf_scoped;	/* l: local variables for closure */
-    char_u	uf_name[1];	/* name of function (actually longer); can
-				   start with <SNR>123_ (<SNR> is K_SPECIAL
-				   KS_EXTRA KE_SNR) */
+    sctx_T	uf_script_ctx;	// SCTX where function was defined,
+				// used for s: variables
+    int		uf_refcount;	// reference count, see func_name_refcount()
+    funccall_T	*uf_scoped;	// l: local variables for closure
+    char_u	uf_name[1];	// name of function (actually longer); can
+				// start with <SNR>123_ (<SNR> is K_SPECIAL
+				// KS_EXTRA KE_SNR)
 } ufunc_T;
 
-#define MAX_FUNC_ARGS	20	/* maximum number of function arguments */
-#define VAR_SHORT_LEN	20	/* short variable name length */
-#define FIXVAR_CNT	12	/* number of fixed variables */
+#define MAX_FUNC_ARGS	20	// maximum number of function arguments
+#define VAR_SHORT_LEN	20	// short variable name length
+#define FIXVAR_CNT	12	// number of fixed variables
 
 /* structure to hold info for a function that is currently being executed. */
 struct funccall_S
@@ -1870,6 +1873,19 @@ typedef struct
 #endif
 } jobopt_T;
 
+#ifdef FEAT_EVAL
+/*
+ * Structure used for listeners added with listener_add().
+ */
+typedef struct listener_S listener_T;
+struct listener_S
+{
+    listener_T	*lr_next;
+    int		lr_id;
+    char_u	*lr_callback;
+    partial_T	*lr_partial;
+};
+#endif
 
 /* structure used for explicit stack while garbage collecting hash tables */
 typedef struct ht_stack_S
@@ -1884,6 +1900,16 @@ typedef struct list_stack_S
     list_T		*list;
     struct list_stack_S	*prev;
 } list_stack_T;
+
+/*
+ * Structure used for iterating over dictionary items.
+ * Initialize with dict_iterate_start().
+ */
+typedef struct
+{
+    long_u	dit_todo;
+    hashitem_T	*dit_hi;
+} dict_iterator_T;
 
 /* values for b_syn_spell: what to do with toplevel text */
 #define SYNSPL_DEFAULT	0	/* spell check if @Spell not defined */
@@ -2143,10 +2169,8 @@ struct file_buffer
     /* First abbreviation local to a buffer. */
     mapblock_T	*b_first_abbr;
 #endif
-#ifdef FEAT_USR_CMDS
-    /* User commands local to the buffer. */
+    // User commands local to the buffer.
     garray_T	b_ucmds;
-#endif
     /*
      * start and end of an operator, also used for '[ and ']
      */
@@ -2246,6 +2270,9 @@ struct file_buffer
 #ifdef FEAT_COMPL_FUNC
     char_u	*b_p_cfu;	/* 'completefunc' */
     char_u	*b_p_ofu;	/* 'omnifunc' */
+#endif
+#ifdef FEAT_EVAL
+    char_u	*b_p_tfu;	/* 'tagfunc' */
 #endif
     int		b_p_eol;	/* 'endofline' */
     int		b_p_fixeol;	/* 'fixendofline' */
@@ -2410,6 +2437,9 @@ struct file_buffer
 #ifdef FEAT_EVAL
     dictitem_T	b_bufvar;	/* variable for "b:" Dictionary */
     dict_T	*b_vars;	/* internal variables, local to buffer */
+
+    listener_T	*b_listener;
+    list_T	*b_recorded_changes;
 #endif
 #ifdef FEAT_TEXT_PROP
     int		b_has_textprop;	// TRUE when text props were added
@@ -2576,6 +2606,9 @@ struct tabpage_S
     int		    tp_prev_which_scrollbars[3];
 				    /* previous value of which_scrollbars */
 #endif
+
+    char_u	    *tp_localdir;	// absolute path of local directory or
+					// NULL
 #ifdef FEAT_DIFF
     diff_T	    *tp_first_diff;
     buf_T	    *(tp_diffbuf[DB_COUNT]);
@@ -2715,6 +2748,16 @@ struct matchitem
 #endif
 };
 
+// Structure to store last cursor position and topline.  Used by check_lnums()
+// and reset_lnums().
+typedef struct
+{
+    int		w_topline_save;	// original topline value
+    int		w_topline_corr;	// corrected topline value
+    pos_T	w_cursor_save;	// original cursor position
+    pos_T	w_cursor_corr;	// corrected cursor position
+} pos_save_T;
+
 #ifdef FEAT_MENU
 typedef struct {
     int		wb_startcol;
@@ -2803,6 +2846,8 @@ struct window_S
     int		w_wincol;	    /* Leftmost column of window in screen. */
     int		w_width;	    /* Width of window, excluding separation. */
     int		w_vsep_width;	    /* Number of separator columns (0 or 1). */
+    pos_save_T	w_save_cursor;	    /* backup of cursor pos and topline */
+
 
     /*
      * === start of cached values ====
@@ -3527,3 +3572,10 @@ typedef struct {
     varnumber_T vv_count;
     varnumber_T vv_count1;
 } vimvars_save_T;
+
+// Scope for changing directory
+typedef enum {
+    CDSCOPE_GLOBAL,	// :cd
+    CDSCOPE_TABPAGE,	// :tcd
+    CDSCOPE_WINDOW	// :lcd
+} cdscope_T;

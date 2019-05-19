@@ -30,9 +30,11 @@ SRC = \
 	autocmd.c \
 	blowfish.c \
 	buffer.c \
+	change.c \
 	charset.c \
 	crypt.c \
 	crypt_zip.c \
+	debugger.c \
 	dict.c \
 	diff.c \
 	digraph.c \
@@ -82,6 +84,7 @@ SRC = \
 	term.c \
 	ui.c \
 	undo.c \
+	usercmd.c \
 	userfunc.c \
 	window.c \
 	version.c
@@ -90,9 +93,11 @@ OBJ =	o/arabic.o \
 	o/autocmd.o \
 	o/blowfish.o \
 	o/buffer.o \
+	o/change.o \
 	o/charset.o \
 	o/crypt.o \
 	o/crypt_zip.o \
+	o/debugger.o \
 	o/dict.o \
 	o/diff.o \
 	o/digraph.o \
@@ -142,6 +147,7 @@ OBJ =	o/arabic.o \
 	o/term.o \
 	o/ui.o \
 	o/undo.o \
+	o/usercmd.o \
 	o/userfunc.o \
 	o/window.o \
 	$(TERMLIB)
@@ -173,11 +179,15 @@ o/blowfish.o:	blowfish.c  $(SYMS)
 
 o/buffer.o:	buffer.c  $(SYMS)
 
+o/change.o:	change.c  $(SYMS)
+
 o/charset.o:	charset.c  $(SYMS)
 
 o/crypt.o:	crypt.c  $(SYMS)
 
 o/crypt_zip.o:	crypt_zip.c  $(SYMS)
+
+o/debugger.o:	debugger.c  $(SYMS)
 
 o/dict.o:	dict.c	$(SYMS)
 
@@ -283,6 +293,8 @@ o/termlib.o:	termlib.c $(SYMS)
 o/ui.o: 	ui.c	$(SYMS)
 
 o/undo.o: 	undo.c	$(SYMS)
+
+o/usercmd.o: 	usercmd.c  $(SYMS)
 
 o/userfunc.o: 	userfunc.c  $(SYMS)
 

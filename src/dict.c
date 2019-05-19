@@ -342,18 +342,18 @@ dict_add(dict_T *d, dictitem_T *item)
 }
 
 /*
- * Add a number entry to dictionary "d".
+ * Add a number or special entry to dictionary "d".
  * Returns FAIL when out of memory and when key already exists.
  */
-    int
-dict_add_number(dict_T *d, char *key, varnumber_T nr)
+    static int
+dict_add_number_special(dict_T *d, char *key, varnumber_T nr, int special)
 {
     dictitem_T	*item;
 
     item = dictitem_alloc((char_u *)key);
     if (item == NULL)
 	return FAIL;
-    item->di_tv.v_type = VAR_NUMBER;
+    item->di_tv.v_type = special ? VAR_SPECIAL : VAR_NUMBER;
     item->di_tv.vval.v_number = nr;
     if (dict_add(d, item) == FAIL)
     {
@@ -361,6 +361,26 @@ dict_add_number(dict_T *d, char *key, varnumber_T nr)
 	return FAIL;
     }
     return OK;
+}
+
+/*
+ * Add a number entry to dictionary "d".
+ * Returns FAIL when out of memory and when key already exists.
+ */
+    int
+dict_add_number(dict_T *d, char *key, varnumber_T nr)
+{
+    return dict_add_number_special(d, key, nr, FALSE);
+}
+
+/*
+ * Add a special entry to dictionary "d".
+ * Returns FAIL when out of memory and when key already exists.
+ */
+    int
+dict_add_special(dict_T *d, char *key, varnumber_T nr)
+{
+    return dict_add_number_special(d, key, nr, TRUE);
 }
 
 /*
@@ -426,6 +446,55 @@ dict_add_list(dict_T *d, char *key, list_T *list)
 	return FAIL;
     }
     return OK;
+}
+
+/*
+ * Initializes "iter" for iterating over dictionary items with
+ * dict_iterate_next().
+ * If "var" is not a Dict or an empty Dict then there will be nothing to
+ * iterate over, no error is given.
+ * NOTE: The dictionary must not change until iterating is finished!
+ */
+    void
+dict_iterate_start(typval_T *var, dict_iterator_T *iter)
+{
+    if (var->v_type != VAR_DICT || var->vval.v_dict == NULL)
+	iter->dit_todo = 0;
+    else
+    {
+	dict_T	*d = var->vval.v_dict;
+
+	iter->dit_todo = d->dv_hashtab.ht_used;
+	iter->dit_hi = d->dv_hashtab.ht_array;
+    }
+}
+
+/*
+ * Iterate over the items referred to by "iter".  It should be initialized with
+ * dict_iterate_start().
+ * Returns a pointer to the key.
+ * "*tv_result" is set to point to the value for that key.
+ * If there are no more items, NULL is returned.
+ */
+    char_u *
+dict_iterate_next(dict_iterator_T *iter, typval_T **tv_result)
+{
+    dictitem_T	*di;
+    char_u      *result;
+
+    if (iter->dit_todo == 0)
+	return NULL;
+
+    while (HASHITEM_EMPTY(iter->dit_hi))
+	++iter->dit_hi;
+
+    di = HI2DI(iter->dit_hi);
+    result = di->di_key;
+    *tv_result = &di->di_tv;
+
+    --iter->dit_todo;
+    ++iter->dit_hi;
+    return result;
 }
 
 /*

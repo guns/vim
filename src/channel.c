@@ -1650,7 +1650,7 @@ invoke_callback(channel_T *channel, char_u *callback, partial_T *partial,
     argv[0].v_type = VAR_CHANNEL;
     argv[0].vval.v_channel = channel;
 
-    call_func(callback, (int)STRLEN(callback), &rettv, 2, argv, NULL,
+    call_func(callback, -1, &rettv, 2, argv, NULL,
 					  0L, 0L, &dummy, TRUE, partial, NULL);
     clear_tv(&rettv);
     channel_need_redraw = TRUE;
@@ -1906,7 +1906,7 @@ channel_save(channel_T *channel, ch_part_T part, char_u *buf, int len,
 
     if (prepend)
     {
-	/* preend node to the head of the queue */
+	// prepend node to the head of the queue
 	node->rq_next = head->rq_next;
 	node->rq_prev = NULL;
 	if (head->rq_next == NULL)
@@ -1917,7 +1917,7 @@ channel_save(channel_T *channel, ch_part_T part, char_u *buf, int len,
     }
     else
     {
-	/* append node to the tail of the queue */
+	// append node to the tail of the queue
 	node->rq_next = NULL;
 	node->rq_prev = head->rq_prev;
 	if (head->rq_prev == NULL)
@@ -2308,6 +2308,7 @@ channel_exe_cmd(channel_T *channel, ch_part_T part, typval_T *argv)
 	exarg_T ea;
 
 	ch_log(channel, "Executing normal command '%s'", (char *)arg);
+	vim_memset(&ea, 0, sizeof(ea));
 	ea.arg = arg;
 	ea.addr_count = 0;
 	ea.forceit = TRUE; /* no mapping */
@@ -2318,6 +2319,7 @@ channel_exe_cmd(channel_T *channel, ch_part_T part, typval_T *argv)
 	exarg_T ea;
 
 	ch_log(channel, "redraw");
+	vim_memset(&ea, 0, sizeof(ea));
 	ea.forceit = *arg != NUL;
 	ex_redraw(&ea);
 	showruler(FALSE);
@@ -2987,7 +2989,7 @@ channel_close(channel_T *channel, int invoke_close_cb)
 						(char *)channel->ch_close_cb);
 	      argv[0].v_type = VAR_CHANNEL;
 	      argv[0].vval.v_channel = channel;
-	      call_func(channel->ch_close_cb, (int)STRLEN(channel->ch_close_cb),
+	      call_func(channel->ch_close_cb, -1,
 			   &rettv, 1, argv, NULL, 0L, 0L, &dummy, TRUE,
 			   channel->ch_close_partial, NULL);
 	      clear_tv(&rettv);
@@ -5319,7 +5321,7 @@ job_still_useful(job_T *job)
     return job_need_end_check(job) || job_channel_still_useful(job);
 }
 
-#if defined(GUI_MAY_FORK) || defined(PROTO)
+#if defined(GUI_MAY_FORK) || defined(GUI_MAY_SPAWN) || defined(PROTO)
 /*
  * Return TRUE when there is any running job that we care about.
  */
@@ -5476,7 +5478,7 @@ job_cleanup(job_T *job)
 	argv[0].vval.v_job = job;
 	argv[1].v_type = VAR_NUMBER;
 	argv[1].vval.v_number = job->jv_exitval;
-	call_func(job->jv_exit_cb, (int)STRLEN(job->jv_exit_cb),
+	call_func(job->jv_exit_cb, -1,
 	    &rettv, 2, argv, NULL, 0L, 0L, &dummy, TRUE,
 	    job->jv_exit_partial, NULL);
 	clear_tv(&rettv);
@@ -5877,6 +5879,7 @@ job_start(
 		ga_concat(&ga, (char_u *)"  ");
 	    ga_concat(&ga, (char_u *)argv[i]);
 	}
+	ga_append(&ga, NUL);
 	ch_log(NULL, "Starting job: %s", (char *)ga.ga_data);
 	ga_clear(&ga);
     }
@@ -6066,8 +6069,7 @@ invoke_prompt_callback(void)
     argv[0].vval.v_string = vim_strsave(text);
     argv[1].v_type = VAR_UNKNOWN;
 
-    call_func(curbuf->b_prompt_callback,
-	      (int)STRLEN(curbuf->b_prompt_callback),
+    call_func(curbuf->b_prompt_callback, -1,
 	      &rettv, 1, argv, NULL, 0L, 0L, &dummy, TRUE,
 	      curbuf->b_prompt_partial, NULL);
     clear_tv(&argv[0]);
@@ -6090,8 +6092,7 @@ invoke_prompt_interrupt(void)
     argv[0].v_type = VAR_UNKNOWN;
 
     got_int = FALSE; // don't skip executing commands
-    call_func(curbuf->b_prompt_interrupt,
-	      (int)STRLEN(curbuf->b_prompt_interrupt),
+    call_func(curbuf->b_prompt_interrupt, -1,
 	      &rettv, 0, argv, NULL, 0L, 0L, &dummy, TRUE,
 	      curbuf->b_prompt_int_partial, NULL);
     clear_tv(&rettv);

@@ -3736,17 +3736,18 @@ main()
 
 if test "x$vim_cv_getcwd_broken" = "xyes" ; then
   AC_DEFINE(BAD_GETCWD)
+  AC_CHECK_FUNCS(getwd)
 fi
 
 dnl Check for functions in one big call, to reduce the size of configure.
 dnl Can only be used for functions that do not require any include.
 AC_CHECK_FUNCS(fchdir fchown fchmod fsync getcwd getpseudotty \
-	getpwent getpwnam getpwuid getrlimit gettimeofday getwd lstat \
+	getpwent getpwnam getpwuid getrlimit gettimeofday localtime_r lstat \
 	memset mkdtemp nanosleep opendir putenv qsort readlink select setenv \
 	getpgid setpgid setsid sigaltstack sigstack sigset sigsetjmp sigaction \
 	sigprocmask sigvec strcasecmp strerror strftime stricmp strncasecmp \
 	strnicmp strpbrk strtol tgetent towlower towupper iswupper \
-	usleep utime utimes mblen ftruncate unsetenv)
+	usleep utime utimes mblen ftruncate unsetenv posix_openpt)
 AC_FUNC_SELECT_ARGTYPES
 AC_FUNC_FSEEKO
 
@@ -4298,6 +4299,15 @@ if test "$enable_nls" = "yes"; then
 		[++_nl_msg_cat_cntr;],
 		AC_MSG_RESULT([yes]); AC_DEFINE(HAVE_NL_MSG_CAT_CNTR),
 		AC_MSG_RESULT([no]))
+      AC_MSG_CHECKING([if msgfmt supports --desktop])
+      MSGFMT_DESKTOP=
+      if "$MSGFMT" --help | grep -e '--desktop' >/dev/null; then
+	AC_MSG_RESULT([yes])
+	MSGFMT_DESKTOP="gvim.desktop vim.desktop"
+      else
+	AC_MSG_RESULT([no])
+      fi
+      AC_SUBST(MSGFMT_DESKTOP)
     fi
   else
     AC_MSG_RESULT([no "po/Makefile" - disabled]);

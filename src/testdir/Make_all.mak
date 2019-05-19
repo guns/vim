@@ -14,8 +14,6 @@ SCRIPTS_FIRST = \
 # Tests that run on all systems.
 SCRIPTS_ALL = \
 	test3.out \
-	test14.out \
-	test29.out \
 	test37.out \
 	test39.out \
 	test42.out \
@@ -28,13 +26,11 @@ SCRIPTS_ALL = \
 	test94.out \
 	test95.out \
 	test99.out \
-	test108.out \
 	test_eval.out
 
 
 # Tests that run on most systems, but not on Amiga.
 SCRIPTS_MORE1 = \
-	test11.out \
 	test52.out \
 	test86.out \
 	test87.out
@@ -47,7 +43,6 @@ SCRIPTS_MORE2 = \
 
 # Tests that run on most systems, but not on VMS
 SCRIPTS_MORE4 = \
-	test17.out \
 	test30.out \
 	test59.out \
 	test72.out \
@@ -72,6 +67,7 @@ NEW_TESTS = \
 	test_autoload \
 	test_backspace_opt \
 	test_backup \
+	test_balloon \
 	test_behave \
 	test_blob \
 	test_blockedit \
@@ -85,6 +81,7 @@ NEW_TESTS = \
 	test_channel \
 	test_charsearch \
 	test_charsearch_utf8 \
+	test_checkpath \
 	test_cindent \
 	test_clientserver \
 	test_close_count \
@@ -97,6 +94,7 @@ NEW_TESTS = \
 	test_cscope \
 	test_cursor_func \
 	test_curswant \
+	test_debugger \
 	test_delete \
 	test_diffmode \
 	test_digraph \
@@ -105,6 +103,7 @@ NEW_TESTS = \
 	test_erasebackword \
 	test_escaped_glob \
 	test_eval_stuff \
+	test_environ \
 	test_ex_equal \
 	test_ex_undo \
 	test_ex_z \
@@ -168,6 +167,7 @@ NEW_TESTS = \
 	test_lispwords \
 	test_listchars \
 	test_listdict \
+	test_listener \
 	test_listlbr \
 	test_listlbr_utf8 \
 	test_lua \
@@ -221,6 +221,7 @@ NEW_TESTS = \
 	test_scroll_opt \
 	test_scrollbind \
 	test_search \
+	test_search_stat \
 	test_searchpos \
 	test_set \
 	test_sha256 \
@@ -246,6 +247,7 @@ NEW_TESTS = \
 	test_tabline \
 	test_tabpage \
 	test_tagcase \
+	test_tagfunc \
 	test_tagjump \
 	test_taglist \
 	test_tcl \
@@ -294,6 +296,7 @@ NEW_TESTS_RES = \
 	test_autocmd.res \
 	test_autoload.res \
 	test_backspace_opt.res \
+	test_balloon.res \
 	test_blob.res \
 	test_blockedit.res \
 	test_breakindent.res \
@@ -302,6 +305,7 @@ NEW_TESTS_RES = \
 	test_changelist.res \
 	test_channel.res \
 	test_charsearch.res \
+	test_checkpath.res \
 	test_cindent.res \
 	test_clientserver.res \
 	test_close_count.res \
@@ -312,10 +316,12 @@ NEW_TESTS_RES = \
 	test_crypt.res \
 	test_cscope.res \
 	test_curswant.res \
+	test_debugger.res \
 	test_diffmode.res \
 	test_digraph.res \
 	test_display.res \
 	test_edit.res \
+	test_environ.res \
 	test_erasebackword.res \
 	test_escaped_glob.res \
 	test_eval_stuff.res \
@@ -353,6 +359,7 @@ NEW_TESTS_RES = \
 	test_lineending.res \
 	test_listchars.res \
 	test_listdict.res \
+	test_listener.res \
 	test_listlbr.res \
 	test_lua.res \
 	test_makeencoding.res \
@@ -388,6 +395,7 @@ NEW_TESTS_RES = \
 	test_scriptnames.res \
 	test_scrollbind.res \
 	test_search.res \
+	test_search_stat.res \
 	test_shortpathname.res \
 	test_signals.res \
 	test_signs.res \

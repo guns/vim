@@ -27,11 +27,7 @@ static int	restart_VIsual_select = 0;
 #ifdef FEAT_EVAL
 static void	set_vcount_ca(cmdarg_T *cap, int *set_prevcount);
 #endif
-static int
-#ifdef __BORLANDC__
-    _RTLENTRYF
-#endif
-		nv_compare(const void *s1, const void *s2);
+static int	nv_compare(const void *s1, const void *s2);
 static void	op_colon(oparg_T *oap);
 static void	op_function(oparg_T *oap);
 #if defined(FEAT_MOUSE)
@@ -422,9 +418,6 @@ static int nv_max_linear;
  * through the index in nv_cmd_idx[].
  */
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 nv_compare(const void *s1, const void *s2)
 {
     int		c1, c2;
@@ -2326,10 +2319,10 @@ do_mouse(
 
     if (c == K_MOUSEMOVE)
     {
-	/* Mouse moved without a button pressed. */
+	// Mouse moved without a button pressed.
 #ifdef FEAT_BEVAL_TERM
 	ui_may_remove_balloon();
-	if (p_bevalterm && !VIsual_active)
+	if (p_bevalterm)
 	{
 	    profile_setlimit(p_bdlay, &bevalexpr_due);
 	    bevalexpr_due_set = TRUE;
@@ -5394,8 +5387,11 @@ nv_clear(cmdarg_T *cap)
 # endif
 #endif
 	redraw_later(CLEAR);
-#if defined(MSWIN) && !defined(FEAT_GUI_MSWIN)
-	resize_console_buf();
+#if defined(MSWIN) && (!defined(FEAT_GUI_MSWIN) || defined(VIMDLL))
+# ifdef VIMDLL
+	if (!gui.in_use)
+# endif
+	    resize_console_buf();
 #endif
     }
 }
@@ -5724,7 +5720,11 @@ nv_ident(cmdarg_T *cap)
 	(void)normal_search(cap, cmdchar == '*' ? '/' : '?', buf, 0);
     }
     else
+    {
+	g_tag_at_cursor = TRUE;
 	do_cmdline_cmd(buf);
+	g_tag_at_cursor = FALSE;
+    }
 
     vim_free(buf);
 }

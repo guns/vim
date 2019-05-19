@@ -1,7 +1,7 @@
 " Vim support file to detect file types
 "
 " Maintainer:	Bram Moolenaar <Bram@vim.org>
-" Last Change:	2019 Mar 26
+" Last Change:	2019 May 06
 
 " Listen very carefully, I will say this only once
 if exists("did_load_filetypes")
@@ -713,8 +713,8 @@ au BufNewFile,BufRead *.erb,*.rhtml		setf eruby
 " HTML with M4
 au BufNewFile,BufRead *.html.m4			setf htmlm4
 
-" HTML Cheetah template
-au BufNewFile,BufRead *.tmpl			setf htmlcheetah
+" Some template.  Used to be HTML Cheetah.
+au BufNewFile,BufRead *.tmpl			setf template
 
 " Host config
 au BufNewFile,BufRead */etc/host.conf		setf hostconf
@@ -1173,6 +1173,10 @@ au BufNewFile,BufRead *.rcp			setf pilrc
 
 " Pine config
 au BufNewFile,BufRead .pinerc,pinerc,.pinercex,pinercex		setf pine
+
+" Pipenv Pipfiles
+au BufNewFile,BufRead Pipfile			setf config
+au BufNewFile,BufRead Pipfile.lock		setf json
 
 " PL/1, PL/I
 au BufNewFile,BufRead *.pli,*.pl1		setf pli
@@ -1699,6 +1703,9 @@ au BufNewFile,BufReadPost *.tsscl		setf tsscl
 " TWIG files
 au BufNewFile,BufReadPost *.twig		setf twig
 
+" Typescript
+au BufNewFile,BufReadPost *.ts			setf typescript
+
 " Motif UIT/UIL files
 au BufNewFile,BufRead *.uit,*.uil		setf uil
 
@@ -1860,7 +1867,8 @@ au BufNewFile,BufRead *.xmi			setf xml
 au BufNewFile,BufRead *.csproj,*.csproj.user	setf xml
 
 " Qt Linguist translation source and Qt User Interface Files are XML
-au BufNewFile,BufRead *.ts,*.ui			setf xml
+" However, for .ts Typescript is more common.
+au BufNewFile,BufRead *.ui			setf xml
 
 " TPM's are RDF-based descriptions of TeX packages (Nikolai Weibull)
 au BufNewFile,BufRead *.tpm			setf xml

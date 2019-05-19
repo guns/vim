@@ -167,6 +167,9 @@
 #endif
 #define PV_SW		OPT_BUF(BV_SW)
 #define PV_SWF		OPT_BUF(BV_SWF)
+#ifdef FEAT_EVAL
+# define PV_TFU		OPT_BUF(BV_TFU)
+#endif
 #define PV_TAGS		OPT_BOTH(OPT_BUF(BV_TAGS))
 #define PV_TC		OPT_BOTH(OPT_BUF(BV_TC))
 #define PV_TS		OPT_BUF(BV_TS)
@@ -302,6 +305,9 @@ static char_u	*p_cpt;
 #ifdef FEAT_COMPL_FUNC
 static char_u	*p_cfu;
 static char_u	*p_ofu;
+#endif
+#ifdef FEAT_EVAL
+static char_u	*p_tfu;
 #endif
 static int	p_eol;
 static int	p_fixeol;
@@ -2443,7 +2449,7 @@ static struct vimoption options[] =
 			    {(char_u *)8L, (char_u *)0L} SCTX_INIT},
     {"shortmess",   "shm",  P_STRING|P_VIM|P_FLAGLIST,
 			    (char_u *)&p_shm, PV_NONE,
-			    {(char_u *)"", (char_u *)"filnxtToO"}
+			    {(char_u *)"S", (char_u *)"filnxtToOS"}
 			    SCTX_INIT},
     {"shortname",   "sn",   P_BOOL|P_VI_DEF,
 			    (char_u *)&p_sn, PV_SN,
@@ -2642,6 +2648,15 @@ static struct vimoption options[] =
     {"tagcase",	    "tc",   P_STRING|P_VIM,
 			    (char_u *)&p_tc, PV_TC,
 			    {(char_u *)"followic", (char_u *)"followic"} SCTX_INIT},
+    {"tagfunc",    "tfu",   P_STRING|P_ALLOCED|P_VI_DEF|P_SECURE,
+#ifdef FEAT_EVAL
+			    (char_u *)&p_tfu, PV_TFU,
+			    {(char_u *)"", (char_u *)0L}
+#else
+			    (char_u *)NULL, PV_NONE,
+			    {(char_u *)0L, (char_u *)0L}
+#endif
+			    SCTX_INIT},
     {"taglength",   "tl",   P_NUM|P_VI_DEF,
 			    (char_u *)&p_tl, PV_NONE,
 			    {(char_u *)0L, (char_u *)0L} SCTX_INIT},
@@ -3296,7 +3311,7 @@ set_init_1(int clean_arg)
     if (mch_getenv((char_u *)"VIM_POSIX") != NULL)
     {
 	set_string_default("cpo", (char_u *)CPO_ALL);
-	set_string_default("shm", (char_u *)"A");
+	set_string_default("shm", (char_u *)SHM_POSIX);
     }
 
     /*
@@ -3306,9 +3321,7 @@ set_init_1(int clean_arg)
     if (((p = mch_getenv((char_u *)"SHELL")) != NULL && *p != NUL)
 #if defined(MSWIN)
 	    || ((p = mch_getenv((char_u *)"COMSPEC")) != NULL && *p != NUL)
-# ifdef MSWIN
 	    || ((p = (char_u *)default_shell()) != NULL && *p != NUL)
-# endif
 #endif
 	    )
 	set_string_default_esc("sh", p, TRUE);
@@ -3658,10 +3671,14 @@ set_init_1(int clean_arg)
 	    }
 #endif
 
-#if defined(MSWIN) && !defined(FEAT_GUI)
+#if defined(MSWIN) && (!defined(FEAT_GUI) || defined(VIMDLL))
 	    /* Win32 console: When GetACP() returns a different value from
 	     * GetConsoleCP() set 'termencoding'. */
-	    if (GetACP() != GetConsoleCP())
+	    if (
+# ifdef VIMDLL
+	       (!gui.in_use && !gui.starting) &&
+# endif
+	        GetACP() != GetConsoleCP())
 	    {
 		char	buf[50];
 
@@ -4745,10 +4762,10 @@ do_set(
 			    /* Allow negative (for 'undolevels'), octal and
 			     * hex numbers. */
 			    vim_str2nr(arg, NULL, &i, STR2NR_ALL,
-							     &value, NULL, 0);
-			    if (arg[i] != NUL && !VIM_ISWHITE(arg[i]))
+						     &value, NULL, 0, TRUE);
+			    if (i == 0 || (arg[i] != NUL && !VIM_ISWHITE(arg[i])))
 			    {
-				errmsg = e_invarg;
+				errmsg = N_("E521: Number required after =");
 				goto skip;
 			    }
 			}
@@ -5689,6 +5706,9 @@ check_buf_options(buf_T *buf)
     check_string_option(&buf->b_p_cfu);
     check_string_option(&buf->b_p_ofu);
 #endif
+#ifdef FEAT_EVAL
+    check_string_option(&buf->b_p_tfu);
+#endif
 #ifdef FEAT_KEYMAP
     check_string_option(&buf->b_p_keymap);
 #endif
@@ -6006,19 +6026,54 @@ set_string_option(
 }
 
 /*
+ * Return TRUE if "val" is a valid name: only consists of alphanumeric ASCII
+ * characters or characters in "allowed".
+ */
+    static int
+valid_name(char_u *val, char *allowed)
+{
+    char_u *s;
+
+    for (s = val; *s != NUL; ++s)
+	if (!ASCII_ISALNUM(*s) && vim_strchr((char_u *)allowed, *s) == NULL)
+	    return FALSE;
+    return TRUE;
+}
+
+/*
  * Return TRUE if "val" is a valid 'filetype' name.
  * Also used for 'syntax' and 'keymap'.
  */
     static int
 valid_filetype(char_u *val)
 {
+    return valid_name(val, ".-_");
+}
+
+#if defined(FEAT_SPELL) || defined(PROTO)
+/*
+ * Return TRUE if "val" is a valid 'spellang' value.
+ */
+    int
+valid_spellang(char_u *val)
+{
+    return valid_name(val, ".-_,@");
+}
+
+/*
+ * Return TRUE if "val" is a valid 'spellfile' value.
+ */
+    static int
+valid_spellfile(char_u *val)
+{
     char_u *s;
 
     for (s = val; *s != NUL; ++s)
-	if (!ASCII_ISALNUM(*s) && vim_strchr((char_u *)".-_", *s) == NULL)
+	if (!vim_isfilec(*s) && *s != ',')
 	    return FALSE;
     return TRUE;
 }
+#endif
 
 /*
  * Handle string options that need some action to perform when changed.
@@ -6803,11 +6858,14 @@ did_set_string_option(
 	{
 	    out_str(T_ME);
 	    redraw_later(CLEAR);
-#if defined(MSWIN) && !defined(FEAT_GUI_MSWIN)
+#if defined(MSWIN) && (!defined(FEAT_GUI_MSWIN) || defined(VIMDLL))
 	    /* Since t_me has been set, this probably means that the user
 	     * wants to use this as default colors.  Need to reset default
 	     * background/foreground colors. */
-	    mch_set_normal_colors();
+# ifdef VIMDLL
+	    if (!gui.in_use && !gui.starting)
+# endif
+		mch_set_normal_colors();
 #endif
 	}
 	if (varp == &T_BE && termcap_active)
@@ -7082,7 +7140,13 @@ did_set_string_option(
     else if (varp == &(curwin->w_s->b_p_spl)
 	    || varp == &(curwin->w_s->b_p_spf))
     {
-	errmsg = did_set_spell_option(varp == &(curwin->w_s->b_p_spf));
+	int	is_spellfile = varp == &(curwin->w_s->b_p_spf);
+
+	if ((is_spellfile && !valid_spellfile(*varp))
+	    || (!is_spellfile && !valid_spellang(*varp)))
+	    errmsg = e_invarg;
+	else
+	    errmsg = did_set_spell_option(is_spellfile);
     }
     /* When 'spellcapcheck' is set compile the regexp program. */
     else if (varp == &(curwin->w_s->b_p_spc))
@@ -7737,7 +7801,8 @@ did_set_string_option(
 		    break;
 	    if (p > q)
 	    {
-		vim_snprintf((char *)fname, 200, "spell/%.*s.vim", (int)(p - q), q);
+		vim_snprintf((char *)fname, 200, "spell/%.*s.vim",
+							      (int)(p - q), q);
 		source_runtime(fname, DIP_ALL);
 	    }
 	}
@@ -8778,7 +8843,11 @@ set_bool_option(
     {
 # ifdef FEAT_VTP
 	/* Do not turn on 'tgc' when 24-bit colors are not supported. */
-	if (!has_vtp_working())
+	if (
+#  ifdef VIMDLL
+	    !gui.in_use && !gui.starting &&
+#  endif
+	    !has_vtp_working())
 	{
 	    p_tgc = 0;
 	    return N_("E954: 24-bit colors are not supported on this environment");
@@ -10902,6 +10971,9 @@ get_varp(struct vimoption *p)
 	case PV_CFU:	return (char_u *)&(curbuf->b_p_cfu);
 	case PV_OFU:	return (char_u *)&(curbuf->b_p_ofu);
 #endif
+#ifdef FEAT_EVAL
+	case PV_TFU:	return (char_u *)&(curbuf->b_p_tfu);
+#endif
 	case PV_EOL:	return (char_u *)&(curbuf->b_p_eol);
 	case PV_FIXEOL:	return (char_u *)&(curbuf->b_p_fixeol);
 	case PV_ET:	return (char_u *)&(curbuf->b_p_et);
@@ -11289,6 +11361,9 @@ buf_copy_options(buf_T *buf, int flags)
 #ifdef FEAT_COMPL_FUNC
 	    buf->b_p_cfu = vim_strsave(p_cfu);
 	    buf->b_p_ofu = vim_strsave(p_ofu);
+#endif
+#ifdef FEAT_EVAL
+	    buf->b_p_tfu = vim_strsave(p_tfu);
 #endif
 	    buf->b_p_sts = p_sts;
 	    buf->b_p_sts_nopaste = p_sts_nopaste;
@@ -12486,11 +12561,6 @@ compatible_set(void)
 
 #ifdef FEAT_LINEBREAK
 
-# if defined(__BORLANDC__) && (__BORLANDC__ < 0x500)
-   /* Borland C++ screws up loop optimisation here (negri) */
-  #pragma option -O-l
-# endif
-
 /*
  * fill_breakat_flags() -- called when 'breakat' changes value.
  */
@@ -12507,11 +12577,6 @@ fill_breakat_flags(void)
 	for (p = p_breakat; *p; p++)
 	    breakat_flags[*p] = TRUE;
 }
-
-# if defined(__BORLANDC__) && (__BORLANDC__ < 0x500)
-  #pragma option -O.l
-# endif
-
 #endif
 
 /*
@@ -12969,13 +13034,12 @@ tabstop_copy(int *oldts)
     int		*newts;
     int		t;
 
-    if (oldts == 0)
-	return 0;
-
-    newts = (int *) alloc((unsigned) ((oldts[0] + 1) * sizeof(int)));
-    for (t = 0; t <= oldts[0]; ++t)
-	newts[t] = oldts[t];
-
+    if (oldts == NULL)
+	return NULL;
+    newts = (int *)alloc((unsigned)((oldts[0] + 1) * sizeof(int)));
+    if (newts != NULL)
+	for (t = 0; t <= oldts[0]; ++t)
+	    newts[t] = oldts[t];
     return newts;
 }
 #endif

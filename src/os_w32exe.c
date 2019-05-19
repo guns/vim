@@ -15,16 +15,13 @@
  */
 #include "vim.h"
 
-#ifdef __MINGW32__
-# ifndef _cdecl
-#  define _cdecl
-# endif
-#endif
-
 // cproto doesn't create a prototype for VimMain()
-int _cdecl VimMain(int argc, char **argv);
-#ifdef FEAT_GUI
-void _cdecl SaveInst(HINSTANCE hInst);
+#ifdef VIMDLL
+__declspec(dllimport)
+#endif
+int VimMain(int argc, char **argv);
+#ifndef VIMDLL
+void SaveInst(HINSTANCE hInst);
 #endif
 
 #ifndef PROTO
@@ -40,8 +37,12 @@ wWinMain(
 wmain(int argc UNUSED, wchar_t **argv UNUSED)
 # endif
 {
-# ifdef FEAT_GUI
+# ifndef VIMDLL
+#  ifdef FEAT_GUI
     SaveInst(hInstance);
+#  else
+    SaveInst(GetModuleHandleW(NULL));
+#  endif
 # endif
     VimMain(0, NULL);
 

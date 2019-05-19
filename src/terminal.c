@@ -2432,10 +2432,7 @@ color2index(VTermColor *color, int fg, int *boldp)
 
     if (color->ansi_index != VTERM_ANSI_INDEX_NONE)
     {
-	/* First 16 colors and default: use the ANSI index, because these
-	 * colors can be redefined. */
-	if (t_colors >= 16)
-	    return color->ansi_index;
+	// The first 16 colors and default: use the ANSI index.
 	switch (color->ansi_index)
 	{
 	    case  0: return 0;
@@ -3556,7 +3553,7 @@ init_default_colors(term_T *term)
     }
     else
     {
-#if defined(MSWIN) && !defined(FEAT_GUI_MSWIN)
+#if defined(MSWIN) && (!defined(FEAT_GUI_MSWIN) || defined(VIMDLL))
 	int tmp;
 #endif
 
@@ -3564,10 +3561,15 @@ init_default_colors(term_T *term)
 	if (cterm_normal_fg_color > 0)
 	{
 	    cterm_color2vterm(cterm_normal_fg_color - 1, fg);
-# if defined(MSWIN) && !defined(FEAT_GUI_MSWIN)
-	    tmp = fg->red;
-	    fg->red = fg->blue;
-	    fg->blue = tmp;
+# if defined(MSWIN) && (!defined(FEAT_GUI_MSWIN) || defined(VIMDLL))
+#  ifdef VIMDLL
+	    if (!gui.in_use)
+#  endif
+	    {
+		tmp = fg->red;
+		fg->red = fg->blue;
+		fg->blue = tmp;
+	    }
 # endif
 	}
 # ifdef FEAT_TERMRESPONSE
@@ -3578,10 +3580,15 @@ init_default_colors(term_T *term)
 	if (cterm_normal_bg_color > 0)
 	{
 	    cterm_color2vterm(cterm_normal_bg_color - 1, bg);
-# if defined(MSWIN) && !defined(FEAT_GUI_MSWIN)
-	    tmp = bg->red;
-	    bg->red = bg->blue;
-	    bg->blue = tmp;
+# if defined(MSWIN) && (!defined(FEAT_GUI_MSWIN) || defined(VIMDLL))
+#  ifdef VIMDLL
+	    if (!gui.in_use)
+#  endif
+	    {
+		tmp = fg->red;
+		fg->red = fg->blue;
+		fg->blue = tmp;
+	    }
 # endif
 	}
 # ifdef FEAT_TERMRESPONSE
@@ -3604,6 +3611,7 @@ set_vterm_palette(VTerm *vterm, long_u *rgb)
     for (; index < 16; index++)
     {
 	VTermColor	color;
+
 	color.red = (unsigned)(rgb[index] >> 16);
 	color.green = (unsigned)(rgb[index] >> 8) & 255;
 	color.blue = (unsigned)rgb[index] & 255;
@@ -3771,7 +3779,7 @@ handle_call_command(term_T *term, channel_T *channel, listitem_T *item)
     argvars[0].v_type = VAR_NUMBER;
     argvars[0].vval.v_number = term->tl_buffer->b_fnum;
     argvars[1] = item->li_next->li_tv;
-    if (call_func(func, (int)STRLEN(func), &rettv,
+    if (call_func(func, -1, &rettv,
 		2, argvars, /* argv_func */ NULL,
 		/* firstline */ 1, /* lastline */ 1,
 		&doesrange, /* evaluate */ TRUE,
@@ -3889,7 +3897,7 @@ parse_csi(
 #endif
 	{
 	    // We roughly estimate the position of the terminal window inside
-	    // the Vim window by assuing a 10 x 7 character cell.
+	    // the Vim window by assuming a 10 x 7 character cell.
 	    x += wp->w_wincol * 7;
 	    y += W_WINROW(wp) * 10;
 	}
@@ -3968,7 +3976,9 @@ create_vterm(term_T *term, int rows, int cols)
 	    &term->tl_default_color.fg,
 	    &term->tl_default_color.bg);
 
-    if (t_colors >= 16)
+    if (t_colors < 16)
+	// Less than 16 colors: assume that bold means using a bright color for
+	// the foreground color.
 	vterm_state_set_bold_highbright(vterm_obtain_state(vterm), 1);
 
     /* Required to initialize most things. */
@@ -5665,6 +5675,19 @@ term_getjob(term_T *term)
 /**************************************
  * 2. MS-Windows implementation.
  */
+#ifdef PROTO
+typedef int COORD;
+typedef int DWORD;
+typedef int HANDLE;
+typedef int *DWORD_PTR;
+typedef int HPCON;
+typedef int HRESULT;
+typedef int LPPROC_THREAD_ATTRIBUTE_LIST;
+typedef int SIZE_T;
+typedef int PSIZE_T;
+typedef int PVOID;
+typedef int WINAPI;
+#endif
 
 HRESULT (WINAPI *pCreatePseudoConsole)(COORD, HANDLE, HANDLE, DWORD, HPCON*);
 HRESULT (WINAPI *pResizePseudoConsole)(HPCON, COORD);

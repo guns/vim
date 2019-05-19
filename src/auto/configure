@@ -623,6 +623,7 @@ ac_subst_vars='LTLIBOBJS
 LIBOBJS
 LINK_AS_NEEDED
 DEPEND_CFLAGS_FILTER
+MSGFMT_DESKTOP
 MAKEMO
 MSGFMT
 INSTALL_TOOL_LANGS
@@ -12649,15 +12650,26 @@ $as_echo "$vim_cv_getcwd_broken" >&6; }
 if test "x$vim_cv_getcwd_broken" = "xyes" ; then
   $as_echo "#define BAD_GETCWD 1" >>confdefs.h
 
+  for ac_func in getwd
+do :
+  ac_fn_c_check_func "$LINENO" "getwd" "ac_cv_func_getwd"
+if test "x$ac_cv_func_getwd" = xyes; then :
+  cat >>confdefs.h <<_ACEOF
+#define HAVE_GETWD 1
+_ACEOF
+
+fi
+done
+
 fi
 
 for ac_func in fchdir fchown fchmod fsync getcwd getpseudotty \
-	getpwent getpwnam getpwuid getrlimit gettimeofday getwd lstat \
+	getpwent getpwnam getpwuid getrlimit gettimeofday localtime_r lstat \
 	memset mkdtemp nanosleep opendir putenv qsort readlink select setenv \
 	getpgid setpgid setsid sigaltstack sigstack sigset sigsetjmp sigaction \
 	sigprocmask sigvec strcasecmp strerror strftime stricmp strncasecmp \
 	strnicmp strpbrk strtol tgetent towlower towupper iswupper \
-	usleep utime utimes mblen ftruncate unsetenv
+	usleep utime utimes mblen ftruncate unsetenv posix_openpt
 do :
   as_ac_var=`$as_echo "ac_cv_func_$ac_func" | $as_tr_sh`
 ac_fn_c_check_func "$LINENO" "$ac_func" "$as_ac_var"
@@ -14533,6 +14545,18 @@ $as_echo "no" >&6; }
 fi
 rm -f core conftest.err conftest.$ac_objext \
     conftest$ac_exeext conftest.$ac_ext
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking if msgfmt supports --desktop" >&5
+$as_echo_n "checking if msgfmt supports --desktop... " >&6; }
+      MSGFMT_DESKTOP=
+      if "$MSGFMT" --help | grep -e '--desktop' >/dev/null; then
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+$as_echo "yes" >&6; }
+	MSGFMT_DESKTOP="gvim.desktop vim.desktop"
+      else
+	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+      fi
+
     fi
   else
     { $as_echo "$as_me:${as_lineno-$LINENO}: result: no \"po/Makefile\" - disabled" >&5

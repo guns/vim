@@ -29,11 +29,7 @@ static int read_viminfo_up_to_marks(vir_T *virp, int forceit, int writing);
 
 static int check_readonly(int *forceit, buf_T *buf);
 static void delbuf_msg(char_u *name);
-static int
-#ifdef __BORLANDC__
-    _RTLENTRYF
-#endif
-	help_compare(const void *s1, const void *s2);
+static int help_compare(const void *s1, const void *s2);
 static void prepare_help_buffer(void);
 
 /*
@@ -314,16 +310,9 @@ typedef struct
     } st_u;
 } sorti_T;
 
-static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
-sort_compare(const void *s1, const void *s2);
+static int sort_compare(const void *s1, const void *s2);
 
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 sort_compare(const void *s1, const void *s2)
 {
     sorti_T	l1 = *(sorti_T *)s1;
@@ -569,7 +558,8 @@ ex_sort(exarg_T *eap)
 		{
 		    nrs[lnum - eap->line1].st_u.num.is_number = TRUE;
 		    vim_str2nr(s, NULL, NULL, sort_what,
-			       &nrs[lnum - eap->line1].st_u.num.value, NULL, 0);
+			&nrs[lnum - eap->line1].st_u.num.value,
+			NULL, 0, FALSE);
 		}
 	    }
 #ifdef FEAT_FLOAT
@@ -1537,7 +1527,7 @@ do_shell(
     int		flags)	/* may be SHELL_DOOUT when output is redirected */
 {
     buf_T	*buf;
-#ifndef FEAT_GUI_MSWIN
+#if !defined(FEAT_GUI_MSWIN) || defined(VIMDLL)
     int		save_nwr;
 #endif
 #ifdef MSWIN
@@ -1636,37 +1626,42 @@ do_shell(
 	 * Otherwise there is probably text on the screen that the user wants
 	 * to read before redrawing, so call wait_return().
 	 */
-#ifndef FEAT_GUI_MSWIN
-	if (cmd == NULL
+#if !defined(FEAT_GUI_MSWIN) || defined(VIMDLL)
+# ifdef VIMDLL
+	if (!gui.in_use)
+# endif
+	{
+	    if (cmd == NULL
 # ifdef MSWIN
-		|| (keep_termcap && !need_wait_return)
+		    || (keep_termcap && !need_wait_return)
 # endif
-	   )
-	{
-	    if (msg_silent == 0)
-		redraw_later_clear();
-	    need_wait_return = FALSE;
-	}
-	else if (msg_silent)
-	{
-	    redraw_later(CLEAR);
-	    need_wait_return = FALSE;
-	}
-	else
-	{
-	    /*
-	     * If we switch screens when starttermcap() is called, we really
-	     * want to wait for "hit return to continue".
-	     */
-	    save_nwr = no_wait_return;
-	    if (swapping_screen())
-		no_wait_return = FALSE;
+	       )
+	    {
+		if (msg_silent == 0)
+		    redraw_later_clear();
+		need_wait_return = FALSE;
+	    }
+	    else if (msg_silent)
+	    {
+		redraw_later(CLEAR);
+		need_wait_return = FALSE;
+	    }
+	    else
+	    {
+		/*
+		 * If we switch screens when starttermcap() is called, we
+		 * really want to wait for "hit return to continue".
+		 */
+		save_nwr = no_wait_return;
+		if (swapping_screen())
+		    no_wait_return = FALSE;
 # ifdef AMIGA
-	    wait_return(term_console ? -1 : msg_silent == 0);	/* see below */
+		wait_return(term_console ? -1 : msg_silent == 0); // see below
 # else
-	    wait_return(msg_silent == 0);
+		wait_return(msg_silent == 0);
 # endif
-	    no_wait_return = save_nwr;
+		no_wait_return = save_nwr;
+	    }
 	}
 #endif /* FEAT_GUI_MSWIN */
 
@@ -3157,6 +3152,13 @@ ex_update(exarg_T *eap)
     void
 ex_write(exarg_T *eap)
 {
+    if (eap->cmdidx == CMD_saveas)
+    {
+	// :saveas does not take a range, uses all lines.
+	eap->line1 = 1;
+	eap->line2 = curbuf->b_ml.ml_line_count;
+    }
+
     if (eap->usefilter)		/* input lines to shell command */
 	do_bang(1, eap, FALSE, TRUE, FALSE);
     else
@@ -4258,9 +4260,7 @@ do_ecmd(
 	topline = curwin->w_topline;
 	if (!oldbuf)			    /* need to read the file */
 	{
-#if defined(HAS_SWAP_EXISTS_ACTION)
 	    swap_exists_action = SEA_DIALOG;
-#endif
 	    curbuf->b_flags |= BF_CHECK_RO; /* set/reset 'ro' flag */
 
 	    /*
@@ -4273,11 +4273,9 @@ do_ecmd(
 	    (void)open_buffer(FALSE, eap, readfile_flags);
 #endif
 
-#if defined(HAS_SWAP_EXISTS_ACTION)
 	    if (swap_exists_action == SEA_QUIT)
 		retval = FAIL;
 	    handle_swap_exists(&old_curbuf);
-#endif
 	}
 	else
 	{
@@ -5195,6 +5193,9 @@ do_sub(exarg_T *eap)
 	    int		do_again;	/* do it again after joining lines */
 	    int		skip_match = FALSE;
 	    linenr_T	sub_firstlnum;	/* nr of first sub line */
+#ifdef FEAT_TEXT_PROP
+	    int		save_for_undo = TRUE;
+#endif
 
 	    /*
 	     * The new text is build up step by step, to avoid too much
@@ -5563,28 +5564,25 @@ do_sub(exarg_T *eap)
 #ifdef FEAT_EVAL
 		if (subflags.do_count)
 		{
-		    /* prevent accidentally changing the buffer by a function */
-		    save_ma = curbuf->b_p_ma;
+		    // prevent accidentally changing the buffer by a function
 		    curbuf->b_p_ma = FALSE;
 		    sandbox++;
 		}
-		/* Save flags for recursion.  They can change for e.g.
-		 * :s/^/\=execute("s#^##gn") */
+		// Save flags for recursion.  They can change for e.g.
+		// :s/^/\=execute("s#^##gn")
 		subflags_save = subflags;
+		save_ma = curbuf->b_p_ma;
 #endif
-		/* get length of substitution part */
+		// get length of substitution part
 		sublen = vim_regsub_multi(&regmatch,
 				    sub_firstlnum - regmatch.startpos[0].lnum,
 				    sub, sub_firstline, FALSE, p_magic, TRUE);
 #ifdef FEAT_EVAL
 		// If getting the substitute string caused an error, don't do
 		// the replacement.
-		if (aborting())
-		    goto skip;
-
 		// Don't keep flags set by a recursive call.
 		subflags = subflags_save;
-		if (subflags.do_count)
+		if (aborting() || subflags.do_count)
 		{
 		    curbuf->b_p_ma = save_ma;
 		    if (sandbox > 0)
@@ -5614,9 +5612,14 @@ do_sub(exarg_T *eap)
 		    p1 = sub_firstline;
 #ifdef FEAT_TEXT_PROP
 		    if (curbuf->b_has_textprop)
-			adjust_prop_columns(lnum, regmatch.startpos[0].col,
+		    {
+			// When text properties are changed, need to save for
+			// undo first, unless done already.
+			if (adjust_prop_columns(lnum, regmatch.startpos[0].col,
 			      sublen - 1 - (regmatch.endpos[0].col
-						  - regmatch.startpos[0].col));
+				   - regmatch.startpos[0].col), save_for_undo))
+			    save_for_undo = FALSE;
+		    }
 #endif
 		}
 		else
@@ -5736,7 +5739,7 @@ do_sub(exarg_T *eap)
 				last_line = lnum + 1;
 			    }
 #ifdef FEAT_TEXT_PROP
-			    adjust_props_for_split(lnum, plen, 1);
+			    adjust_props_for_split(lnum + 1, lnum, plen, 1);
 #endif
 			    // all line numbers increase
 			    ++sub_firstlnum;
@@ -6577,9 +6580,6 @@ help_heuristic(
  * that has been put after the tagname by find_tags().
  */
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 help_compare(const void *s1, const void *s2)
 {
     char    *p1;
@@ -6818,7 +6818,7 @@ find_help_tags(
 
     *matches = (char_u **)"";
     *num_matches = 0;
-    flags = TAG_HELP | TAG_REGEXP | TAG_NAMES | TAG_VERBOSE;
+    flags = TAG_HELP | TAG_REGEXP | TAG_NAMES | TAG_VERBOSE | TAG_NO_TAGFUNC;
     if (keep_lang)
 	flags |= TAG_KEEP_LANG;
     if (find_tags(IObuff, num_matches, matches, flags, (int)MAXCOL, NULL) == OK

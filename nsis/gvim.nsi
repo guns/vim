@@ -173,6 +173,16 @@ Page custom SetCustom ValidateCustom
     !include "lang\tradchinese.nsi"
 !endif
 
+##########################################################
+# Version resources
+
+VIAddVersionKey /LANG=${LANG_ENGLISH} "ProductName" "Vim"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "CompanyName" "Vim Developers"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalTrademarks" "Vim"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "LegalCopyright" "Copyright (C) 1996"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileDescription" "Vi Improved - A Text Editor"
+VIAddVersionKey /LANG=${LANG_ENGLISH} "FileVersion" "${VER_MAJOR}.${VER_MINOR}.0.0"
+VIProductVersion "${VER_MAJOR}.${VER_MINOR}.0.0"
 
 # Global variables
 Var vim_dialog
@@ -322,6 +332,9 @@ Section "$(str_section_exe)" id_section_exe
 
 	SetOutPath $0
 	File /oname=gvim.exe ${VIMSRC}\gvim_ole.exe
+!if /FileExists "${VIMSRC}\vim${BIT}.dll"
+	File ${VIMSRC}\vim${BIT}.dll
+!endif
 	File /oname=install.exe ${VIMSRC}\installw32.exe
 	File /oname=uninstal.exe ${VIMSRC}\uninstalw32.exe
 	File ${VIMSRC}\vimrun.exe
@@ -1096,7 +1109,9 @@ Section "un.$(str_unsection_rootdir)" id_unsection_rootdir
 	Call un.GetParent
 	Pop $0
 
-	Delete $0\_vimrc
+	${IfNot} ${Silent}
+	  Delete $0\_vimrc
+	${Endif}
 	RMDir $0
 SectionEnd
 

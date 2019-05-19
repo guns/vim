@@ -1576,9 +1576,11 @@ BASIC_SRC = \
 	blob.c \
 	blowfish.c \
 	buffer.c \
+	change.c \
 	charset.c \
 	crypt.c \
 	crypt_zip.c \
+	debugger.c \
 	dict.c \
 	diff.c \
 	digraph.c \
@@ -1634,6 +1636,7 @@ BASIC_SRC = \
 	textprop.c \
 	ui.c \
 	undo.c \
+	usercmd.c \
 	userfunc.c \
 	version.c \
 	window.c \
@@ -1689,10 +1692,12 @@ OBJ_COMMON = \
 	objects/autocmd.o \
 	objects/beval.o \
 	objects/buffer.o \
+	objects/change.o \
 	objects/blob.o \
 	objects/blowfish.o \
 	objects/crypt.o \
 	objects/crypt_zip.o \
+	objects/debugger.o \
 	objects/dict.o \
 	objects/diff.o \
 	objects/digraph.o \
@@ -1745,6 +1750,7 @@ OBJ_COMMON = \
 	objects/textprop.o \
 	objects/ui.o \
 	objects/undo.o \
+	objects/usercmd.o \
 	objects/userfunc.o \
 	objects/version.o \
 	objects/window.o \
@@ -1817,9 +1823,11 @@ PRO_AUTO = \
 	autocmd.pro \
 	blowfish.pro \
 	buffer.pro \
+	change.pro \
 	charset.pro \
 	crypt.pro \
 	crypt_zip.pro \
+	debugger.pro \
 	dict.pro \
 	diff.pro \
 	digraph.pro \
@@ -1882,6 +1890,7 @@ PRO_AUTO = \
 	textprop.pro \
 	ui.pro \
 	undo.pro \
+	usercmd.pro \
 	userfunc.pro \
 	version.pro \
 	window.pro \
@@ -1981,7 +1990,7 @@ autoconf:
 # If this fails because you don't have Vim yet, first build and install Vim
 # without changes.
 cmdidxs: ex_cmds.h
-	vim -u NONE -i NONE -X -S create_cmdidxs.vim
+	vim --clean -X -u create_cmdidxs.vim
 
 
 # The normal command to compile a .c file to its .o file.
@@ -2169,14 +2178,14 @@ test_libvterm:
 # These do not depend on the executable, compile it when needed.
 test1 \
 	test_eval \
-	test3 test11 test14 test17 \
-	test29 test30 test37 test39 \
+	test3 \
+	test30 test37 test39 \
 	test42 test44 test48 test49 \
 	test52 test59 \
 	test64 test69 \
 	test70 test72 \
 	test86 test87 test88 \
-	test94 test95 test99 test108:
+	test94 test95 test99:
 	cd testdir; rm -f $@.out; $(MAKE) -f Makefile $@.out VIMPROG=../$(VIMTESTTARGET) $(GUI_TESTARG) SCRIPTSOURCE=../$(SCRIPTSOURCE)
 
 # Run individual NEW style test.
@@ -2550,9 +2559,14 @@ install-icons:
 	   $(INSTALL_DATA) $(SCRIPTSOURCE)/vim16x16.png $(ICON16PATH)/gvim.png; \
 	fi
 	if test -d $(DESKTOPPATH) -a -w $(DESKTOPPATH); then \
-	   $(INSTALL_DATA) $(SCRIPTSOURCE)/vim.desktop \
-		$(SCRIPTSOURCE)/gvim.desktop \
-		$(DESKTOPPATH); \
+	   if test -f po/vim.desktop -a -f po/gvim.desktop; then \
+		$(INSTALL_DATA) po/vim.desktop po/gvim.desktop \
+			$(DESKTOPPATH); \
+	   else \
+		$(INSTALL_DATA) $(SCRIPTSOURCE)/vim.desktop \
+			$(SCRIPTSOURCE)/gvim.desktop \
+			$(DESKTOPPATH); \
+	   fi; \
 	   if test -z "$(DESTDIR)" -a -x "$(UPDATE_DESKTOP_DATABASE)"; then \
 	      $(UPDATE_DESKTOP_DATABASE) -q $(DESKTOPPATH); \
 	   fi \
@@ -2778,7 +2792,7 @@ shadow:	runtime pixmaps
 	mkdir $(SHADOWDIR)/auto
 	cd $(SHADOWDIR)/auto; ln -s ../../auto/configure .
 	$(MKDIR_P) $(SHADOWDIR)/po
-	cd $(SHADOWDIR)/po; ln -s ../../po/*.po ../../po/*.mak ../../po/*.vim ../../po/Makefile .
+	cd $(SHADOWDIR)/po; ln -s ../../po/*.po ../../po/*.mak ../../po/*.vim ../../po/*.in ../../po/Makefile ../../po/*.c .
 	cd $(SHADOWDIR); rm -f auto/link.sed
 	cp Makefile configure $(SHADOWDIR)
 	rm -f $(SHADOWDIR)/auto/config.mk $(SHADOWDIR)/config.mk.dist
@@ -2954,6 +2968,9 @@ objects/blowfish.o: blowfish.c
 objects/buffer.o: buffer.c
 	$(CCC) -o $@ buffer.c
 
+objects/change.o: change.c
+	$(CCC) -o $@ change.c
+
 objects/charset.o: charset.c
 	$(CCC) -o $@ charset.c
 
@@ -2962,6 +2979,9 @@ objects/crypt.o: crypt.c
 
 objects/crypt_zip.o: crypt_zip.c
 	$(CCC) -o $@ crypt_zip.c
+
+objects/debugger.o: debugger.c
+	$(CCC) -o $@ debugger.c
 
 objects/dict.o: dict.c
 	$(CCC) -o $@ dict.c
@@ -3236,6 +3256,9 @@ objects/ui.o: ui.c
 objects/undo.o: undo.c
 	$(CCC) -o $@ undo.c
 
+objects/usercmd.o: usercmd.c
+	$(CCC) -o $@ usercmd.c
+
 objects/userfunc.o: userfunc.c
 	$(CCC) -o $@ userfunc.c
 
@@ -3413,6 +3436,10 @@ objects/buffer.o: buffer.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
  proto.h globals.h version.h
+objects/change.o: change.c vim.h protodef.h auto/config.h feature.h os_unix.h \
+ auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
+ proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
+ proto.h globals.h version.h
 objects/charset.o: charset.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
@@ -3423,6 +3450,10 @@ objects/crypt.o: crypt.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  proto.h globals.h
 objects/crypt_zip.o: crypt_zip.c vim.h protodef.h auto/config.h feature.h \
  os_unix.h auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
+ proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
+ proto.h globals.h
+objects/debugger.o: debugger.c vim.h protodef.h auto/config.h feature.h os_unix.h \
+ auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
  proto.h globals.h
 objects/dict.o: dict.c vim.h protodef.h auto/config.h feature.h os_unix.h \
@@ -3473,11 +3504,10 @@ objects/fileio.o: fileio.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
  proto.h globals.h
-objects/findfile.o: findfile.c vim.h protodef.h auto/config.h feature.h \
- os_unix.h auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
+objects/findfile.o: findfile.c vim.h protodef.h auto/config.h feature.h os_unix.h \
+ auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
- proto.h globals.h libvterm/include/vterm.h \
- libvterm/include/vterm_keycodes.h
+ proto.h globals.h
 objects/fold.o: fold.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
@@ -3648,6 +3678,10 @@ objects/undo.o: undo.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
  proto.h globals.h
+objects/usercmd.o: usercmd.c vim.h protodef.h auto/config.h feature.h os_unix.h \
+ auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
+ proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
+ proto.h globals.h
 objects/userfunc.o: userfunc.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
@@ -3675,16 +3709,15 @@ objects/gui_gtk_f.o: gui_gtk_f.c vim.h protodef.h auto/config.h feature.h \
 objects/gui_motif.o: gui_motif.c vim.h protodef.h auto/config.h feature.h \
  os_unix.h auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
- proto.h globals.h gui_xmebw.h ../pixmaps/alert.xpm \
- ../pixmaps/error.xpm ../pixmaps/generic.xpm ../pixmaps/info.xpm \
- ../pixmaps/quest.xpm gui_x11_pm.h ../pixmaps/tb_new.xpm \
- ../pixmaps/tb_open.xpm ../pixmaps/tb_close.xpm ../pixmaps/tb_save.xpm \
- ../pixmaps/tb_print.xpm ../pixmaps/tb_cut.xpm ../pixmaps/tb_copy.xpm \
- ../pixmaps/tb_paste.xpm ../pixmaps/tb_find.xpm \
- ../pixmaps/tb_find_next.xpm ../pixmaps/tb_find_prev.xpm \
- ../pixmaps/tb_find_help.xpm ../pixmaps/tb_exit.xpm \
- ../pixmaps/tb_undo.xpm ../pixmaps/tb_redo.xpm ../pixmaps/tb_help.xpm \
- ../pixmaps/tb_macro.xpm ../pixmaps/tb_make.xpm \
+ proto.h globals.h gui_xmebw.h ../pixmaps/alert.xpm ../pixmaps/error.xpm \
+ ../pixmaps/generic.xpm ../pixmaps/info.xpm ../pixmaps/quest.xpm \
+ gui_x11_pm.h ../pixmaps/tb_new.xpm ../pixmaps/tb_open.xpm \
+ ../pixmaps/tb_close.xpm ../pixmaps/tb_save.xpm ../pixmaps/tb_print.xpm \
+ ../pixmaps/tb_cut.xpm ../pixmaps/tb_copy.xpm ../pixmaps/tb_paste.xpm \
+ ../pixmaps/tb_find.xpm ../pixmaps/tb_find_next.xpm \
+ ../pixmaps/tb_find_prev.xpm ../pixmaps/tb_find_help.xpm \
+ ../pixmaps/tb_exit.xpm ../pixmaps/tb_undo.xpm ../pixmaps/tb_redo.xpm \
+ ../pixmaps/tb_help.xpm ../pixmaps/tb_macro.xpm ../pixmaps/tb_make.xpm \
  ../pixmaps/tb_save_all.xpm ../pixmaps/tb_jump.xpm \
  ../pixmaps/tb_ctags.xpm ../pixmaps/tb_load_session.xpm \
  ../pixmaps/tb_save_session.xpm ../pixmaps/tb_new_session.xpm \
@@ -3704,10 +3737,10 @@ objects/gui_xmebw.o: gui_xmebw.c vim.h protodef.h auto/config.h feature.h \
 objects/gui_athena.o: gui_athena.c vim.h protodef.h auto/config.h feature.h \
  os_unix.h auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
- proto.h globals.h gui_at_sb.h gui_x11_pm.h \
- ../pixmaps/tb_new.xpm ../pixmaps/tb_open.xpm ../pixmaps/tb_close.xpm \
- ../pixmaps/tb_save.xpm ../pixmaps/tb_print.xpm ../pixmaps/tb_cut.xpm \
- ../pixmaps/tb_copy.xpm ../pixmaps/tb_paste.xpm ../pixmaps/tb_find.xpm \
+ proto.h globals.h gui_at_sb.h gui_x11_pm.h ../pixmaps/tb_new.xpm \
+ ../pixmaps/tb_open.xpm ../pixmaps/tb_close.xpm ../pixmaps/tb_save.xpm \
+ ../pixmaps/tb_print.xpm ../pixmaps/tb_cut.xpm ../pixmaps/tb_copy.xpm \
+ ../pixmaps/tb_paste.xpm ../pixmaps/tb_find.xpm \
  ../pixmaps/tb_find_next.xpm ../pixmaps/tb_find_prev.xpm \
  ../pixmaps/tb_find_help.xpm ../pixmaps/tb_exit.xpm \
  ../pixmaps/tb_undo.xpm ../pixmaps/tb_redo.xpm ../pixmaps/tb_help.xpm \
@@ -3728,8 +3761,8 @@ objects/gui_gtk_x11.o: gui_gtk_x11.c vim.h protodef.h auto/config.h feature.h \
 objects/gui_x11.o: gui_x11.c vim.h protodef.h auto/config.h feature.h os_unix.h \
  auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
- proto.h globals.h ../runtime/vim32x32.xpm \
- ../runtime/vim16x16.xpm ../runtime/vim48x48.xpm
+ proto.h globals.h ../runtime/vim32x32.xpm ../runtime/vim16x16.xpm \
+ ../runtime/vim48x48.xpm
 objects/gui_at_sb.o: gui_at_sb.c vim.h protodef.h auto/config.h feature.h \
  os_unix.h auto/osdef.h ascii.h keymap.h term.h macros.h option.h beval.h \
  proto/gui_beval.pro structs.h regexp.h gui.h alloc.h ex_cmds.h spell.h \
@@ -3833,8 +3866,8 @@ objects/xdiffi.o: xdiff/xdiffi.c xdiff/xinclude.h auto/config.h \
  macros.h option.h beval.h proto/gui_beval.pro \
  structs.h regexp.h gui.h alloc.h \
  ex_cmds.h spell.h proto.h globals.h \
- xdiff/xtypes.h xdiff/xutils.h \
- xdiff/xprepare.h xdiff/xdiffi.h xdiff/xemit.h
+ xdiff/xtypes.h xdiff/xutils.h xdiff/xprepare.h xdiff/xdiffi.h \
+ xdiff/xemit.h
 objects/xemit.o: xdiff/xemit.c xdiff/xinclude.h auto/config.h \
  xdiff/xmacros.h xdiff/xdiff.h vim.h protodef.h \
  auto/config.h feature.h os_unix.h \
@@ -3842,8 +3875,8 @@ objects/xemit.o: xdiff/xemit.c xdiff/xinclude.h auto/config.h \
  macros.h option.h beval.h proto/gui_beval.pro \
  structs.h regexp.h gui.h alloc.h \
  ex_cmds.h spell.h proto.h globals.h \
- xdiff/xtypes.h xdiff/xutils.h \
- xdiff/xprepare.h xdiff/xdiffi.h xdiff/xemit.h
+ xdiff/xtypes.h xdiff/xutils.h xdiff/xprepare.h xdiff/xdiffi.h \
+ xdiff/xemit.h
 objects/xprepare.o: xdiff/xprepare.c xdiff/xinclude.h auto/config.h \
  xdiff/xmacros.h xdiff/xdiff.h vim.h protodef.h \
  auto/config.h feature.h os_unix.h \
@@ -3851,8 +3884,8 @@ objects/xprepare.o: xdiff/xprepare.c xdiff/xinclude.h auto/config.h \
  macros.h option.h beval.h proto/gui_beval.pro \
  structs.h regexp.h gui.h alloc.h \
  ex_cmds.h spell.h proto.h globals.h \
- xdiff/xtypes.h xdiff/xutils.h \
- xdiff/xprepare.h xdiff/xdiffi.h xdiff/xemit.h
+ xdiff/xtypes.h xdiff/xutils.h xdiff/xprepare.h xdiff/xdiffi.h \
+ xdiff/xemit.h
 objects/xutils.o: xdiff/xutils.c xdiff/xinclude.h auto/config.h \
  xdiff/xmacros.h xdiff/xdiff.h vim.h protodef.h \
  auto/config.h feature.h os_unix.h \
@@ -3860,8 +3893,8 @@ objects/xutils.o: xdiff/xutils.c xdiff/xinclude.h auto/config.h \
  macros.h option.h beval.h proto/gui_beval.pro \
  structs.h regexp.h gui.h alloc.h \
  ex_cmds.h spell.h proto.h globals.h \
- xdiff/xtypes.h xdiff/xutils.h \
- xdiff/xprepare.h xdiff/xdiffi.h xdiff/xemit.h
+ xdiff/xtypes.h xdiff/xutils.h xdiff/xprepare.h xdiff/xdiffi.h \
+ xdiff/xemit.h
 objects/xhistogram.o: xdiff/xhistogram.c xdiff/xinclude.h auto/config.h \
  xdiff/xmacros.h xdiff/xdiff.h vim.h protodef.h \
  auto/config.h feature.h os_unix.h \
@@ -3869,8 +3902,8 @@ objects/xhistogram.o: xdiff/xhistogram.c xdiff/xinclude.h auto/config.h \
  macros.h option.h beval.h proto/gui_beval.pro \
  structs.h regexp.h gui.h alloc.h \
  ex_cmds.h spell.h proto.h globals.h \
- xdiff/xtypes.h xdiff/xutils.h \
- xdiff/xprepare.h xdiff/xdiffi.h xdiff/xemit.h
+ xdiff/xtypes.h xdiff/xutils.h xdiff/xprepare.h xdiff/xdiffi.h \
+ xdiff/xemit.h
 objects/xpatience.o: xdiff/xpatience.c xdiff/xinclude.h auto/config.h \
  xdiff/xmacros.h xdiff/xdiff.h vim.h protodef.h \
  auto/config.h feature.h os_unix.h \
@@ -3878,5 +3911,5 @@ objects/xpatience.o: xdiff/xpatience.c xdiff/xinclude.h auto/config.h \
  macros.h option.h beval.h proto/gui_beval.pro \
  structs.h regexp.h gui.h alloc.h \
  ex_cmds.h spell.h proto.h globals.h \
- xdiff/xtypes.h xdiff/xutils.h \
- xdiff/xprepare.h xdiff/xdiffi.h xdiff/xemit.h
+ xdiff/xtypes.h xdiff/xutils.h xdiff/xprepare.h xdiff/xdiffi.h \
+ xdiff/xemit.h

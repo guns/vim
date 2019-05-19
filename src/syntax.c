@@ -5348,9 +5348,6 @@ syn_cmd_region(
  * A simple syntax group ID comparison function suitable for use in qsort()
  */
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 syn_compare_stub(const void *v1, const void *v2)
 {
     const short	*s1 = v1;
@@ -6703,9 +6700,6 @@ typedef struct
 } time_entry_T;
 
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 syn_compare_syntime(const void *v1, const void *v2)
 {
     const time_entry_T	*s1 = v1;
@@ -6871,6 +6865,7 @@ static char *(highlight_init_both[]) = {
     "lCursor guibg=fg guifg=bg", /* should be different, but what? */
 #endif
     "default link QuickFixLine Search",
+    CENT("Normal cterm=NONE", "Normal gui=NONE"),
     NULL
 };
 
@@ -6952,9 +6947,6 @@ static char *(highlight_init_light[]) = {
 #endif
     CENT("MatchParen term=reverse ctermbg=Cyan",
 	 "MatchParen term=reverse ctermbg=Cyan guibg=Cyan"),
-#ifdef FEAT_GUI
-    "Normal gui=NONE",
-#endif
 #ifdef FEAT_TERMINAL
     CENT("StatusLineTerm term=reverse,bold cterm=bold ctermfg=White ctermbg=DarkGreen",
 	 "StatusLineTerm term=reverse,bold cterm=bold ctermfg=White ctermbg=DarkGreen gui=bold guifg=bg guibg=DarkGreen"),
@@ -7047,9 +7039,6 @@ static char *(highlight_init_dark[]) = {
 #ifdef FEAT_CONCEAL
     CENT("Conceal ctermbg=DarkGrey ctermfg=LightGrey",
 	 "Conceal ctermbg=DarkGrey ctermfg=LightGrey guibg=DarkGrey guifg=LightGrey"),
-#endif
-#ifdef FEAT_GUI
-    "Normal gui=NONE",
 #endif
 #ifdef FEAT_TERMINAL
     CENT("StatusLineTerm term=reverse,bold cterm=bold ctermfg=Black ctermbg=LightGreen",
@@ -8280,6 +8269,13 @@ restore_cterm_colors(void)
      * background/foreground colors. */
     mch_set_normal_colors();
 #else
+# ifdef VIMDLL
+    if (!gui.in_use)
+    {
+	mch_set_normal_colors();
+	return;
+    }
+# endif
     cterm_normal_fg_color = 0;
     cterm_normal_fg_bold = 0;
     cterm_normal_bg_color = 0;
@@ -9823,7 +9819,7 @@ syn_id2colors(int hl_id, guicolor_T *fgp, guicolor_T *bgp)
 #endif
 
 #if (defined(MSWIN) \
-	&& !defined(FEAT_GUI_MSWIN) \
+	&& (!defined(FEAT_GUI_MSWIN) || defined(VIMDLL)) \
 	&& defined(FEAT_TERMGUICOLORS)) || defined(PROTO)
     void
 syn_id2cterm_bg(int hl_id, int *fgp, int *bgp)
@@ -10014,7 +10010,7 @@ highlight_changed(void)
     char_u	*end;
     int		id;
 #ifdef USER_HIGHLIGHT
-    char_u      userhl[10];
+    char_u      userhl[30];  // use 30 to avoid compiler warning
 # ifdef FEAT_STL_OPT
     int		id_S = -1;
     int		id_SNC = 0;

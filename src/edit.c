@@ -4104,7 +4104,7 @@ replace_do_bs(int limit_col)
 
 	    --text_prop_frozen;
 	    adjust_prop_columns(curwin->w_cursor.lnum, curwin->w_cursor.col,
-						  (int)(len_now - len_before));
+					   (int)(len_now - len_before), FALSE);
 	}
 #endif
     }
@@ -4558,13 +4558,11 @@ ins_esc(
 	/* Re-enable bracketed paste mode. */
 	out_str(T_BE);
 
-    /*
-     * When recording or for CTRL-O, need to display the new mode.
-     * Otherwise remove the mode message.
-     */
+    // When recording or for CTRL-O, need to display the new mode.
+    // Otherwise remove the mode message.
     if (reg_recording != 0 || restart_edit != NUL)
 	showmode();
-    else if (p_smd && !skip_showmode())
+    else if (p_smd && (got_int || !skip_showmode()))
 	msg("");
 
     return TRUE;	    /* exit Insert mode */

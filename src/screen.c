@@ -549,8 +549,8 @@ update_screen(int type_arg)
 #endif
 #ifdef FEAT_GUI
     int		did_undraw = FALSE;
-    int		gui_cursor_col;
-    int		gui_cursor_row;
+    int		gui_cursor_col = 0;
+    int		gui_cursor_row = 0;
 #endif
     int		no_update = FALSE;
 
@@ -563,6 +563,16 @@ update_screen(int type_arg)
 	no_update = TRUE;
 	type = 0;
     }
+
+#ifdef FEAT_EVAL
+    {
+	buf_T *buf;
+
+	// Before updating the screen, notify any listeners of changed text.
+	FOR_ALL_BUFFERS(buf)
+	    invoke_listeners(buf);
+    }
+#endif
 
     if (must_redraw)
     {
@@ -790,7 +800,7 @@ update_screen(int type_arg)
 
     /* Clear or redraw the command line.  Done last, because scrolling may
      * mess up the command line. */
-    if (clear_cmdline || redraw_cmdline)
+    if (clear_cmdline || redraw_cmdline || redraw_mode)
 	showmode();
 
     if (no_update)
@@ -857,7 +867,7 @@ update_prepare(void)
     static void
 update_finish(void)
 {
-    if (redraw_cmdline)
+    if (redraw_cmdline || redraw_mode)
 	showmode();
 
 # ifdef FEAT_SEARCH_EXTRA
@@ -2945,9 +2955,6 @@ static textprop_T	*current_text_props = NULL;
 static buf_T		*current_buf = NULL;
 
     static int
-#ifdef __BORLANDC__
-_RTLENTRYF
-#endif
 text_prop_compare(const void *s1, const void *s2)
 {
     int  idx1, idx2;
@@ -3059,6 +3066,7 @@ win_line(
     int		text_props_active = 0;
     proptype_T  *text_prop_type = NULL;
     int		text_prop_attr = 0;
+    int		text_prop_combine = FALSE;
 #endif
 #ifdef FEAT_SPELL
     int		has_spell = FALSE;	/* this buffer has spell checking */
@@ -3168,7 +3176,6 @@ win_line(
     int		vcol_off	= 0;	/* offset for concealed characters */
     int		did_wcol	= FALSE;
     int		match_conc	= 0;	/* cchar for match functions */
-    int		has_match_conc  = 0;	/* match wants to conceal */
     int		old_boguscols   = 0;
 # define VCOL_HLC (vcol - vcol_off)
 # define FIX_FOR_BOGUSCOLS \
@@ -3739,7 +3746,8 @@ win_line(
     for (;;)
     {
 #ifdef FEAT_CONCEAL
-	has_match_conc = 0;
+	int has_match_conc  = 0;	// match wants to conceal
+	int did_decrement_ptr = FALSE;
 #endif
 	/* Skip this quickly when working on the text. */
 	if (draw_state != WL_LINE)
@@ -4261,6 +4269,7 @@ win_line(
 		    text_prop_idxs[text_props_active++] = text_prop_next++;
 
 		text_prop_attr = 0;
+		text_prop_combine = FALSE;
 		if (text_props_active > 0)
 		{
 		    // Sort the properties on priority and/or starting last.
@@ -4273,17 +4282,17 @@ win_line(
 		    for (pi = 0; pi < text_props_active; ++pi)
 		    {
 			int	    tpi = text_prop_idxs[pi];
-			proptype_T  *pt = text_prop_type_by_id(wp->w_buffer, text_props[tpi].tp_type);
+			proptype_T  *pt = text_prop_type_by_id(
+					wp->w_buffer, text_props[tpi].tp_type);
 
 			if (pt != NULL)
 			{
 			    int pt_attr = syn_id2attr(pt->pt_hl_id);
 
 			    text_prop_type = pt;
-			    if (text_prop_attr == 0)
-				text_prop_attr = pt_attr;
-			    else
-				text_prop_attr = hl_combine_attr(text_prop_attr, pt_attr);
+			    text_prop_attr =
+				      hl_combine_attr(text_prop_attr, pt_attr);
+			    text_prop_combine = pt->pt_flags & PT_FLAG_COMBINE;
 			}
 		    }
 		}
@@ -4297,11 +4306,15 @@ win_line(
 		char_attr = hl_combine_attr(line_attr, area_attr);
 	    else if (search_attr != 0)
 		char_attr = hl_combine_attr(line_attr, search_attr);
-		/* Use line_attr when not in the Visual or 'incsearch' area
-		 * (area_attr may be 0 when "noinvcur" is set). */
+# ifdef FEAT_TEXT_PROP
+	    else if (text_prop_type != NULL)
+		char_attr = hl_combine_attr(line_attr, text_prop_attr);
+# endif
 	    else if (line_attr != 0 && ((fromcol == -10 && tocol == MAXCOL)
 				|| vcol < fromcol || vcol_prev < fromcol_prev
 				|| vcol >= tocol))
+		// Use line_attr when not in the Visual or 'incsearch' area
+		// (area_attr may be 0 when "noinvcur" is set).
 		char_attr = line_attr;
 #else
 	    if (area_attr != 0)
@@ -4314,7 +4327,13 @@ win_line(
 		attr_pri = FALSE;
 #ifdef FEAT_TEXT_PROP
 		if (text_prop_type != NULL)
-		    char_attr = text_prop_attr;
+		{
+		    if (text_prop_combine)
+			char_attr = hl_combine_attr(
+						  syntax_attr, text_prop_attr);
+		    else
+			char_attr = text_prop_attr;
+		}
 		else
 #endif
 #ifdef FEAT_SYN_HL
@@ -4581,9 +4600,12 @@ win_line(
 		    mb_utf8 = FALSE;
 		    mb_l = 1;
 		    multi_attr = HL_ATTR(HLF_AT);
-		    /* Put pointer back so that the character will be
-		     * displayed at the start of the next line. */
+		    // Put pointer back so that the character will be
+		    // displayed at the start of the next line.
 		    --ptr;
+#ifdef FEAT_CONCEAL
+		    did_decrement_ptr = TRUE;
+#endif
 		}
 		else if (*ptr != NUL)
 		    ptr += mb_l - 1;
@@ -4664,14 +4686,18 @@ win_line(
 		    ptr = line + v;
 
 # ifdef FEAT_TEXT_PROP
-		    // Text properties overrule syntax highlighting.
-		    if (text_prop_attr == 0)
-#endif
+		    // Text properties overrule syntax highlighting or combine.
+		    if (text_prop_attr == 0 || text_prop_combine)
+# endif
 		    {
+			int comb_attr = syntax_attr;
+# ifdef FEAT_TEXT_PROP
+			comb_attr = hl_combine_attr(text_prop_attr, comb_attr);
+# endif
 			if (!attr_pri)
-			    char_attr = syntax_attr;
+			    char_attr = comb_attr;
 			else
-			    char_attr = hl_combine_attr(syntax_attr, char_attr);
+			    char_attr = hl_combine_attr(comb_attr, char_attr);
 		    }
 # ifdef FEAT_CONCEAL
 		    /* no concealing past the end of the line, it interferes
@@ -5242,7 +5268,12 @@ win_line(
 		prev_syntax_id = 0;
 		is_concealing = FALSE;
 	    }
-#endif /* FEAT_CONCEAL */
+
+	    if (n_skip > 0 && did_decrement_ptr)
+		// not showing the '>', put pointer back to avoid getting stuck
+		++ptr;
+
+#endif // FEAT_CONCEAL
 	}
 
 #ifdef FEAT_CONCEAL
@@ -5582,8 +5613,10 @@ win_line(
 	    break;
 	}
 
-	/* line continues beyond line end */
-	if (lcs_ext
+	// Show "extends" character from 'listchars' if beyond the line end and
+	// 'list' is set.
+	if (lcs_ext != NUL
+		&& wp->w_p_list
 		&& !wp->w_p_wrap
 #ifdef FEAT_DIFF
 		&& filler_todo <= 0
@@ -8639,6 +8672,18 @@ check_for_delay(int check_msg_scroll)
 }
 
 /*
+ * Init TabPageIdxs[] to zero: Clicking outside of tabs has no effect.
+ */
+    static void
+clear_TabPageIdxs(void)
+{
+    int		scol;
+
+    for (scol = 0; scol < Columns; ++scol)
+	TabPageIdxs[scol] = 0;
+}
+
+/*
  * screen_valid -  allocate screen buffers if size changed
  *   If "doclear" is TRUE: clear screen if it has been resized.
  *	Returns TRUE if there is a valid screen to write to.
@@ -8899,7 +8944,6 @@ give_up:
     must_redraw = CLEAR;	/* need to clear the screen later */
     if (doclear)
 	screenclear2();
-
 #ifdef FEAT_GUI
     else if (gui.in_use
 	    && !gui.starting
@@ -8919,6 +8963,7 @@ give_up:
 	    msg_col = Columns - 1;	/* put cursor at last column */
     }
 #endif
+    clear_TabPageIdxs();
 
     entered = FALSE;
     --RedrawingDisabled;
@@ -10116,7 +10161,7 @@ skip_showmode()
 	    || !redrawing()
 	    || (char_avail() && !KeyTyped))
     {
-	redraw_cmdline = TRUE;		// show mode later
+	redraw_mode = TRUE;		// show mode later
 	return TRUE;
     }
     return FALSE;
@@ -10128,6 +10173,7 @@ skip_showmode()
  * If clear_cmdline is TRUE, clear the rest of the cmdline.
  * If clear_cmdline is FALSE there may be a message there that needs to be
  * cleared only if a mode is shown.
+ * If redraw_mode is TRUE show or clear the mode.
  * Return the length of the message (0 if no message).
  */
     int
@@ -10301,7 +10347,7 @@ showmode(void)
 	}
 
 	mode_displayed = TRUE;
-	if (need_clear || clear_cmdline)
+	if (need_clear || clear_cmdline || redraw_mode)
 	    msg_clr_eos();
 	msg_didout = FALSE;		/* overwrite this message */
 	length = msg_col;
@@ -10311,6 +10357,11 @@ showmode(void)
     else if (clear_cmdline && msg_silent == 0)
 	/* Clear the whole command line.  Will reset "clear_cmdline". */
 	msg_clr_cmdline();
+    else if (redraw_mode)
+    {
+	msg_pos_mode();
+	msg_clr_eos();
+    }
 
 #ifdef FEAT_CMDL_INFO
     /* In Visual mode the size of the selected area must be redrawn. */
@@ -10323,6 +10374,7 @@ showmode(void)
 	win_redr_ruler(lastwin, TRUE, FALSE);
 #endif
     redraw_cmdline = FALSE;
+    redraw_mode = FALSE;
     clear_cmdline = FALSE;
 
     return length;
@@ -10435,10 +10487,7 @@ draw_tabline(void)
 	return;
 
 #if defined(FEAT_STL_OPT)
-
-    /* Init TabPageIdxs[] to zero: Clicking outside of tabs has no effect. */
-    for (scol = 0; scol < Columns; ++scol)
-	TabPageIdxs[scol] = 0;
+    clear_TabPageIdxs();
 
     /* Use the 'tabline' option if it's set. */
     if (*p_tal != NUL)

@@ -1248,3 +1248,44 @@ func Test_one_error_msg()
   " This  was also giving an internal error
   call assert_fails('call search(" \\((\\v[[=P=]]){185}+             ")', 'E871:')
 endfunc
+
+func Test_incsearch_add_char_under_cursor()
+  if !exists('+incsearch')
+    return
+  endif
+  set incsearch
+  new
+  call setline(1, ['find match', 'anything'])
+  1
+  call test_override('char_avail', 1)
+  call feedkeys("fc/m\<C-L>\<C-L>\<C-L>\<C-L>\<C-L>\<CR>", 'tx')
+  call assert_equal('match', @/)
+  call test_override('char_avail', 0)
+
+  set incsearch&
+  bwipe!
+endfunc
+
+" Test for the search() function with match at the cursor position
+func Test_search_match_at_curpos()
+  new
+  call append(0, ['foobar', '', 'one two', ''])
+
+  normal gg
+
+  call search('foobar', 'c')
+  call assert_equal([1, 1], [line('.'), col('.')])
+
+  normal j
+  call search('^$', 'c')
+  call assert_equal([2, 1], [line('.'), col('.')])
+
+  call search('^$', 'bc')
+  call assert_equal([2, 1], [line('.'), col('.')])
+
+  exe "normal /two\<CR>"
+  call search('.', 'c')
+  call assert_equal([3, 5], [line('.'), col('.')])
+
+  close!
+endfunc

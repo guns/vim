@@ -17,24 +17,6 @@
 # define MSWIN
 #endif
 
-// use fastcall for Borland, when compiling for MS-Windows
-#if defined(__BORLANDC__) && defined(MSWIN) && !defined(DEBUG)
-#if defined(FEAT_PERL) || \
-    defined(FEAT_PYTHON) || \
-    defined(FEAT_PYTHON3) || \
-    defined(FEAT_RUBY) || \
-    defined(FEAT_TCL) || \
-    defined(FEAT_MZSCHEME) || \
-    defined(DYNAMIC_GETTEXT) || \
-    defined(DYNAMIC_ICONV) || \
-    defined(DYNAMIC_IME) || \
-    defined(XPM)
-  #pragma option -pc
-# else
-  #pragma option -pr
-# endif
-#endif
-
 #ifdef MSWIN
 # include "vimio.h"
 #endif
@@ -1133,19 +1115,20 @@ typedef struct {
 /*
  * flags for find_tags().
  */
-#define TAG_HELP	1	/* only search for help tags */
-#define TAG_NAMES	2	/* only return name of tag */
-#define	TAG_REGEXP	4	/* use tag pattern as regexp */
-#define	TAG_NOIC	8	/* don't always ignore case */
+#define TAG_HELP	1	// only search for help tags
+#define TAG_NAMES	2	// only return name of tag
+#define	TAG_REGEXP	4	// use tag pattern as regexp
+#define	TAG_NOIC	8	// don't always ignore case
 #ifdef FEAT_CSCOPE
-# define TAG_CSCOPE	16	/* cscope tag */
+# define TAG_CSCOPE	16	// cscope tag
 #endif
-#define TAG_VERBOSE	32	/* message verbosity */
-#define TAG_INS_COMP	64	/* Currently doing insert completion */
-#define TAG_KEEP_LANG	128	/* keep current language */
+#define TAG_VERBOSE	32	// message verbosity
+#define TAG_INS_COMP	64	// Currently doing insert completion
+#define TAG_KEEP_LANG	128	// keep current language
+#define TAG_NO_TAGFUNC	256	// do not use 'tagfunc'
 
-#define TAG_MANY	300	/* When finding many tags (for completion),
-				   find up to this many tags */
+#define TAG_MANY	300	// When finding many tags (for completion),
+				// find up to this many tags
 
 /*
  * Types of dialogs passed to do_vim_dialog().
@@ -1270,6 +1253,7 @@ enum auto_event
     EVENT_CMDWINLEAVE,		// before leaving the cmdline window
     EVENT_COLORSCHEME,		// after loading a colorscheme
     EVENT_COLORSCHEMEPRE,	// before loading a colorscheme
+    EVENT_COMPLETECHANGED,	// after completion popup menu changed
     EVENT_COMPLETEDONE,		// after finishing insert complete
     EVENT_CURSORHOLD,		// cursor in same position for a while
     EVENT_CURSORHOLDI,		// idem, in Insert mode
@@ -2161,11 +2145,6 @@ typedef enum {
 # define BROWSE_DIR 2	    /* flag for do_browse() */
 #endif
 
-/* stop using fastcall for Borland */
-#if defined(__BORLANDC__) && defined(MSWIN) && !defined(DEBUG)
- #pragma option -p.
-#endif
-
 #ifdef _MSC_VER
 /* Avoid useless warning "conversion from X to Y of greater size". */
  #pragma warning(disable : 4312)
@@ -2342,9 +2321,6 @@ typedef enum {
 # undef FF
 # undef OP_DELETE
 # undef OP_JOIN
-# ifdef __BORLANDC__
-#  define NOPROTO 1
-# endif
   /* remove MAX and MIN, included by glib.h, redefined by sys/param.h */
 # ifdef MAX
 #  undef MAX
@@ -2372,10 +2348,6 @@ typedef enum {
 #  undef bool
 # endif
 
-# ifdef __BORLANDC__
-  /* Borland has the structure stati64 but not _stati64 */
-#  define _stati64 stati64
-# endif
 #endif
 
 /* values for vim_handle_signal() that are not a signal */

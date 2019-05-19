@@ -923,6 +923,22 @@ pum_get_height(void)
     return pum_height;
 }
 
+/*
+ * Add size information about the pum to "dict".
+ */
+    void
+pum_set_event_info(dict_T *dict)
+{
+    if (!pum_visible())
+	return;
+    dict_add_number(dict, "height", pum_height);
+    dict_add_number(dict, "width", pum_width);
+    dict_add_number(dict, "row", pum_row);
+    dict_add_number(dict, "col", pum_col);
+    dict_add_number(dict, "size", pum_size);
+    dict_add_special(dict, "scrollbar", pum_scrollbar ? VVAL_TRUE : VVAL_FALSE);
+}
+
 # if defined(FEAT_BEVAL_TERM) || defined(FEAT_TERM_POPUP_MENU) || defined(PROTO)
     static void
 pum_position_at_mouse(int min_width)
@@ -1086,12 +1102,19 @@ split_message(char_u *mesg, pumitem_T **array)
 	    else
 		thislen = item->bytelen;
 
-	    /* put indent at the start */
+	    // put indent at the start
 	    p = alloc(thislen + item->indent * 2 + 1);
+	    if (p == NULL)
+	    {
+		for (line = 0; line <= height - 1; ++line)
+		    vim_free((*array)[line].pum_text);
+		vim_free(*array);
+		goto failed;
+	    }
 	    for (ind = 0; ind < item->indent * 2; ++ind)
 		p[ind] = ' ';
 
-	    /* exclude spaces at the end of the string */
+	    // exclude spaces at the end of the string
 	    for (copylen = thislen; copylen > 0; --copylen)
 		if (item->start[skip + copylen - 1] != ' ')
 		    break;
@@ -1131,7 +1154,10 @@ ui_post_balloon(char_u *mesg, list_T *list)
     ui_remove_balloon();
 
     if (mesg == NULL && list == NULL)
+    {
+	pum_undisplay();
 	return;
+    }
     if (list != NULL)
     {
 	listitem_T  *li;

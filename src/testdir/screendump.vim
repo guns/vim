@@ -26,6 +26,7 @@ source shared.vim
 " Options is a dictionary, these items are recognized:
 " "rows" - height of the terminal window (max. 20)
 " "cols" - width of the terminal window (max. 78)
+" "statusoff" - number of lines the status is offset from default
 func RunVimInTerminal(arguments, options)
   " If Vim doesn't exit a swap file remains, causing other tests to fail.
   " Remove it here.
@@ -51,12 +52,17 @@ func RunVimInTerminal(arguments, options)
   " Make the window 20 lines high and 75 columns, unless told otherwise.
   let rows = get(a:options, 'rows', 20)
   let cols = get(a:options, 'cols', 75)
+  let statusoff = get(a:options, 'statusoff', 1)
 
   let cmd = GetVimCommandClean()
 
   " Add -v to have gvim run in the terminal (if possible)
   let cmd .= ' -v ' . a:arguments
-  let buf = term_start(cmd, {'curwin': 1, 'term_rows': rows, 'term_cols': cols})
+  let buf = term_start(cmd, {
+	\ 'curwin': 1,
+	\ 'term_rows': rows,
+	\ 'term_cols': cols,
+	\ })
   if &termwinsize == ''
     " in the GUI we may end up with a different size, try to set it.
     if term_getsize(buf) != [rows, cols]
@@ -73,7 +79,7 @@ func RunVimInTerminal(arguments, options)
   " using valgrind).
   " If it fails then show the terminal contents for debugging.
   try
-    call WaitFor({-> len(term_getline(buf, rows)) >= cols - 1 || len(term_getline(buf, rows - 1)) >= cols - 1})
+    call WaitFor({-> len(term_getline(buf, rows)) >= cols - 1 || len(term_getline(buf, rows - statusoff)) >= cols - 1})
   catch /timed out after/
     let lines = map(range(1, rows), {key, val -> term_getline(buf, val)})
     call assert_report('RunVimInTerminal() failed, screen contents: ' . join(lines, "<NL>"))
@@ -104,6 +110,10 @@ endfunc
 func VerifyScreenDump(buf, filename, options, ...)
   let reference = 'dumps/' . a:filename . '.dump'
   let testfile = 'failed/' . a:filename . '.dump'
+
+  " Redraw to execut the code that updates the screen.  Otherwise we get the
+  " text and attributes only from the internal buffer.
+  redraw
 
   let did_mkdir = 0
   if !isdirectory('failed')

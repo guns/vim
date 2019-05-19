@@ -1659,6 +1659,25 @@ may_restore_clipboard(void)
 	get_x11_title(FALSE);
     }
 }
+
+    void
+ex_xrestore(exarg_T *eap)
+{
+    if (eap->arg != NULL && STRLEN(eap->arg) > 0)
+    {
+        if (xterm_display_allocated)
+            vim_free(xterm_display);
+        xterm_display = (char *)vim_strsave(eap->arg);
+        xterm_display_allocated = TRUE;
+    }
+    smsg(_("restoring display %s"), xterm_display == NULL
+			      ? (char *)mch_getenv("DISPLAY") : xterm_display);
+
+    clear_xterm_clip();
+    x11_window = 0;
+    xterm_dpy_retry_count = 5;  // Try reconnecting five times
+    may_restore_clipboard();
+}
 #endif
 
 /*
@@ -1761,6 +1780,10 @@ get_x11_windis(void)
 	x11_window = (Window)atol(winid);
 
 #ifdef FEAT_XCLIPBOARD
+    if (xterm_dpy == x11_display)
+	// x11_display may have been set to xterm_dpy elsewhere
+	x11_display_from = XD_XTERM;
+
     if (xterm_dpy != NULL && x11_window != 0)
     {
 	/* We may have checked it already, but Gnome terminal can move us to
@@ -2205,14 +2228,19 @@ mch_settitle(char_u *title, char_u *icon)
     void
 mch_restore_title(int which)
 {
+    int	do_push_pop = did_set_title || did_set_icon;
+
     /* only restore the title or icon when it has been set */
     mch_settitle(((which & SAVE_RESTORE_TITLE) && did_set_title) ?
 			(oldtitle ? oldtitle : p_titleold) : NULL,
 	       ((which & SAVE_RESTORE_ICON) && did_set_icon) ? oldicon : NULL);
 
-    // pop and push from/to the stack
-    term_pop_title(which);
-    term_push_title(which);
+    if (do_push_pop)
+    {
+	// pop and push from/to the stack
+	term_pop_title(which);
+	term_push_title(which);
+    }
 }
 
 #endif /* FEAT_TITLE */
@@ -2391,6 +2419,16 @@ mch_get_host_name(char_u *s, int len)
 mch_get_pid(void)
 {
     return (long)getpid();
+}
+
+/*
+ * return TRUE if process "pid" is still running
+ */
+    int
+mch_process_running(long pid)
+{
+    // EMX kill() not working correctly, it seems
+    return kill(pid, 0) == 0;
 }
 
 #if !defined(HAVE_STRERROR) && defined(USE_GETCWD)
@@ -3779,7 +3817,10 @@ check_mouse_termcode(void)
 	    && !gui.in_use
 #  endif
 	    )
-	set_mouse_termcode(KS_MOUSE, (char_u *)IF_EB("\033MG", ESC_STR "MG"));
+	set_mouse_termcode(KS_GPM_MOUSE,
+				      (char_u *)IF_EB("\033MG", ESC_STR "MG"));
+    else
+	del_mouse_termcode(KS_GPM_MOUSE);
 # endif
 
 # ifdef FEAT_SYSMOUSE
@@ -5930,7 +5971,8 @@ WaitForCharOrMouse(long msec, int *interrupted, int ignore_input)
     if (WantQueryMouse)
     {
 	WantQueryMouse = FALSE;
-	mch_write((char_u *)IF_EB("\033[1'|", ESC_STR "[1'|"), 5);
+	if (!no_query_mouse_for_testing)
+	    mch_write((char_u *)IF_EB("\033[1'|", ESC_STR "[1'|"), 5);
     }
 #endif
 
@@ -7003,7 +7045,7 @@ mch_rename(const char *src, const char *dest)
 }
 #endif /* !HAVE_RENAME */
 
-#ifdef FEAT_MOUSE_GPM
+#if defined(FEAT_MOUSE_GPM) || defined(PROTO)
 /*
  * Initializes connection with gpm (if it isn't already opened)
  * Return 1 if succeeded (or connection already opened), 0 if failed
@@ -7040,16 +7082,26 @@ gpm_open(void)
 }
 
 /*
+ * Returns TRUE if the GPM mouse is enabled.
+ */
+    int
+gpm_enabled(void)
+{
+    return gpm_flag && gpm_fd >= 0;
+}
+
+/*
  * Closes connection to gpm
  */
     static void
 gpm_close(void)
 {
-    if (gpm_flag && gpm_fd >= 0) /* if Open */
+    if (gpm_enabled())
 	Gpm_Close();
 }
 
-/* Reads gpm event and adds special keys to input buf. Returns length of
+/*
+ * Reads gpm event and adds special keys to input buf. Returns length of
  * generated key sequence.
  * This function is styled after gui_send_mouse_event().
  */
@@ -7632,7 +7684,7 @@ do_xterm_trace(void)
     return TRUE;
 }
 
-# if defined(FEAT_GUI) || defined(PROTO)
+# if defined(FEAT_GUI) || defined(FEAT_XCLIPBOARD) || defined(PROTO)
 /*
  * Destroy the display, window and app_context.  Required for GTK.
  */

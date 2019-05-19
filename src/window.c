@@ -601,7 +601,7 @@ wingotofile:
 }
 
 /*
- * Figure out the address type for ":wnncmd".
+ * Figure out the address type for ":wincmd".
  */
     void
 get_wincmd_addr_type(char_u *arg, exarg_T *eap)
@@ -656,13 +656,13 @@ get_wincmd_addr_type(char_u *arg, exarg_T *eap)
     case 'd':
     case Ctrl_D:
 #endif
-		/* window size or any count */
-		eap->addr_type = ADDR_LINES;
+		// window size or any count
+		eap->addr_type = ADDR_OTHER;
 		break;
 
     case Ctrl_HAT:
     case '^':
-		/* buffer number */
+		// buffer number
 		eap->addr_type = ADDR_BUFFERS;
 		break;
 
@@ -677,7 +677,7 @@ get_wincmd_addr_type(char_u *arg, exarg_T *eap)
     case 'W':
     case 'x':
     case Ctrl_X:
-		/* window number */
+		// window number
 		eap->addr_type = ADDR_WINDOWS;
 		break;
 
@@ -694,8 +694,8 @@ get_wincmd_addr_type(char_u *arg, exarg_T *eap)
     case Ctrl_P:
     case '=':
     case CAR:
-		/* no count */
-		eap->addr_type = 0;
+		// no count
+		eap->addr_type = ADDR_NONE;
 		break;
     }
 }
@@ -1326,10 +1326,12 @@ win_init(win_T *newp, win_T *oldp, int flags UNUSED)
     /* copy tagstack and folds */
     for (i = 0; i < oldp->w_tagstacklen; i++)
     {
-	newp->w_tagstack[i] = oldp->w_tagstack[i];
-	if (newp->w_tagstack[i].tagname != NULL)
-	    newp->w_tagstack[i].tagname =
-				   vim_strsave(newp->w_tagstack[i].tagname);
+	taggy_T	*tag = &newp->w_tagstack[i];
+	*tag = oldp->w_tagstack[i];
+	if (tag->tagname != NULL)
+	    tag->tagname = vim_strsave(tag->tagname);
+	if (tag->user_data != NULL)
+	    tag->user_data = vim_strsave(tag->user_data);
     }
     newp->w_tagstackidx = oldp->w_tagstackidx;
     newp->w_tagstacklen = oldp->w_tagstacklen;
@@ -3625,6 +3627,8 @@ free_tabpage(tabpage_T *tp)
     unref_var_dict(tp->tp_vars);
 #endif
 
+    vim_free(tp->tp_localdir);
+
 #ifdef FEAT_PYTHON
     python_tabpage_free(tp);
 #endif
@@ -3662,6 +3666,8 @@ win_new_tabpage(int after)
     }
     curtab = newtp;
 
+    newtp->tp_localdir = (tp->tp_localdir == NULL)
+				    ? NULL : vim_strsave(tp->tp_localdir);
     /* Create a new empty window. */
     if (win_alloc_firstwin(tp->tp_curwin) == OK)
     {
@@ -3839,6 +3845,9 @@ find_tabpage(int n)
     tabpage_T	*tp;
     int		i = 1;
 
+    if (n == 0)
+	return curtab;
+
     for (tp = first_tabpage; tp != NULL && i != n; tp = tp->tp_next)
 	++i;
     return tp;
@@ -3946,6 +3955,8 @@ enter_tabpage(
      * the frames for that.  When the Vim window was resized need to update
      * frame sizes too.  Use the stored value of p_ch, so that it can be
      * different for each tab page. */
+    if (p_ch != curtab->tp_ch_used)
+	clear_cmdline = TRUE;
     p_ch = curtab->tp_ch_used;
     if (curtab->tp_old_Rows != Rows || (old_off != firstwin->w_winrow
 #ifdef FEAT_GUI_TABLINE
@@ -3981,7 +3992,7 @@ enter_tabpage(
     void
 goto_tabpage(int n)
 {
-    tabpage_T	*tp;
+    tabpage_T	*tp = NULL;  // shut up compiler
     tabpage_T	*ttp;
     int		i;
 
@@ -4218,18 +4229,19 @@ win_find_tabpage(win_T *win)
 #endif
 
 /*
- * Move to window above or below "count" times.
+ * Get the above or below neighbor window of the specified window.
+ *   up - TRUE for the above neighbor
+ *   count - nth neighbor window
+ * Returns the specified window if the neighbor is not found.
  */
-    static void
-win_goto_ver(
-    int		up,		/* TRUE to go to win above */
-    long	count)
+    win_T *
+win_vert_neighbor(tabpage_T *tp, win_T *wp, int up, long count)
 {
     frame_T	*fr;
     frame_T	*nfr;
     frame_T	*foundfr;
 
-    foundfr = curwin->w_frame;
+    foundfr = wp->w_frame;
     while (count--)
     {
 	/*
@@ -4239,7 +4251,7 @@ win_goto_ver(
 	fr = foundfr;
 	for (;;)
 	{
-	    if (fr == topframe)
+	    if (fr == tp->tp_topframe)
 		goto end;
 	    if (up)
 		nfr = fr->fr_prev;
@@ -4266,7 +4278,7 @@ win_goto_ver(
 		/* Find the frame at the cursor row. */
 		while (fr->fr_next != NULL
 			&& frame2win(fr)->w_wincol + fr->fr_width
-					 <= curwin->w_wincol + curwin->w_wcol)
+					 <= wp->w_wincol + wp->w_wcol)
 		    fr = fr->fr_next;
 	    }
 	    if (nfr->fr_layout == FR_COL && up)
@@ -4276,23 +4288,38 @@ win_goto_ver(
 	}
     }
 end:
-    if (foundfr != NULL)
-	win_goto(foundfr->fr_win);
+    return foundfr != NULL ? foundfr->fr_win : NULL;
 }
 
 /*
- * Move to left or right window.
+ * Move to window above or below "count" times.
  */
     static void
-win_goto_hor(
-    int		left,		/* TRUE to go to left win */
+win_goto_ver(
+    int		up,		// TRUE to go to win above
     long	count)
+{
+    win_T	*win;
+
+    win = win_vert_neighbor(curtab, curwin, up, count);
+    if (win != NULL)
+	win_goto(win);
+}
+
+/*
+ * Get the left or right neighbor window of the specified window.
+ *   left - TRUE for the left neighbor
+ *   count - nth neighbor window
+ * Returns the specified window if the neighbor is not found.
+ */
+    win_T *
+win_horz_neighbor(tabpage_T *tp, win_T *wp, int left, long count)
 {
     frame_T	*fr;
     frame_T	*nfr;
     frame_T	*foundfr;
 
-    foundfr = curwin->w_frame;
+    foundfr = wp->w_frame;
     while (count--)
     {
 	/*
@@ -4302,7 +4329,7 @@ win_goto_hor(
 	fr = foundfr;
 	for (;;)
 	{
-	    if (fr == topframe)
+	    if (fr == tp->tp_topframe)
 		goto end;
 	    if (left)
 		nfr = fr->fr_prev;
@@ -4329,7 +4356,7 @@ win_goto_hor(
 		/* Find the frame at the cursor row. */
 		while (fr->fr_next != NULL
 			&& frame2win(fr)->w_winrow + fr->fr_height
-					 <= curwin->w_winrow + curwin->w_wrow)
+					 <= wp->w_winrow + wp->w_wrow)
 		    fr = fr->fr_next;
 	    }
 	    if (nfr->fr_layout == FR_ROW && left)
@@ -4339,8 +4366,22 @@ win_goto_hor(
 	}
     }
 end:
-    if (foundfr != NULL)
-	win_goto(foundfr->fr_win);
+    return foundfr != NULL ? foundfr->fr_win : NULL;
+}
+
+/*
+ * Move to left or right window.
+ */
+    static void
+win_goto_hor(
+    int		left,		// TRUE to go to left win
+    long	count)
+{
+    win_T	*win;
+
+    win = win_horz_neighbor(curtab, curwin, left, count);
+    if (win != NULL)
+	win_goto(win);
 }
 
 /*
@@ -4421,11 +4462,13 @@ win_enter_ext(
 	curwin->w_cursor.coladd = 0;
     changed_line_abv_curs();	/* assume cursor position needs updating */
 
-    if (curwin->w_localdir != NULL)
+    if (curwin->w_localdir != NULL || curtab->tp_localdir != NULL)
     {
-	/* Window has a local directory: Save current directory as global
-	 * directory (unless that was done already) and change to the local
-	 * directory. */
+	char_u	*dirname;
+
+	// Window or tab has a local directory: Save current directory as
+	// global directory (unless that was done already) and change to the
+	// local directory.
 	if (globaldir == NULL)
 	{
 	    char_u	cwd[MAXPATHL];
@@ -4433,7 +4476,12 @@ win_enter_ext(
 	    if (mch_dirname(cwd, MAXPATHL) == OK)
 		globaldir = vim_strsave(cwd);
 	}
-	if (mch_chdir((char *)curwin->w_localdir) == 0)
+	if (curwin->w_localdir != NULL)
+	    dirname = curwin->w_localdir;
+	else
+	    dirname = curtab->tp_localdir;
+
+	if (mch_chdir((char *)dirname) == 0)
 	    shorten_fnames(TRUE);
     }
     else if (globaldir != NULL)
@@ -5779,9 +5827,14 @@ scroll_to_fraction(win_T *wp, int prev_height)
     int		sline, line_size;
     int		height = wp->w_height;
 
-    // Don't change w_topline when height is zero.  Don't set w_topline when
-    // 'scrollbind' is set and this isn't the current window.
-    if (height > 0 && (!wp->w_p_scb || wp == curwin))
+    // Don't change w_topline in any of these cases:
+    // - window height is 0
+    // - 'scrollbind' is set and this isn't the current window
+    // - window height is sufficient to display the whole buffer and first line
+    //   is visible.
+    if (height > 0
+        && (!wp->w_p_scb || wp == curwin)
+        && (height < wp->w_buffer->b_ml.ml_line_count || wp->w_topline > 1))
     {
 	/*
 	 * Find a value for w_topline that shows the cursor at the same
@@ -6166,10 +6219,39 @@ check_lnums(int do_curwin)
     FOR_ALL_TAB_WINDOWS(tp, wp)
 	if ((do_curwin || wp != curwin) && wp->w_buffer == curbuf)
 	{
+	    // save the original cursor position and topline
+	    wp->w_save_cursor.w_cursor_save = wp->w_cursor;
+	    wp->w_save_cursor.w_topline_save = wp->w_topline;
+
 	    if (wp->w_cursor.lnum > curbuf->b_ml.ml_line_count)
 		wp->w_cursor.lnum = curbuf->b_ml.ml_line_count;
 	    if (wp->w_topline > curbuf->b_ml.ml_line_count)
 		wp->w_topline = curbuf->b_ml.ml_line_count;
+
+	    // save the corrected cursor position and topline
+	    wp->w_save_cursor.w_cursor_corr = wp->w_cursor;
+	    wp->w_save_cursor.w_topline_corr = wp->w_topline;
+	}
+}
+
+/*
+ * Reset cursor and topline to its stored values from check_lnums().
+ * check_lnums() must have been called first!
+ */
+    void
+reset_lnums()
+{
+    win_T	*wp;
+    tabpage_T	*tp;
+
+    FOR_ALL_TAB_WINDOWS(tp, wp)
+	if (wp->w_buffer == curbuf)
+	{
+	    // Restore the value if the autocommand didn't change it.
+	    if (EQUAL_POS(wp->w_save_cursor.w_cursor_corr, wp->w_cursor))
+		wp->w_cursor = wp->w_save_cursor.w_cursor_save;
+	    if (wp->w_save_cursor.w_topline_corr == wp->w_topline)
+		wp->w_topline = wp->w_save_cursor.w_topline_save;
 	}
 }
 
