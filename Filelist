@@ -79,6 +79,7 @@ SRC_ALL =	\
 		src/option.c \
 		src/option.h \
 		src/popupmnu.c \
+		src/popupwin.c \
 		src/quickfix.c \
 		src/regexp.c \
 		src/regexp_nfa.c \
@@ -117,6 +118,7 @@ SRC_ALL =	\
 		src/testdir/lsan-suppress.txt \
 		src/testdir/sautest/autoload/*.vim \
 		src/testdir/runtest.vim \
+		src/testdir/summarize.vim \
 		src/testdir/shared.vim \
 		src/testdir/screendump.vim \
 		src/testdir/view_util.vim \
@@ -200,6 +202,7 @@ SRC_ALL =	\
 		src/proto/ops.pro \
 		src/proto/option.pro \
 		src/proto/popupmnu.pro \
+		src/proto/popupwin.pro \
 		src/proto/quickfix.pro \
 		src/proto/regexp.pro \
 		src/proto/screen.pro \

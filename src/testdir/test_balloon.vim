@@ -1,21 +1,25 @@
 " Tests for 'balloonevalterm'.
 
-" Tests that only work in the terminal.
-if has('balloon_eval_term') && !has('gui_running')
+if !has('balloon_eval_term')
+  throw 'Skipped: balloon_eval_term feature missing'
+endif
+
+" A few tests only work in the terminal.
+if !has('gui_running')
 
 source screendump.vim
 if !CanRunVimInTerminal()
-  finish
+  throw 'Skipped: cannot make screendumps'
 endif
 
-let s:common_script = [
-	\ 'call setline(1, ["one one one", "two tXo two", "three three three"])',
-	\ 'set balloonevalterm balloonexpr=MyBalloonExpr() balloondelay=100',
-	\ 'func MyBalloonExpr()',
-	\ ' return "line " .. v:beval_lnum .. " column " .. v:beval_col .. ": " .. v:beval_text',
-	\ 'endfun',
-	\ 'redraw',
-	\ ]
+let s:common_script =<< [CODE]
+  call setline(1, ["one one one", "two tXo two", "three three three"])
+  set balloonevalterm balloonexpr=MyBalloonExpr() balloondelay=100
+  func MyBalloonExpr()
+    return "line " .. v:beval_lnum .. " column " .. v:beval_col .. ": " .. v:beval_text
+  endfun
+  redraw
+[CODE]
 
 func Test_balloon_eval_term()
   " Use <Ignore> after <MouseMove> to return from vgetc() without removing
