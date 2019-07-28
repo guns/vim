@@ -73,6 +73,9 @@ EXTERN short	*TabPageIdxs INIT(= NULL);
 #ifdef FEAT_TEXT_PROP
 // Array with size Rows x Columns containing zindex of popups.
 EXTERN short	*popup_mask INIT(= NULL);
+EXTERN short	*popup_mask_next INIT(= NULL);
+// Array with flags for tansparent cells of current popup.
+EXTERN char	*popup_transparent INIT(= NULL);
 
 // Flag set to TRUE when popup_mask needs to be updated.
 EXTERN int	popup_mask_refresh INIT(= TRUE);
@@ -187,6 +190,7 @@ EXTERN int	emsg_severe INIT(= FALSE);   /* use message of next of several
 EXTERN int	did_endif INIT(= FALSE);    /* just had ":endif" */
 EXTERN dict_T	vimvardict;		    /* Dictionary with v: variables */
 EXTERN dict_T	globvardict;		    /* Dictionary with g: variables */
+#define globvarht globvardict.dv_hashtab
 #endif
 EXTERN int	did_emsg;		    /* set by emsg() when the message
 					       is displayed or thrown */
@@ -249,6 +253,9 @@ EXTERN int	debug_backtrace_level INIT(= 0); /* breakpoint backtrace level */
 # ifdef FEAT_PROFILE
 EXTERN int	do_profiling INIT(= PROF_NONE);	/* PROF_ values */
 # endif
+EXTERN garray_T script_items INIT(= {0 COMMA 0 COMMA sizeof(scriptitem_T) COMMA 4 COMMA NULL});
+#define SCRIPT_ITEM(id) (((scriptitem_T *)script_items.ga_data)[(id) - 1])
+#define FUNCLINE(fp, j)	((char_u **)(fp->uf_lines.ga_data))[j]
 
 /*
  * The exception currently being thrown.  Used to pass an exception to
@@ -348,6 +355,13 @@ EXTERN char_u	hash_removed;
 
 EXTERN int	scroll_region INIT(= FALSE); /* term supports scroll region */
 EXTERN int	t_colors INIT(= 0);	    /* int value of T_CCO */
+
+#ifdef FEAT_CMDL_COMPL
+// Flags to indicate an additional string for highlight name completion.
+EXTERN int include_none INIT(= 0);	// when 1 include "None"
+EXTERN int include_default INIT(= 0);	// when 1 include "default"
+EXTERN int include_link INIT(= 0);	// when 2 include "link" and "clear"
+#endif
 
 /*
  * When highlight_match is TRUE, highlight a match, starting at the cursor
@@ -544,11 +558,11 @@ EXTERN int	gui_win_y INIT(= -1);
 #endif
 
 #ifdef FEAT_CLIPBOARD
-EXTERN VimClipboard clip_star;	/* PRIMARY selection in X11 */
+EXTERN Clipboard_T clip_star;	// PRIMARY selection in X11
 # ifdef FEAT_X11
-EXTERN VimClipboard clip_plus;	/* CLIPBOARD selection in X11 */
+EXTERN Clipboard_T clip_plus;	// CLIPBOARD selection in X11
 # else
-#  define clip_plus clip_star	/* there is only one clipboard */
+#  define clip_plus clip_star	// there is only one clipboard
 #  define ONE_CLIPBOARD
 # endif
 
@@ -598,7 +612,13 @@ EXTERN win_T	*aucmd_win;	/* window used in aucmd_prepbuf() */
 EXTERN int	aucmd_win_used INIT(= FALSE);	/* aucmd_win is being used */
 
 #ifdef FEAT_TEXT_PROP
-EXTERN win_T    *first_popupwin;	// first global popup window
+EXTERN win_T    *first_popupwin;		// first global popup window
+EXTERN win_T	*popup_dragwin INIT(= NULL);	// popup window being dragged
+
+// Set to TRUE if there is any visible popup.
+EXTERN int	popup_visible INIT(= FALSE);
+
+EXTERN int	text_prop_frozen INIT(= 0);
 #endif
 
 /*
@@ -1595,8 +1615,10 @@ EXTERN char e_invalidreg[]    INIT(= N_("E850: Invalid register name"));
 EXTERN char e_dirnotf[]	INIT(= N_("E919: Directory not found in '%s': \"%s\""));
 EXTERN char e_au_recursive[]	INIT(= N_("E952: Autocommand caused recursive behavior"));
 #ifdef FEAT_MENU
-EXTERN char e_menuothermode[] INIT(= N_("E328: Menu only exists in another mode"));
+EXTERN char e_menuothermode[]	INIT(= N_("E328: Menu only exists in another mode"));
 #endif
+EXTERN char e_invalwindow[]	INIT(= N_("E957: Invalid window number"));
+EXTERN char e_listarg[]		INIT(= N_("E686: Argument of %s must be a List"));
 
 #ifdef FEAT_GUI_MAC
 EXTERN short disallow_gui	INIT(= FALSE);
@@ -1675,9 +1697,4 @@ typedef int HINSTANCE;
 # endif
 EXTERN int ctrl_break_was_pressed INIT(= FALSE);
 EXTERN HINSTANCE g_hinst INIT(= NULL);
-#endif
-
-#ifdef FEAT_TEXT_PROP
-EXTERN int text_prop_frozen INIT(= 0);
-EXTERN int popup_visible INIT(= FALSE);
 #endif

@@ -31,9 +31,6 @@ static char_u *next_fenc(char_u **pp);
 #ifdef FEAT_EVAL
 static char_u *readfile_charconvert(char_u *fname, char_u *fenc, int *fdp);
 #endif
-#ifdef FEAT_VIMINFO
-static void check_marks_read(void);
-#endif
 #ifdef FEAT_CRYPT
 static char_u *check_for_cryptkey(char_u *cryptkey, char_u *ptr, long *sizep, off_T *filesizep, int newfile, char_u *fname, int *did_ask);
 #endif
@@ -2855,25 +2852,6 @@ readfile_charconvert(
 }
 #endif
 
-
-#ifdef FEAT_VIMINFO
-/*
- * Read marks for the current buffer from the viminfo file, when we support
- * buffer marks and the buffer has a name.
- */
-    static void
-check_marks_read(void)
-{
-    if (!curbuf->b_marks_read && get_viminfo_parameter('\'') > 0
-						  && curbuf->b_ffname != NULL)
-	read_viminfo(NULL, VIF_WANT_MARKS);
-
-    /* Always set b_marks_read; needed when 'viminfo' is changed to include
-     * the ' parameter after opening a buffer. */
-    curbuf->b_marks_read = TRUE;
-}
-#endif
-
 #if defined(FEAT_CRYPT) || defined(PROTO)
 /*
  * Check for magic number used for encryption.  Applies to the current buffer.
@@ -3160,7 +3138,7 @@ buf_write(
 	    && whole
 	    && buf == curbuf
 #ifdef FEAT_QUICKFIX
-	    && !bt_nofile(buf)
+	    && !bt_nofilename(buf)
 #endif
 	    && !filtering
 	    && (!append || vim_strchr(p_cpo, CPO_FNAMEAPP) != NULL)
@@ -3237,7 +3215,7 @@ buf_write(
 					 sfname, sfname, FALSE, curbuf, eap)))
 	    {
 #ifdef FEAT_QUICKFIX
-		if (overwriting && bt_nofile(curbuf))
+		if (overwriting && bt_nofilename(curbuf))
 		    nofile_err = TRUE;
 		else
 #endif
@@ -3270,7 +3248,7 @@ buf_write(
 	    else
 	    {
 #ifdef FEAT_QUICKFIX
-		if (overwriting && bt_nofile(curbuf))
+		if (overwriting && bt_nofilename(curbuf))
 		    nofile_err = TRUE;
 		else
 #endif
@@ -3284,7 +3262,7 @@ buf_write(
 					 sfname, sfname, FALSE, curbuf, eap)))
 	    {
 #ifdef FEAT_QUICKFIX
-		if (overwriting && bt_nofile(curbuf))
+		if (overwriting && bt_nofilename(curbuf))
 		    nofile_err = TRUE;
 		else
 #endif
@@ -6083,7 +6061,7 @@ shorten_buf_fname(buf_T *buf, char_u *dirname, int force)
 
     if (buf->b_fname != NULL
 #ifdef FEAT_QUICKFIX
-	    && !bt_nofile(buf)
+	    && !bt_nofilename(buf)
 #endif
 	    && !path_with_url(buf->b_fname)
 	    && (force

@@ -1794,7 +1794,7 @@ vgetc(void)
     may_garbage_collect = FALSE;
 #endif
 #ifdef FEAT_BEVAL_TERM
-    if (c != K_MOUSEMOVE && c != K_IGNORE)
+    if (c != K_MOUSEMOVE && c != K_IGNORE && c != K_CURSORHOLD)
     {
 	/* Don't trigger 'balloonexpr' unless only the mouse was moved. */
 	bevalexpr_due_set = FALSE;
@@ -2540,13 +2540,18 @@ vgetorpeek(int advance)
 			 */
 			if (mp->m_expr)
 			{
-			    int		save_vgetc_busy = vgetc_busy;
+			    int save_vgetc_busy = vgetc_busy;
+			    int save_may_garbage_collect = may_garbage_collect;
 
 			    vgetc_busy = 0;
+			    may_garbage_collect = FALSE;
+
 			    save_m_keys = vim_strsave(mp->m_keys);
 			    save_m_str = vim_strsave(mp->m_str);
 			    s = eval_map_expr(save_m_str, NUL);
+
 			    vgetc_busy = save_vgetc_busy;
+			    may_garbage_collect = save_may_garbage_collect;
 			}
 			else
 #endif
@@ -4004,6 +4009,8 @@ map_mode_to_chars(int mode)
 	    ga_append(&mapmode, 'n');			/* :nmap */
 	if (mode & OP_PENDING)
 	    ga_append(&mapmode, 'o');			/* :omap */
+	if (mode & TERMINAL)
+	    ga_append(&mapmode, 't');			/* :tmap */
 	if ((mode & (VISUAL + SELECTMODE)) == VISUAL + SELECTMODE)
 	    ga_append(&mapmode, 'v');			/* :vmap */
 	else

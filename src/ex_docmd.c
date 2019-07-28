@@ -20,9 +20,9 @@ static int	ex_pressedreturn = FALSE;
 #endif
 
 #ifdef FEAT_EVAL
-static char_u	*do_one_cmd(char_u **, int, struct condstack *, char_u *(*fgetline)(int, void *, int), void *cookie);
+static char_u	*do_one_cmd(char_u **, int, struct condstack *, char_u *(*fgetline)(int, void *, int, int), void *cookie);
 #else
-static char_u	*do_one_cmd(char_u **, int, char_u *(*fgetline)(int, void *, int), void *cookie);
+static char_u	*do_one_cmd(char_u **, int, char_u *(*fgetline)(int, void *, int, int), void *cookie);
 static int	if_level = 0;		/* depth in :if */
 #endif
 static void	free_cmdmod(void);
@@ -296,6 +296,7 @@ static void	ex_tag_cmd(exarg_T *eap, char_u *name);
 # define ex_endtry		ex_ni
 # define ex_endfunction		ex_ni
 # define ex_let			ex_ni
+# define ex_const		ex_ni
 # define ex_unlet		ex_ni
 # define ex_lockvar		ex_ni
 # define ex_unlockvar		ex_ni
@@ -317,9 +318,7 @@ static int	did_lcd;	/* whether ":lcd" was produced for a session */
 #ifndef FEAT_EVAL
 # define ex_compiler		ex_ni
 #endif
-#ifdef FEAT_VIMINFO
-static void	ex_viminfo(exarg_T *eap);
-#else
+#ifndef FEAT_VIMINFO
 # define ex_viminfo		ex_ni
 #endif
 static void	ex_behave(exarg_T *eap);
@@ -340,7 +339,6 @@ static void	ex_set(exarg_T *eap);
 #endif
 #ifdef FEAT_SEARCH_EXTRA
 static void	ex_nohlsearch(exarg_T *eap);
-static void	ex_match(exarg_T *eap);
 #else
 # define ex_nohlsearch		ex_ni
 # define ex_match		ex_ni
@@ -430,11 +428,11 @@ struct loop_cookie
     int		current_line;		/* last read line from growarray */
     int		repeating;		/* TRUE when looping a second time */
     /* When "repeating" is FALSE use "getline" and "cookie" to get lines */
-    char_u	*(*getline)(int, void *, int);
+    char_u	*(*getline)(int, void *, int, int);
     void	*cookie;
 };
 
-static char_u	*get_loop_line(int c, void *cookie, int indent);
+static char_u	*get_loop_line(int c, void *cookie, int indent, int do_concat);
 static int	store_loop_line(garray_T *gap, char_u *line);
 static void	free_cmdlines(garray_T *gap);
 
@@ -618,7 +616,7 @@ do_cmdline_cmd(char_u *cmd)
     int
 do_cmdline(
     char_u	*cmdline,
-    char_u	*(*fgetline)(int, void *, int),
+    char_u	*(*fgetline)(int, void *, int, int),
     void	*cookie,		/* argument for fgetline() */
     int		flags)
 {
@@ -643,7 +641,7 @@ do_cmdline(
     struct msglist	*private_msg_list;
 
     /* "fgetline" and "cookie" passed to do_one_cmd() */
-    char_u	*(*cmd_getline)(int, void *, int);
+    char_u	*(*cmd_getline)(int, void *, int, int);
     void	*cmd_cookie;
     struct loop_cookie cmd_loop_cookie;
     void	*real_cookie;
@@ -893,7 +891,7 @@ do_cmdline(
 #else
 		    0
 #endif
-			    )) == NULL)
+		    , TRUE)) == NULL)
 	    {
 		/* Don't call wait_return for aborted command line.  The NULL
 		 * returned for the end of a sourced file or executed function
@@ -1423,7 +1421,7 @@ do_cmdline(
  * Obtain a line when inside a ":while" or ":for" loop.
  */
     static char_u *
-get_loop_line(int c, void *cookie, int indent)
+get_loop_line(int c, void *cookie, int indent, int do_concat)
 {
     struct loop_cookie	*cp = (struct loop_cookie *)cookie;
     wcmd_T		*wp;
@@ -1436,9 +1434,9 @@ get_loop_line(int c, void *cookie, int indent)
 
 	/* First time inside the ":while"/":for": get line normally. */
 	if (cp->getline == NULL)
-	    line = getcmdline(c, 0L, indent);
+	    line = getcmdline(c, 0L, indent, do_concat);
 	else
-	    line = cp->getline(c, cp->cookie, indent);
+	    line = cp->getline(c, cp->cookie, indent, do_concat);
 	if (line != NULL && store_loop_line(cp->lines_gap, line) == OK)
 	    ++cp->current_line;
 
@@ -1486,12 +1484,12 @@ free_cmdlines(garray_T *gap)
  */
     int
 getline_equal(
-    char_u	*(*fgetline)(int, void *, int),
+    char_u	*(*fgetline)(int, void *, int, int),
     void	*cookie UNUSED,		/* argument for fgetline() */
-    char_u	*(*func)(int, void *, int))
+    char_u	*(*func)(int, void *, int, int))
 {
 #ifdef FEAT_EVAL
-    char_u		*(*gp)(int, void *, int);
+    char_u		*(*gp)(int, void *, int, int);
     struct loop_cookie *cp;
 
     /* When "fgetline" is "get_loop_line()" use the "cookie" to find the
@@ -1516,11 +1514,11 @@ getline_equal(
  */
     void *
 getline_cookie(
-    char_u	*(*fgetline)(int, void *, int) UNUSED,
+    char_u	*(*fgetline)(int, void *, int, int) UNUSED,
     void	*cookie)		/* argument for fgetline() */
 {
 #ifdef FEAT_EVAL
-    char_u		*(*gp)(int, void *, int);
+    char_u		*(*gp)(int, void *, int, int);
     struct loop_cookie *cp;
 
     /* When "fgetline" is "get_loop_line()" use the "cookie" to find the
@@ -1653,7 +1651,7 @@ do_one_cmd(
 #ifdef FEAT_EVAL
     struct condstack	*cstack,
 #endif
-    char_u		*(*fgetline)(int, void *, int),
+    char_u		*(*fgetline)(int, void *, int, int),
     void		*cookie)		/* argument for fgetline() */
 {
     char_u		*p;
@@ -1843,7 +1841,7 @@ do_one_cmd(
 	if (*ea.cmd == '|' || (exmode_active && ea.line1 != ea.line2))
 	{
 	    ea.cmdidx = CMD_print;
-	    ea.argt = RANGE+COUNT+TRLBAR;
+	    ea.argt = EX_RANGE+EX_COUNT+EX_TRLBAR;
 	    if ((errormsg = invalid_range(&ea)) == NULL)
 	    {
 		correct_range(&ea);
@@ -1975,26 +1973,26 @@ do_one_cmd(
     if (!ea.skip)
     {
 #ifdef HAVE_SANDBOX
-	if (sandbox != 0 && !(ea.argt & SBOXOK))
+	if (sandbox != 0 && !(ea.argt & EX_SBOXOK))
 	{
 	    // Command not allowed in sandbox.
 	    errormsg = _(e_sandbox);
 	    goto doend;
 	}
 #endif
-	if (restricted != 0 && (ea.argt & RESTRICT))
+	if (restricted != 0 && (ea.argt & EX_RESTRICT))
 	{
 	    errormsg = _("E981: Command not allowed in rvim");
 	    goto doend;
 	}
-	if (!curbuf->b_p_ma && (ea.argt & MODIFY))
+	if (!curbuf->b_p_ma && (ea.argt & EX_MODIFY))
 	{
 	    /* Command not allowed in non-'modifiable' buffer */
 	    errormsg = _(e_modifiable);
 	    goto doend;
 	}
 
-	if (text_locked() && !(ea.argt & CMDWIN)
+	if (text_locked() && !(ea.argt & EX_CMDWIN)
 		&& !IS_USER_CMDIDX(ea.cmdidx))
 	{
 	    /* Command not allowed when editing the command line. */
@@ -2006,7 +2004,7 @@ do_one_cmd(
 	 * Do allow ":checktime" (it is postponed).
 	 * Do allow ":edit" (check for an argument later).
 	 * Do allow ":file" with no arguments (check for an argument later). */
-	if (!(ea.argt & CMDWIN)
+	if (!(ea.argt & EX_CMDWIN)
 		&& ea.cmdidx != CMD_checktime
 		&& ea.cmdidx != CMD_edit
 		&& ea.cmdidx != CMD_file
@@ -2014,7 +2012,7 @@ do_one_cmd(
 		&& curbuf_locked())
 	    goto doend;
 
-	if (!ni && !(ea.argt & RANGE) && ea.addr_count > 0)
+	if (!ni && !(ea.argt & EX_RANGE) && ea.addr_count > 0)
 	{
 	    /* no range allowed */
 	    errormsg = _(e_norange);
@@ -2022,7 +2020,7 @@ do_one_cmd(
 	}
     }
 
-    if (!ni && !(ea.argt & BANG) && ea.forceit)	/* no <!> allowed */
+    if (!ni && !(ea.argt & EX_BANG) && ea.forceit)	// no <!> allowed
     {
 	errormsg = _(e_nobang);
 	goto doend;
@@ -2032,7 +2030,7 @@ do_one_cmd(
      * Don't complain about the range if it is not used
      * (could happen if line_count is accidentally set to 0).
      */
-    if (!ea.skip && !ni && (ea.argt & RANGE))
+    if (!ea.skip && !ni && (ea.argt & EX_RANGE))
     {
 	/*
 	 * If the range is backwards, ask for confirmation and, if given, swap
@@ -2067,7 +2065,7 @@ do_one_cmd(
     correct_range(&ea);
 
 #ifdef FEAT_FOLDING
-    if (((ea.argt & WHOLEFOLD) || ea.addr_count >= 2) && !global_busy
+    if (((ea.argt & EX_WHOLEFOLD) || ea.addr_count >= 2) && !global_busy
 	    && ea.addr_type == ADDR_LINES)
     {
 	/* Put the first line at the start of a closed fold, put the last line
@@ -2104,7 +2102,7 @@ do_one_cmd(
      * Check for "++opt=val" argument.
      * Must be first, allow ":w ++enc=utf8 !cmd"
      */
-    if (ea.argt & ARGOPT)
+    if (ea.argt & EX_ARGOPT)
 	while (ea.arg[0] == '+' && ea.arg[1] == '+')
 	    if (getargopt(&ea) == FAIL && !ni)
 	    {
@@ -2160,14 +2158,14 @@ do_one_cmd(
      * Check for "+command" argument, before checking for next command.
      * Don't do this for ":read !cmd" and ":write !cmd".
      */
-    if ((ea.argt & EDITCMD) && !ea.usefilter)
+    if ((ea.argt & EX_CMDARG) && !ea.usefilter)
 	ea.do_ecmd_cmd = getargcmd(&ea.arg);
 
     /*
      * Check for '|' to separate commands and '"' to start comments.
      * Don't do this for ":read !cmd" and ":write !cmd".
      */
-    if ((ea.argt & TRLBAR) && !ea.usefilter)
+    if ((ea.argt & EX_TRLBAR) && !ea.usefilter)
 	separate_nextcmd(&ea);
 
     /*
@@ -2200,7 +2198,7 @@ do_one_cmd(
 	}
     }
 
-    if ((ea.argt & DFLALL) && ea.addr_count == 0)
+    if ((ea.argt & EX_DFLALL) && ea.addr_count == 0)
     {
 	buf_T	    *buf;
 
@@ -2250,17 +2248,17 @@ do_one_cmd(
 	    case ADDR_NONE:
 	    case ADDR_UNSIGNED:
 	    case ADDR_QUICKFIX:
-		iemsg(_("INTERNAL: Cannot use DFLALL with ADDR_NONE, ADDR_UNSIGNED or ADDR_QUICKFIX"));
+		iemsg(_("INTERNAL: Cannot use EX_DFLALL with ADDR_NONE, ADDR_UNSIGNED or ADDR_QUICKFIX"));
 		break;
 	}
     }
 
     /* accept numbered register only when no count allowed (:put) */
-    if (       (ea.argt & REGSTR)
+    if (       (ea.argt & EX_REGSTR)
 	    && *ea.arg != NUL
 	       /* Do not allow register = for user commands */
 	    && (!IS_USER_CMDIDX(ea.cmdidx) || *ea.arg != '=')
-	    && !((ea.argt & COUNT) && VIM_ISDIGIT(*ea.arg)))
+	    && !((ea.argt & EX_COUNT) && VIM_ISDIGIT(*ea.arg)))
     {
 #ifndef FEAT_CLIPBOARD
 	/* check these explicitly for a more specific error message */
@@ -2287,16 +2285,16 @@ do_one_cmd(
     }
 
     /*
-     * Check for a count.  When accepting a BUFNAME, don't use "123foo" as a
+     * Check for a count.  When accepting a EX_BUFNAME, don't use "123foo" as a
      * count, it's a buffer name.
      */
-    if ((ea.argt & COUNT) && VIM_ISDIGIT(*ea.arg)
-	    && (!(ea.argt & BUFNAME) || *(p = skipdigits(ea.arg)) == NUL
+    if ((ea.argt & EX_COUNT) && VIM_ISDIGIT(*ea.arg)
+	    && (!(ea.argt & EX_BUFNAME) || *(p = skipdigits(ea.arg)) == NUL
 							  || VIM_ISWHITE(*p)))
     {
 	n = getdigits(&ea.arg);
 	ea.arg = skipwhite(ea.arg);
-	if (n <= 0 && !ni && (ea.argt & ZEROR) == 0)
+	if (n <= 0 && !ni && (ea.argt & EX_ZEROR) == 0)
 	{
 	    errormsg = _(e_zerocount);
 	    goto doend;
@@ -2323,17 +2321,17 @@ do_one_cmd(
     /*
      * Check for flags: 'l', 'p' and '#'.
      */
-    if (ea.argt & EXFLAGS)
+    if (ea.argt & EX_FLAGS)
 	get_flags(&ea);
-						/* no arguments allowed */
-    if (!ni && !(ea.argt & EXTRA) && *ea.arg != NUL
-	    && *ea.arg != '"' && (*ea.arg != '|' || (ea.argt & TRLBAR) == 0))
+    if (!ni && !(ea.argt & EX_EXTRA) && *ea.arg != NUL
+	    && *ea.arg != '"' && (*ea.arg != '|' || (ea.argt & EX_TRLBAR) == 0))
     {
+	// no arguments allowed but there is something
 	errormsg = _(e_trailing);
 	goto doend;
     }
 
-    if (!ni && (ea.argt & NEEDARG) && *ea.arg == NUL)
+    if (!ni && (ea.argt & EX_NEEDARG) && *ea.arg == NUL)
     {
 	errormsg = _(e_argreq);
 	goto doend;
@@ -2367,7 +2365,7 @@ do_one_cmd(
 				break;
 
 	    /* Commands that handle '|' themselves.  Check: A command should
-	     * either have the TRLBAR flag, appear in this list or appear in
+	     * either have the EX_TRLBAR flag, appear in this list or appear in
 	     * the list at ":help :bar". */
 	    case CMD_aboveleft:
 	    case CMD_and:
@@ -2434,7 +2432,7 @@ do_one_cmd(
     }
 #endif
 
-    if (ea.argt & XFILE)
+    if (ea.argt & EX_XFILE)
     {
 	if (expand_filename(&ea, cmdlinep, &errormsg) == FAIL)
 	    goto doend;
@@ -2444,7 +2442,7 @@ do_one_cmd(
      * Accept buffer name.  Cannot be used at the same time with a buffer
      * number.  Don't do this for a user command.
      */
-    if ((ea.argt & BUFNAME) && *ea.arg != NUL && ea.addr_count == 0
+    if ((ea.argt & EX_BUFNAME) && *ea.arg != NUL && ea.addr_count == 0
 	    && !IS_USER_CMDIDX(ea.cmdidx))
     {
 	/*
@@ -2461,7 +2459,7 @@ do_one_cmd(
 	    while (p > ea.arg && VIM_ISWHITE(p[-1]))
 		--p;
 	}
-	ea.line2 = buflist_findpat(ea.arg, p, (ea.argt & BUFUNL) != 0,
+	ea.line2 = buflist_findpat(ea.arg, p, (ea.argt & EX_BUFUNL) != 0,
 								FALSE, FALSE);
 	if (ea.line2 < 0)	    /* failed */
 	    goto doend;
@@ -3193,7 +3191,7 @@ find_command(exarg_T *eap, int *full UNUSED)
 	if (ASCII_ISLOWER(eap->cmd[0]))
 	{
 	    int c1 = eap->cmd[0];
-	    int c2 = eap->cmd[1];
+	    int c2 = len == 1 ? NUL : eap->cmd[1];
 
 	    if (command_count != (int)CMD_SIZE)
 	    {
@@ -3527,7 +3525,7 @@ set_one_cmd_context(
     }
 
     /* Does command allow "+command"? */
-    if ((ea.argt & EDITCMD) && !usefilter && *arg == '+')
+    if ((ea.argt & EX_CMDARG) && !usefilter && *arg == '+')
     {
 	/* Check if we're in the +command */
 	p = arg + 1;
@@ -3545,7 +3543,7 @@ set_one_cmd_context(
      * Check for '|' to separate commands and '"' to start comments.
      * Don't do this for ":read !cmd" and ":write !cmd".
      */
-    if ((ea.argt & TRLBAR) && !usefilter)
+    if ((ea.argt & EX_TRLBAR) && !usefilter)
     {
 	p = arg;
 	/* ":redir @" is not the start of a comment */
@@ -3558,7 +3556,7 @@ set_one_cmd_context(
 		if (p[1] != NUL)
 		    ++p;
 	    }
-	    else if ( (*p == '"' && !(ea.argt & NOTRLCOM))
+	    else if ( (*p == '"' && !(ea.argt & EX_NOTRLCOM))
 		    || *p == '|' || *p == '\n')
 	    {
 		if (*(p - 1) != '\\')
@@ -3572,9 +3570,9 @@ set_one_cmd_context(
 	}
     }
 
-						/* no arguments allowed */
-    if (!(ea.argt & EXTRA) && *arg != NUL &&
-				    vim_strchr((char_u *)"|\"", *arg) == NULL)
+    if (!(ea.argt & EX_EXTRA) && *arg != NUL
+				  && vim_strchr((char_u *)"|\"", *arg) == NULL)
+	// no arguments allowed but there is something
 	return NULL;
 
     /* Find start of last argument (argument just before cursor): */
@@ -3596,7 +3594,7 @@ set_one_cmd_context(
 	}
     }
 
-    if (ea.argt & XFILE)
+    if (ea.argt & EX_XFILE)
     {
 	int	c;
 	int	in_quote = FALSE;
@@ -3629,7 +3627,7 @@ set_one_cmd_context(
 	     * characters that end the command and white space. */
 	    else if (c == '|' || c == '\n' || c == '"' || (VIM_ISWHITE(c)
 #ifdef SPACE_IN_FILENAME
-					 && (!(ea.argt & NOSPC) || usefilter)
+					&& (!(ea.argt & EX_NOSPC) || usefilter)
 #endif
 		    ))
 	    {
@@ -4000,8 +3998,8 @@ set_one_cmd_context(
 	case CMD_USER_BUF:
 	    if (compl != EXPAND_NOTHING)
 	    {
-		// XFILE: file names are handled above
-		if (!(ea.argt & XFILE))
+		// EX_XFILE: file names are handled above
+		if (!(ea.argt & EX_XFILE))
 		{
 #ifdef FEAT_MENU
 		    if (compl == EXPAND_MENUS)
@@ -4651,7 +4649,7 @@ invalid_range(exarg_T *eap)
 	    || eap->line1 > eap->line2)
 	return _(e_invrange);
 
-    if (eap->argt & RANGE)
+    if (eap->argt & EX_RANGE)
     {
 	switch (eap->addr_type)
 	{
@@ -4737,7 +4735,7 @@ invalid_range(exarg_T *eap)
     static void
 correct_range(exarg_T *eap)
 {
-    if (!(eap->argt & ZEROR))	    /* zero in range not allowed */
+    if (!(eap->argt & EX_ZEROR))	    // zero in range not allowed
     {
 	if (eap->line1 == 0)
 	    eap->line1 = 1;
@@ -4852,6 +4850,7 @@ replace_makeprg(exarg_T *eap, char_u *p, char_u **cmdlinep)
 
 /*
  * Expand file name in Ex command argument.
+ * When an error is detected, "errormsgp" is set to a non-NULL pointer.
  * Return FAIL for failure, OK otherwise.
  */
     int
@@ -4945,7 +4944,7 @@ expand_filename(
 		&& eap->cmdidx != CMD_make
 		&& eap->cmdidx != CMD_terminal
 #ifndef UNIX
-		&& !(eap->argt & NOSPC)
+		&& !(eap->argt & EX_NOSPC)
 #endif
 		)
 	{
@@ -4997,7 +4996,7 @@ expand_filename(
      * One file argument: Expand wildcards.
      * Don't do this with ":r !command" or ":w !command".
      */
-    if ((eap->argt & NOSPC) && !eap->usefilter)
+    if ((eap->argt & EX_NOSPC) && !eap->usefilter)
     {
 	/*
 	 * May do this twice:
@@ -5148,7 +5147,7 @@ separate_nextcmd(exarg_T *eap)
     {
 	if (*p == Ctrl_V)
 	{
-	    if (eap->argt & (USECTRLV | XFILE))
+	    if (eap->argt & (EX_CTRLV | EX_XFILE))
 		++p;		/* skip CTRL-V and next char */
 	    else
 				/* remove CTRL-V and skip next char */
@@ -5159,7 +5158,7 @@ separate_nextcmd(exarg_T *eap)
 
 #ifdef FEAT_EVAL
 	/* Skip over `=expr` when wildcards are expanded. */
-	else if (p[0] == '`' && p[1] == '=' && (eap->argt & XFILE))
+	else if (p[0] == '`' && p[1] == '=' && (eap->argt & EX_XFILE))
 	{
 	    p += 2;
 	    (void)skip_expr(&p);
@@ -5169,7 +5168,7 @@ separate_nextcmd(exarg_T *eap)
 	/* Check for '"': start of comment or '|': next command */
 	/* :@" and :*" do not start a comment!
 	 * :redir @" doesn't either. */
-	else if ((*p == '"' && !(eap->argt & NOTRLCOM)
+	else if ((*p == '"' && !(eap->argt & EX_NOTRLCOM)
 		    && ((eap->cmdidx != CMD_at && eap->cmdidx != CMD_star)
 			|| p != eap->arg)
 		    && (eap->cmdidx != CMD_redir
@@ -5177,11 +5176,11 @@ separate_nextcmd(exarg_T *eap)
 		|| *p == '|' || *p == '\n')
 	{
 	    /*
-	     * We remove the '\' before the '|', unless USECTRLV is used
+	     * We remove the '\' before the '|', unless EX_CTRLV is used
 	     * AND 'b' is present in 'cpoptions'.
 	     */
 	    if ((vim_strchr(p_cpo, CPO_BAR) == NULL
-			      || !(eap->argt & USECTRLV)) && *(p - 1) == '\\')
+			      || !(eap->argt & EX_CTRLV)) && *(p - 1) == '\\')
 	    {
 		STRMOVE(p - 1, p);	/* remove the '\' */
 		--p;
@@ -5195,7 +5194,7 @@ separate_nextcmd(exarg_T *eap)
 	}
     }
 
-    if (!(eap->argt & NOTRLCOM))	/* remove trailing spaces */
+    if (!(eap->argt & EX_NOTRLCOM))	/* remove trailing spaces */
 	del_trailing_spaces(eap->arg);
 }
 
@@ -5452,7 +5451,7 @@ ex_doautocmd(exarg_T *eap)
     static void
 ex_bunload(exarg_T *eap)
 {
-    if (NOT_IN_POPUP_WINDOW)
+    if (ERROR_IF_POPUP_WINDOW)
 	return;
     eap->errmsg = do_bufdel(
 	    eap->cmdidx == CMD_bdelete ? DOBUF_DEL
@@ -5468,7 +5467,7 @@ ex_bunload(exarg_T *eap)
     static void
 ex_buffer(exarg_T *eap)
 {
-    if (NOT_IN_POPUP_WINDOW)
+    if (ERROR_IF_POPUP_WINDOW)
 	return;
     if (*eap->arg)
 	eap->errmsg = e_trailing;
@@ -5891,12 +5890,17 @@ ex_pclose(exarg_T *eap)
 {
     win_T	*win;
 
+    // First close any normal window.
     FOR_ALL_WINDOWS(win)
 	if (win->w_p_pvw)
 	{
 	    ex_win_close(eap->forceit, win, NULL);
-	    break;
+	    return;
 	}
+# ifdef FEAT_TEXT_PROP
+    // Also when 'previewpopup' is empty, it might have been cleared.
+    popup_close_preview();
+# endif
 }
 #endif
 
@@ -6772,7 +6776,7 @@ ex_splitview(exarg_T *eap)
 		       || eap->cmdidx == CMD_tabfind
 		       || eap->cmdidx == CMD_tabnew;
 
-    if (NOT_IN_POPUP_WINDOW)
+    if (ERROR_IF_POPUP_WINDOW)
 	return;
 
 #ifdef FEAT_GUI
@@ -6902,7 +6906,7 @@ ex_tabnext(exarg_T *eap)
 {
     int tab_number;
 
-    if (NOT_IN_POPUP_WINDOW)
+    if (ERROR_IF_POPUP_WINDOW)
 	return;
     switch (eap->cmdidx)
     {
@@ -7155,7 +7159,7 @@ do_exedit(
     int		need_hide;
     int		exmode_was = exmode_active;
 
-    if (NOT_IN_POPUP_WINDOW)
+    if (ERROR_IF_POPUP_WINDOW)
 	return;
     /*
      * ":vi" command ends Ex mode.
@@ -9274,6 +9278,7 @@ find_cmdline_var(char_u *src, int *usedlen)
  *	  '#'	    to curwin->w_altfile
  *	  '<cword>' to word under the cursor
  *	  '<cWORD>' to WORD under the cursor
+ *	  '<cexpr>' to C-expression under the cursor
  *	  '<cfile>' to path name under the cursor
  *	  '<sfile>' to sourced file name
  *	  '<slnum>' to sourced file line number
@@ -9907,7 +9912,7 @@ makeopens(
 		    && wp->w_buffer->b_ffname != NULL
 		    && !bt_help(wp->w_buffer)
 #ifdef FEAT_QUICKFIX
-		    && !bt_nofile(wp->w_buffer)
+		    && !bt_nofilename(wp->w_buffer)
 #endif
 		    )
 	    {
@@ -10234,7 +10239,7 @@ ses_do_win(win_T *wp)
     if (wp->w_buffer->b_fname == NULL
 #ifdef FEAT_QUICKFIX
 	    /* When 'buftype' is "nofile" can't restore the window contents. */
-	    || bt_nofile(wp->w_buffer)
+	    || bt_nofilename(wp->w_buffer)
 #endif
        )
 	return (ssop_flags & SSOP_BLANK);
@@ -10321,7 +10326,7 @@ put_view(
 	 */
 	if (wp->w_buffer->b_ffname != NULL
 # ifdef FEAT_QUICKFIX
-		&& !bt_nofile(wp->w_buffer)
+		&& !bt_nofilename(wp->w_buffer)
 # endif
 		)
 	{
@@ -10705,31 +10710,6 @@ put_line(FILE *fd, char *s)
     return OK;
 }
 
-#ifdef FEAT_VIMINFO
-/*
- * ":rviminfo" and ":wviminfo".
- */
-    static void
-ex_viminfo(
-    exarg_T	*eap)
-{
-    char_u	*save_viminfo;
-
-    save_viminfo = p_viminfo;
-    if (*p_viminfo == NUL)
-	p_viminfo = (char_u *)"'100";
-    if (eap->cmdidx == CMD_rviminfo)
-    {
-	if (read_viminfo(eap->arg, VIF_WANT_INFO | VIF_WANT_MARKS
-				  | (eap->forceit ? VIF_FORCEIT : 0)) == FAIL)
-	    emsg(_("E195: Cannot open viminfo file for reading"));
-    }
-    else
-	write_viminfo(eap->arg, eap->forceit);
-    p_viminfo = save_viminfo;
-}
-#endif
-
 #if defined(FEAT_GUI_DIALOG) || defined(FEAT_CON_DIALOG) || defined(PROTO)
 /*
  * Make a dialog message in "buff[DIALOG_MSG_SIZE]".
@@ -10969,76 +10949,6 @@ ex_nohlsearch(exarg_T *eap UNUSED)
 {
     set_no_hlsearch(TRUE);
     redraw_all_later(SOME_VALID);
-}
-
-/*
- * ":[N]match {group} {pattern}"
- * Sets nextcmd to the start of the next command, if any.  Also called when
- * skipping commands to find the next command.
- */
-    static void
-ex_match(exarg_T *eap)
-{
-    char_u	*p;
-    char_u	*g = NULL;
-    char_u	*end;
-    int		c;
-    int		id;
-
-    if (eap->line2 <= 3)
-	id = eap->line2;
-    else
-    {
-	emsg(_(e_invcmd));
-	return;
-    }
-
-    /* First clear any old pattern. */
-    if (!eap->skip)
-	match_delete(curwin, id, FALSE);
-
-    if (ends_excmd(*eap->arg))
-	end = eap->arg;
-    else if ((STRNICMP(eap->arg, "none", 4) == 0
-		&& (VIM_ISWHITE(eap->arg[4]) || ends_excmd(eap->arg[4]))))
-	end = eap->arg + 4;
-    else
-    {
-	p = skiptowhite(eap->arg);
-	if (!eap->skip)
-	    g = vim_strnsave(eap->arg, (int)(p - eap->arg));
-	p = skipwhite(p);
-	if (*p == NUL)
-	{
-	    /* There must be two arguments. */
-	    vim_free(g);
-	    semsg(_(e_invarg2), eap->arg);
-	    return;
-	}
-	end = skip_regexp(p + 1, *p, TRUE, NULL);
-	if (!eap->skip)
-	{
-	    if (*end != NUL && !ends_excmd(*skipwhite(end + 1)))
-	    {
-		vim_free(g);
-		eap->errmsg = e_trailing;
-		return;
-	    }
-	    if (*end != *p)
-	    {
-		vim_free(g);
-		semsg(_(e_invarg2), p);
-		return;
-	    }
-
-	    c = *end;
-	    *end = NUL;
-	    match_add(curwin, g, p + 1, 10, id, NULL, NULL);
-	    vim_free(g);
-	    *end = c;
-	}
-    }
-    eap->nextcmd = find_nextcmd(end);
 }
 #endif
 

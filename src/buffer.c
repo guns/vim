@@ -29,7 +29,6 @@
 
 static char_u	*buflist_match(regmatch_T *rmp, buf_T *buf, int ignore_case);
 static char_u	*fname_match(regmatch_T *rmp, char_u *name, int ignore_case);
-static void	buflist_setfpos(buf_T *buf, win_T *win, linenr_T lnum, colnr_T col, int copy_options);
 #ifdef UNIX
 static buf_T	*buflist_findname_stat(char_u *ffname, stat_T *st);
 static int	otherfile_buf(buf_T *buf, char_u *ffname, stat_T *stp);
@@ -119,6 +118,23 @@ read_buffer(
 	}
     }
     return retval;
+}
+
+/*
+ * Ensure buffer "buf" is loaded.  Does not trigger the swap-exists action.
+ */
+    void
+buffer_ensure_loaded(buf_T *buf)
+{
+    if (buf->b_ml.ml_mfp == NULL)
+    {
+	aco_save_T	aco;
+
+	aucmd_prepbuf(&aco, buf);
+	swap_exists_action = SEA_NONE;
+	open_buffer(FALSE, NULL, 0);
+	aucmd_restbuf(&aco);
+    }
 }
 
 /*
@@ -432,7 +448,8 @@ can_unload_buffer(buf_T *buf)
 	    }
     }
     if (!can_unload)
-	emsg(_("E937: Attempt to delete a buffer that is in use"));
+	semsg(_("E937: Attempt to delete a buffer that is in use: %s"),
+								 buf->b_fname);
     return can_unload;
 }
 
@@ -2757,7 +2774,7 @@ buflist_nr2name(
  * When "copy_options" is TRUE save the local window option values.
  * When "lnum" is 0 only do the options.
  */
-    static void
+    void
 buflist_setfpos(
     buf_T	*buf,
     win_T	*win,
@@ -5084,6 +5101,13 @@ do_arg_all(
 			    new_curwin = wpnext;
 			    new_curtab = curtab;
 			}
+			else if (wpnext->w_frame->fr_parent
+						 != curwin->w_frame->fr_parent)
+			{
+			    emsg(_("E249: window layout changed unexpectedly"));
+			    i = count;
+			    break;
+			}
 			else
 			    win_move_after(wpnext, curwin);
 			break;
@@ -5528,112 +5552,6 @@ chk_modeline(
     return retval;
 }
 
-#if defined(FEAT_VIMINFO) || defined(PROTO)
-    int
-read_viminfo_bufferlist(
-    vir_T	*virp,
-    int		writing)
-{
-    char_u	*tab;
-    linenr_T	lnum;
-    colnr_T	col;
-    buf_T	*buf;
-    char_u	*sfname;
-    char_u	*xline;
-
-    /* Handle long line and escaped characters. */
-    xline = viminfo_readstring(virp, 1, FALSE);
-
-    /* don't read in if there are files on the command-line or if writing: */
-    if (xline != NULL && !writing && ARGCOUNT == 0
-				       && find_viminfo_parameter('%') != NULL)
-    {
-	/* Format is: <fname> Tab <lnum> Tab <col>.
-	 * Watch out for a Tab in the file name, work from the end. */
-	lnum = 0;
-	col = 0;
-	tab = vim_strrchr(xline, '\t');
-	if (tab != NULL)
-	{
-	    *tab++ = '\0';
-	    col = (colnr_T)atoi((char *)tab);
-	    tab = vim_strrchr(xline, '\t');
-	    if (tab != NULL)
-	    {
-		*tab++ = '\0';
-		lnum = atol((char *)tab);
-	    }
-	}
-
-	/* Expand "~/" in the file name at "line + 1" to a full path.
-	 * Then try shortening it by comparing with the current directory */
-	expand_env(xline, NameBuff, MAXPATHL);
-	sfname = shorten_fname1(NameBuff);
-
-	buf = buflist_new(NameBuff, sfname, (linenr_T)0, BLN_LISTED);
-	if (buf != NULL)	/* just in case... */
-	{
-	    buf->b_last_cursor.lnum = lnum;
-	    buf->b_last_cursor.col = col;
-	    buflist_setfpos(buf, curwin, lnum, col, FALSE);
-	}
-    }
-    vim_free(xline);
-
-    return viminfo_readline(virp);
-}
-
-    void
-write_viminfo_bufferlist(FILE *fp)
-{
-    buf_T	*buf;
-    win_T	*win;
-    tabpage_T	*tp;
-    char_u	*line;
-    int		max_buffers;
-
-    if (find_viminfo_parameter('%') == NULL)
-	return;
-
-    /* Without a number -1 is returned: do all buffers. */
-    max_buffers = get_viminfo_parameter('%');
-
-    /* Allocate room for the file name, lnum and col. */
-#define LINE_BUF_LEN (MAXPATHL + 40)
-    line = alloc(LINE_BUF_LEN);
-    if (line == NULL)
-	return;
-
-    FOR_ALL_TAB_WINDOWS(tp, win)
-	set_last_cursor(win);
-
-    fputs(_("\n# Buffer list:\n"), fp);
-    FOR_ALL_BUFFERS(buf)
-    {
-	if (buf->b_fname == NULL
-		|| !buf->b_p_bl
-#ifdef FEAT_QUICKFIX
-		|| bt_quickfix(buf)
-#endif
-#ifdef FEAT_TERMINAL
-		|| bt_terminal(buf)
-#endif
-		|| removable(buf->b_ffname))
-	    continue;
-
-	if (max_buffers-- == 0)
-	    break;
-	putc('%', fp);
-	home_replace(NULL, buf->b_ffname, line, MAXPATHL, TRUE);
-	vim_snprintf_add((char *)line, LINE_BUF_LEN, "\t%ld\t%d",
-			(long)buf->b_last_cursor.lnum,
-			buf->b_last_cursor.col);
-	viminfo_writestring(fp, line);
-    }
-    vim_free(line);
-}
-#endif
-
 /*
  * Return TRUE if "buf" is a normal buffer, 'buftype' is empty.
  */
@@ -5698,12 +5616,21 @@ bt_popup(buf_T *buf)
  * buffer.  This means the buffer name is not a file name.
  */
     int
-bt_nofile(buf_T *buf)
+bt_nofilename(buf_T *buf)
 {
     return buf != NULL && ((buf->b_p_bt[0] == 'n' && buf->b_p_bt[2] == 'f')
 	    || buf->b_p_bt[0] == 'a'
 	    || buf->b_p_bt[0] == 't'
 	    || buf->b_p_bt[0] == 'p');
+}
+
+/*
+ * Return TRUE if "buf" has 'buftype' set to "nofile".
+ */
+    int
+bt_nofile(buf_T *buf)
+{
+    return buf != NULL && buf->b_p_bt[0] == 'n' && buf->b_p_bt[2] == 'f';
 }
 
 /*
@@ -5772,7 +5699,7 @@ buf_spname(buf_T *buf)
 
     /* There is no _file_ when 'buftype' is "nofile", b_sfname
      * contains the name as specified by the user. */
-    if (bt_nofile(buf))
+    if (bt_nofilename(buf))
     {
 #ifdef FEAT_TERMINAL
 	if (buf->b_term != NULL)
@@ -5953,3 +5880,48 @@ wipe_buffer(
     if (!aucmd)
 	unblock_autocmds();
 }
+
+#if defined(FEAT_EVAL) || defined(PROTO)
+/*
+ * Mark references in functions of buffers.
+ */
+    int
+set_ref_in_buffers(int copyID)
+{
+    int		abort = FALSE;
+    buf_T	*bp;
+
+    FOR_ALL_BUFFERS(bp)
+    {
+	listener_T *lnr;
+	typval_T tv;
+
+	for (lnr = bp->b_listener; !abort && lnr != NULL; lnr = lnr->lr_next)
+	{
+	    if (lnr->lr_callback.cb_partial != NULL)
+	    {
+		tv.v_type = VAR_PARTIAL;
+		tv.vval.v_partial = lnr->lr_callback.cb_partial;
+		abort = abort || set_ref_in_item(&tv, copyID, NULL, NULL);
+	    }
+	}
+# ifdef FEAT_JOB_CHANNEL
+	if (!abort && bp->b_prompt_callback.cb_partial != NULL)
+	{
+	    tv.v_type = VAR_PARTIAL;
+	    tv.vval.v_partial = bp->b_prompt_callback.cb_partial;
+	    abort = abort || set_ref_in_item(&tv, copyID, NULL, NULL);
+	}
+	if (!abort && bp->b_prompt_interrupt.cb_partial != NULL)
+	{
+	    tv.v_type = VAR_PARTIAL;
+	    tv.vval.v_partial = bp->b_prompt_interrupt.cb_partial;
+	    abort = abort || set_ref_in_item(&tv, copyID, NULL, NULL);
+	}
+# endif
+	if (abort)
+	    break;
+    }
+    return abort;
+}
+#endif

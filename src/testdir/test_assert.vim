@@ -166,6 +166,12 @@ func Test_assert_fail_fails()
   call remove(v:errors, 0)
 endfunc
 
+func Test_assert_fails_in_try_block()
+  try
+    call assert_equal(0, assert_fails('throw "error"'))
+  endtry
+endfunc
+
 func Test_assert_beeps()
   new
   call assert_equal(0, assert_beeps('normal h'))
@@ -220,6 +226,25 @@ func Test_override()
   call test_override('ALL', 0)
   call assert_fails("call test_override('xxx', 1)", 'E475')
   call assert_fails("call test_override('redraw', 'yes')", 'E474')
+endfunc
+
+func Test_mouse_position()
+  let save_mouse = &mouse
+  set mouse=a
+  new
+  call setline(1, ['line one', 'line two'])
+  call assert_equal([0, 1, 1, 0], getpos('.'))
+  call test_setmouse(1, 5)
+  call feedkeys("\<LeftMouse>", "xt")
+  call assert_equal([0, 1, 5, 0], getpos('.'))
+  call test_setmouse(2, 20)
+  call feedkeys("\<LeftMouse>", "xt")
+  call assert_equal([0, 2, 8, 0], getpos('.'))
+  call test_setmouse(5, 1)
+  call feedkeys("\<LeftMouse>", "xt")
+  call assert_equal([0, 2, 1, 0], getpos('.'))
+  bwipe!
+  let &mouse = save_mouse
 endfunc
 
 func Test_user_is_happy()

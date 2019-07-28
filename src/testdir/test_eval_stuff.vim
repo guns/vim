@@ -171,6 +171,16 @@ func Test_vvar_scriptversion2()
   echo version
   call assert_fails('let version = 1', 'E46:')
   call assert_equal(v:version, version)
+
+  call assert_equal(v:version, v:versionlong / 10000)
+  call assert_true(v:versionlong > 8011525)
+endfunc
+
+func Test_dict_access_scriptversion2()
+  let l:x = {'foo': 1}
+
+  call assert_false(0 && l:x.foo)
+  call assert_true(1 && l:x.foo)
 endfunc
 
 func Test_scriptversion()

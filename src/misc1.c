@@ -1447,9 +1447,9 @@ prompt_for_number(int *mouse_used)
     i = get_number(TRUE, mouse_used);
     if (KeyTyped)
     {
-	/* don't call wait_return() now */
-	/* msg_putchar('\n'); */
-	cmdline_row = msg_row - 1;
+	// don't call wait_return() now
+	if (msg_row > 0)
+	    cmdline_row = msg_row - 1;
 	need_wait_return = FALSE;
 	msg_didany = FALSE;
 	msg_didout = FALSE;
@@ -3182,11 +3182,7 @@ vim_fexists(char_u *fname)
  */
 
 #ifndef BREAKCHECK_SKIP
-# ifdef FEAT_GUI		    /* assume the GUI only runs on fast computers */
-#  define BREAKCHECK_SKIP 200
-# else
-#  define BREAKCHECK_SKIP 32
-# endif
+# define BREAKCHECK_SKIP 1000
 #endif
 
 static int	breakcheck_count = 0;

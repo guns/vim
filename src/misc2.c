@@ -1060,7 +1060,7 @@ free_all_mem(void)
     spell_free_all();
 # endif
 
-#if defined(FEAT_INS_EXPAND) && defined(FEAT_BEVAL_TERM)
+# if defined(FEAT_INS_EXPAND) && defined(FEAT_BEVAL_TERM)
     ui_remove_balloon();
 # endif
 
@@ -1092,7 +1092,7 @@ free_all_mem(void)
 # endif
 # if defined(FEAT_KEYMAP)
 	do_cmdline_cmd((char_u *)"set keymap=");
-#endif
+# endif
     }
 
 # ifdef FEAT_TITLE
@@ -1149,11 +1149,11 @@ free_all_mem(void)
 # ifdef FEAT_CMDHIST
     init_history();
 # endif
-#ifdef FEAT_TEXT_PROP
+# ifdef FEAT_TEXT_PROP
     clear_global_prop_types();
-#endif
+# endif
 
-#ifdef FEAT_QUICKFIX
+# ifdef FEAT_QUICKFIX
     {
 	win_T	    *win;
 	tabpage_T   *tab;
@@ -1163,7 +1163,7 @@ free_all_mem(void)
 	FOR_ALL_TAB_WINDOWS(tab, win)
 	    qf_free_all(win);
     }
-#endif
+# endif
 
     // Close all script inputs.
     close_all_scripts();
@@ -1177,9 +1177,9 @@ free_all_mem(void)
 
     /* Free all buffers.  Reset 'autochdir' to avoid accessing things that
      * were freed already. */
-#ifdef FEAT_AUTOCHDIR
+# ifdef FEAT_AUTOCHDIR
     p_acd = FALSE;
-#endif
+# endif
     for (buf = firstbuf; buf != NULL; )
     {
 	bufref_T    bufref;
@@ -1194,7 +1194,7 @@ free_all_mem(void)
     }
 
 # ifdef FEAT_ARABIC
-    free_cmdline_buf();
+    free_arshape_buf();
 # endif
 
     /* Clear registers. */
@@ -1247,6 +1247,9 @@ free_all_mem(void)
     /* screenlines (can't display anything now!) */
     free_screenlines();
 
+# if defined(FEAT_SOUND)
+    sound_free();
+# endif
 # if defined(USE_XSMP)
     xsmp_close();
 # endif
@@ -3251,15 +3254,7 @@ call_shell(char_u *cmd, int opt)
 	/* The external command may update a tags file, clear cached tags. */
 	tag_freematch();
 
-	if (cmd == NULL || *p_sxq == NUL
-#if defined(FEAT_GUI_MSWIN) && defined(FEAT_TERMINAL)
-		|| (
-# ifdef VIMDLL
-		    gui.in_use &&
-# endif
-		    vim_strchr(p_go, GO_TERMINAL) != NULL)
-#endif
-		)
+	if (cmd == NULL || *p_sxq == NUL)
 	    retval = mch_call_shell(cmd, opt);
 	else
 	{
@@ -4447,13 +4442,21 @@ has_non_ascii(char_u *s)
     void
 parse_queued_messages(void)
 {
-    win_T   *old_curwin = curwin;
+    int	    old_curwin_id = curwin->w_id;
+    int	    old_curbuf_fnum = curbuf->b_fnum;
     int	    i;
+    int	    save_may_garbage_collect = may_garbage_collect;
 
     // Do not handle messages while redrawing, because it may cause buffers to
     // change or be wiped while they are being redrawn.
     if (updating_screen)
 	return;
+
+    // may_garbage_collect is set in main_loop() to do garbage collection when
+    // blocking to wait on a character.  We don't want that while parsing
+    // messages, a callback may invoke vgetc() while lists and dicts are in use
+    // in the call stack.
+    may_garbage_collect = FALSE;
 
     // Loop when a job ended, but don't keep looping forever.
     for (i = 0; i < MAX_REPEAT_PARSE; ++i)
@@ -4490,9 +4493,11 @@ parse_queued_messages(void)
 	break;
     }
 
-    // If the current window changed we need to bail out of the waiting loop.
-    // E.g. when a job exit callback closes the terminal window.
-    if (curwin != old_curwin)
+    may_garbage_collect = save_may_garbage_collect;
+
+    // If the current window or buffer changed we need to bail out of the
+    // waiting loop.  E.g. when a job exit callback closes the terminal window.
+    if (curwin->w_id != old_curwin_id || curbuf->b_fnum != old_curbuf_fnum)
 	ins_char_typebuf(K_IGNORE);
 }
 #endif

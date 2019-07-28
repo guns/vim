@@ -50,6 +50,7 @@ SRC_ALL =	\
 		src/gui_beval.c \
 		src/hardcopy.c \
 		src/hashtab.c \
+		src/highlight.c \
 		src/indent.c \
 		src/insexpand.c \
 		src/json.c \
@@ -80,6 +81,7 @@ SRC_ALL =	\
 		src/option.h \
 		src/popupmnu.c \
 		src/popupwin.c \
+		src/profiler.c \
 		src/quickfix.c \
 		src/regexp.c \
 		src/regexp_nfa.c \
@@ -88,6 +90,7 @@ SRC_ALL =	\
 		src/search.c \
 		src/sha256.c \
 		src/sign.c \
+		src/sound.c \
 		src/spell.c \
 		src/spell.h \
 		src/spellfile.c \
@@ -98,6 +101,7 @@ SRC_ALL =	\
 		src/terminal.c \
 		src/term.h \
 		src/termlib.c \
+		src/testing.c \
 		src/textprop.c \
 		src/ui.c \
 		src/undo.c \
@@ -106,6 +110,7 @@ SRC_ALL =	\
 		src/version.c \
 		src/version.h \
 		src/vim.h \
+		src/viminfo.c \
 		src/winclip.c \
 		src/window.c \
 		src/tee/tee.c \
@@ -119,9 +124,11 @@ SRC_ALL =	\
 		src/testdir/sautest/autoload/*.vim \
 		src/testdir/runtest.vim \
 		src/testdir/summarize.vim \
+		src/testdir/check.vim \
 		src/testdir/shared.vim \
 		src/testdir/screendump.vim \
 		src/testdir/view_util.vim \
+		src/testdir/term_util.vim \
 		src/testdir/setup.vim \
 		src/testdir/gui_init.vim \
 		src/testdir/setup_gui.vim \
@@ -150,6 +157,8 @@ SRC_ALL =	\
 		src/testdir/samples/test000 \
 		src/testdir/if_ver*.vim \
 		src/testdir/color_ramp.vim \
+		src/testdir/silent.wav \
+		src/testdir/popupbounce.vim \
 		src/proto.h \
 		src/protodef.h \
 		src/proto/arabic.pro \
@@ -183,6 +192,7 @@ SRC_ALL =	\
 		src/proto/gui_beval.pro \
 		src/proto/hardcopy.pro \
 		src/proto/hashtab.pro \
+		src/proto/highlight.pro \
 		src/proto/indent.pro \
 		src/proto/insexpand.pro \
 		src/proto/json.pro \
@@ -203,12 +213,14 @@ SRC_ALL =	\
 		src/proto/option.pro \
 		src/proto/popupmnu.pro \
 		src/proto/popupwin.pro \
+		src/proto/profiler.pro \
 		src/proto/quickfix.pro \
 		src/proto/regexp.pro \
 		src/proto/screen.pro \
 		src/proto/search.pro \
 		src/proto/sha256.pro \
 		src/proto/sign.pro \
+		src/proto/sound.pro \
 		src/proto/spell.pro \
 		src/proto/spellfile.pro \
 		src/proto/syntax.pro \
@@ -216,12 +228,14 @@ SRC_ALL =	\
 		src/proto/term.pro \
 		src/proto/terminal.pro \
 		src/proto/termlib.pro \
+		src/proto/testing.pro \
 		src/proto/textprop.pro \
 		src/proto/ui.pro \
 		src/proto/undo.pro \
 		src/proto/usercmd.pro \
 		src/proto/userfunc.pro \
 		src/proto/version.pro \
+		src/proto/viminfo.pro \
 		src/proto/winclip.pro \
 		src/proto/window.pro \
 		src/libvterm/.bzrignore \
@@ -534,10 +548,7 @@ SRC_AMI =	\
 		README_amisrc.txt.info \
 		src.info \
 		src/INSTALLami.txt \
-		src/Make_dice.mak \
-		src/Make_manx.mak \
 		src/Make_morph.mak \
-		src/Make_sas.mak \
 		src/os_amiga.c \
 		src/os_amiga.h \
 		src/proto/os_amiga.pro \

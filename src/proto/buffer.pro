@@ -1,4 +1,5 @@
 /* buffer.c */
+void buffer_ensure_loaded(buf_T *buf);
 int open_buffer(int read_stdin, exarg_T *eap, int flags);
 void set_bufref(bufref_T *bufref, buf_T *buf);
 int bufref_valid(bufref_T *bufref);
@@ -26,6 +27,7 @@ int buflist_findpat(char_u *pattern, char_u *pattern_end, int unlisted, int diff
 int ExpandBufnames(char_u *pat, int *num_file, char_u ***file, int options);
 buf_T *buflist_findnr(int nr);
 char_u *buflist_nr2name(int n, int fullname, int helptail);
+void buflist_setfpos(buf_T *buf, win_T *win, linenr_T lnum, colnr_T col, int copy_options);
 void get_winopts(buf_T *buf);
 pos_T *buflist_findfpos(buf_T *buf);
 linenr_T buflist_findlnum(buf_T *buf);
@@ -54,14 +56,13 @@ char_u *alist_name(aentry_T *aep);
 void do_arg_all(int count, int forceit, int keep_tabs);
 void ex_buffer_all(exarg_T *eap);
 void do_modelines(int flags);
-int read_viminfo_bufferlist(vir_T *virp, int writing);
-void write_viminfo_bufferlist(FILE *fp);
 int bt_normal(buf_T *buf);
 int bt_quickfix(buf_T *buf);
 int bt_terminal(buf_T *buf);
 int bt_help(buf_T *buf);
 int bt_prompt(buf_T *buf);
 int bt_popup(buf_T *buf);
+int bt_nofilename(buf_T *buf);
 int bt_nofile(buf_T *buf);
 int bt_dontwrite(buf_T *buf);
 int bt_dontwrite_msg(buf_T *buf);
@@ -73,4 +74,5 @@ int find_win_for_buf(buf_T *buf, win_T **wp, tabpage_T **tp);
 void set_buflisted(int on);
 int buf_contents_changed(buf_T *buf);
 void wipe_buffer(buf_T *buf, int aucmd);
+int set_ref_in_buffers(int copyID);
 /* vim: set ft=c : */

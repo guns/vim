@@ -3103,12 +3103,11 @@ mch_can_exe(char_u *name, char_u **path, int use_path)
 
     /* When "use_path" is false and if it's an absolute or relative path don't
      * need to use $PATH. */
-    if (!use_path || mch_isFullName(name) || (name[0] == '.'
-		   && (name[1] == '/' || (name[1] == '.' && name[2] == '/'))))
+    if (!use_path || gettail(name) != name)
     {
 	/* There must be a path separator, files in the current directory
 	 * can't be executed. */
-	if (gettail(name) != name && executable_file(name))
+	if ((use_path || gettail(name) != name) && executable_file(name))
 	{
 	    if (path != NULL)
 	    {
@@ -7775,7 +7774,7 @@ xterm_update(void)
 }
 
     int
-clip_xterm_own_selection(VimClipboard *cbd)
+clip_xterm_own_selection(Clipboard_T *cbd)
 {
     if (xterm_Shell != (Widget)0)
 	return clip_x11_own_selection(xterm_Shell, cbd);
@@ -7783,21 +7782,21 @@ clip_xterm_own_selection(VimClipboard *cbd)
 }
 
     void
-clip_xterm_lose_selection(VimClipboard *cbd)
+clip_xterm_lose_selection(Clipboard_T *cbd)
 {
     if (xterm_Shell != (Widget)0)
 	clip_x11_lose_selection(xterm_Shell, cbd);
 }
 
     void
-clip_xterm_request_selection(VimClipboard *cbd)
+clip_xterm_request_selection(Clipboard_T *cbd)
 {
     if (xterm_Shell != (Widget)0)
 	clip_x11_request_selection(xterm_Shell, xterm_dpy, cbd);
 }
 
     void
-clip_xterm_set_selection(VimClipboard *cbd)
+clip_xterm_set_selection(Clipboard_T *cbd)
 {
     clip_x11_set_selection(cbd);
 }

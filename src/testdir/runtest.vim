@@ -38,8 +38,11 @@ if &lines < 24 || &columns < 80
   echoerr error
   split test.log
   $put =error
-  w
-  cquit
+  write
+  split messages
+  call append(line('$'), error)
+  write
+  qa!
 endif
 
 if has('reltime')
@@ -65,10 +68,14 @@ set encoding=utf-8
 let s:test_script_fname = expand('%')
 au! SwapExists * call HandleSwapExists()
 func HandleSwapExists()
-  " Only ignore finding a swap file for the test script (the user might be
+  " Ignore finding a swap file for the test script (the user might be
   " editing it and do ":make test_name") and the output file.
+  " Report finding another swap file and chose 'q' to avoid getting stuck.
   if expand('<afile>') == 'messages' || expand('<afile>') =~ s:test_script_fname
     let v:swapchoice = 'e'
+  else
+    call assert_report('Unexpected swap file: ' .. v:swapname)
+    let v:swapchoice = 'q'
   endif
 endfunc
 
@@ -133,13 +140,6 @@ func RunTheTest(test)
     endtry
   endif
 
-  let message = 'Executed ' . a:test
-  if has('reltime')
-    let message ..= ' in ' .. reltimestr(reltime(func_start)) .. ' seconds'
-  endif
-  call add(s:messages, message)
-  let s:done += 1
-
   if a:test =~ 'Test_nocatch_'
     " Function handles errors itself.  This avoids skipping commands after the
     " error.
@@ -174,6 +174,11 @@ func RunTheTest(test)
   au!
   au SwapExists * call HandleSwapExists()
 
+  " Close any stray popup windows
+  if has('textprop')
+    call popup_clear()
+  endif
+
   " Close any extra tab pages and windows and make the current one not modified.
   while tabpagenr('$') > 1
     quit!
@@ -193,6 +198,13 @@ func RunTheTest(test)
   endwhile
 
   exe 'cd ' . save_cwd
+
+  let message = 'Executed ' . a:test
+  if has('reltime')
+    let message ..= ' in ' .. reltimestr(reltime(func_start)) .. ' seconds'
+  endif
+  call add(s:messages, message)
+  let s:done += 1
 endfunc
 
 func AfterTheTest()
