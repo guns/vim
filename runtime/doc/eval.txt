@@ -1,4 +1,4 @@
-*eval.txt*	For Vim version 8.1.  Last change: 2019 Jul 21
+*eval.txt*	For Vim version 8.1.  Last change: 2019 Jul 30
 
 
 		  VIM REFERENCE MANUAL	  by Bram Moolenaar
@@ -1114,6 +1114,8 @@ in any order.  E.g., these are all possible:
 	expr9[expr1].name
 	expr9.name[expr1]
 	expr9(expr1, ...)[expr1].name
+	expr9->(expr1, ...)[expr1]
+Evaluation is always from left to right.
 
 
 expr8[expr1]		item of String or |List|	*expr-[]* *E111*
@@ -1213,6 +1215,11 @@ expr8(expr1, ...)	|Funcref| function call
 When expr8 is a |Funcref| type variable, invoke the function it refers to.
 
 
+expr8->name([args])	method call			*method*
+
+For global methods this is the same as: >
+	name(expr8 [, args])
+There can also be methods specifically for the type of "expr8".
 
 							*expr9*
 number
@@ -1766,7 +1773,7 @@ v:exception	The value of the exception most recently caught and not
 	:try
 	:  throw "oops"
 	:catch /.*/
-	:  echo "caught" v:exception
+	:  echo "caught " .. v:exception
 	:endtry
 <		Output: "caught oops".
 
@@ -2554,6 +2561,7 @@ popup_filter_menu({id}, {key})  Number	filter for a menu popup window
 popup_filter_yesno({id}, {key}) Number	filter for a dialog popup window
 popup_getoptions({id})		Dict	get options of popup window {id}
 popup_getpos({id})		Dict	get position of popup window {id}
+popup_getpreview()		Number	get window ID of preview popup window
 popup_hide({id})		none	hide popup menu {id}
 popup_menu({what}, {options})	Number	create a popup window used as a menu
 popup_move({id}, {options})	none	set position of popup window {id}
@@ -2876,6 +2884,8 @@ add({object}, {expr})					*add()*
 		item.  Use |extend()| to concatenate |Lists|.
 		When {object} is a |Blob| then  {expr} must be a number.
 		Use |insert()| to add an item at another position.
+		Can also be used as a |method|: >
+			mylist->add(val1)->add(val2)
 
 
 and({expr}, {expr})					*and()*
@@ -2955,7 +2965,7 @@ argv([{nr} [, {winid}])
 		The {winid} argument specifies the window ID, see |argc()|.
 
 
-assert_ functions are documented here: |assert-functions|
+assert_ functions are documented here: |assert-functions-details|
 
 
 asin({expr})						*asin()*
@@ -3511,6 +3521,8 @@ copy({expr})	Make a copy of {expr}.  For Numbers and Strings this isn't
 		changing an item changes the contents of both |Lists|.
 		A |Dictionary| is copied in a similar way as a |List|.
 		Also see |deepcopy()|.
+		Can also be used as a |method|: >
+			mylist->copy()
 
 cos({expr})						*cos()*
 		Return the cosine of {expr}, measured in radians, as a |Float|.
@@ -3547,6 +3559,8 @@ count({comp}, {expr} [, {ic} [, {start}]])			*count()*
 		When {comp} is a string then the number of not overlapping
 		occurrences of {expr} is returned. Zero is returned when
 		{expr} is an empty string.
+		Can also be used as a |method|: >
+			mylist->count(val)
 
 							*cscope_connection()*
 cscope_connection([{num} , {dbpath} [, {prepend}]])
@@ -3730,6 +3744,8 @@ empty({expr})						*empty()*
 
 		For a long |List| this is much faster than comparing the
 		length with zero.
+		Can also be used as a |method|: >
+			mylist->empty()
 
 escape({string}, {chars})				*escape()*
 		Escape the characters in {chars} that occur in {string} with a
@@ -4040,6 +4056,9 @@ extend({expr1}, {expr2} [, {expr3}])			*extend()*
 		fails.
 		Returns {expr1}.
 
+		Can also be used as a |method|: >
+			mylist->extend(otherlist)
+
 
 feedkeys({string} [, {mode}])				*feedkeys()*
 		Characters in {string} are queued for processing as if they
@@ -4153,6 +4172,8 @@ filter({expr1}, {expr2})				*filter()*
 		Funcref errors inside a function are ignored, unless it was
 		defined with the "abort" flag.
 
+		Can also be used as a |method|: >
+			mylist->filter(expr2)
 
 finddir({name} [, {path} [, {count}]])				*finddir()*
 		Find directory {name} in {path}.  Supports both downwards and
@@ -4415,6 +4436,8 @@ get({list}, {idx} [, {default}])			*get()*
 		Get item {idx} from |List| {list}.  When this item is not
 		available return {default}.  Return zero when {default} is
 		omitted.
+		Can also be used as a |method|: >
+			mylist->get(idx)
 get({blob}, {idx} [, {default}])
 		Get byte {idx} from |Blob| {blob}.  When this byte is not
 		available return {default}.  Return -1 when {default} is
@@ -4422,7 +4445,10 @@ get({blob}, {idx} [, {default}])
 get({dict}, {key} [, {default}])
 		Get item with key {key} from |Dictionary| {dict}.  When this
 		item is not available return {default}.  Return zero when
-		{default} is omitted.
+		{default} is omitted.  Useful example: >
+			let val = get(g:, 'var_name', 'default')
+<		This gets the value of g:var_name if it exists, and uses
+		'default' when it does not exist.
 get({func}, {what})
 		Get an item with from Funcref {func}.  Possible values for
 		{what} are:
@@ -4798,8 +4824,9 @@ getcwd([{winnr} [, {tabnr}]])
 getenv({name})						*getenv()*
 		Return the value of environment variable {name}.
 		When the variable does not exist |v:null| is returned.  That
-		is different from a variable set to an empty string.
-		See also |expr-env|.
+		is different from a variable set to an empty string, although
+		some systems interpret the empty value as the variable being
+		deleted.  See also |expr-env|.
 
 getfontname([{name}])					*getfontname()*
 		Without an argument returns the name of the normal font being
@@ -5684,6 +5711,9 @@ insert({object}, {item} [, {idx}])			*insert()*
 		Note that when {item} is a |List| it is inserted as a single
 		item.  Use |extend()| to concatenate |Lists|.
 
+		Can also be used as a |method|: >
+			mylist->insert(item)
+
 invert({expr})						*invert()*
 		Bitwise invert.  The argument is converted to a number.  A
 		List, Dict or Float argument causes an error.  Example: >
@@ -5735,6 +5765,8 @@ items({dict})						*items()*
 			   echo key . ': ' . value
 			endfor
 
+<		Can also be used as a |method|: >
+			mydict->items()
 
 job_ functions are documented here: |job-functions-details|
 
@@ -5749,6 +5781,9 @@ join({list} [, {sep}])					*join()*
 <		String items are used as-is.  |Lists| and |Dictionaries| are
 		converted into a string like with |string()|.
 		The opposite function is |split()|.
+
+		Can also be used as a |method|: >
+			mylist->join()
 
 js_decode({string})					*js_decode()*
 		This is similar to |json_decode()| with these differences:
@@ -5835,7 +5870,10 @@ keys({dict})						*keys()*
 		Return a |List| with all the keys of {dict}.  The |List| is in
 		arbitrary order.  Also see |items()| and |values()|.
 
-							*len()* *E701*
+		Can also be used as a |method|: >
+			mydict->keys()
+
+<							*len()* *E701*
 len({expr})	The result is a Number, which is the length of the argument.
 		When {expr} is a String or a Number the length in bytes is
 		used, as with |strlen()|.
@@ -5846,7 +5884,10 @@ len({expr})	The result is a Number, which is the length of the argument.
 		|Dictionary| is returned.
 		Otherwise an error is given.
 
-						*libcall()* *E364* *E368*
+		Can also be used as a |method|: >
+			mylist->len()
+
+<						*libcall()* *E364* *E368*
 libcall({libname}, {funcname}, {argument})
 		Call function {funcname} in the run-time library {libname}
 		with single argument {argument}.
@@ -6131,6 +6172,8 @@ map({expr1}, {expr2})					*map()*
 		Funcref errors inside a function are ignored, unless it was
 		defined with the "abort" flag.
 
+		Can also be used as a |method|: >
+			mylist->map(expr2)
 
 maparg({name} [, {mode} [, {abbr} [, {dict}]]])			*maparg()*
 		When {dict} is omitted or zero: Return the rhs of mapping
@@ -6457,7 +6500,10 @@ max({expr})	Return the maximum value of all items in {expr}.
 		items in {expr} cannot be used as a Number this results in
 		an error.  An empty |List| or |Dictionary| results in zero.
 
-							*min()*
+		Can also be used as a |method|: >
+			mylist->max()
+
+<							*min()*
 min({expr})	Return the minimum value of all items in {expr}.
 		{expr} can be a list or a dictionary.  For a dictionary,
 		it returns the minimum of all values in the dictionary.
@@ -6465,7 +6511,10 @@ min({expr})	Return the minimum value of all items in {expr}.
 		items in {expr} cannot be used as a Number this results in
 		an error.  An empty |List| or |Dictionary| results in zero.
 
-							*mkdir()* *E739*
+		Can also be used as a |method|: >
+			mylist->min()
+
+<							*mkdir()* *E739*
 mkdir({name} [, {path} [, {prot}]])
 		Create directory {name}.
 
@@ -7149,6 +7198,9 @@ remove({list}, {idx} [, {end}])				*remove()*
 <
 		Use |delete()| to remove a file.
 
+		Can also be used as a |method|: >
+			mylist->remove(idx)
+
 remove({blob}, {idx} [, {end}])
 		Without {end}: Remove the byte at {idx} from |Blob| {blob} and
 		return the byte.
@@ -7161,7 +7213,8 @@ remove({blob}, {idx} [, {end}])
 			:call remove(mylist, 0, 9)
 
 remove({dict}, {key})
-		Remove the entry from {dict} with key {key}.  Example: >
+		Remove the entry from {dict} with key {key} and return it.
+		Example: >
 			:echo "removed " . remove(dict, "one")
 <		If there is no {key} in {dict} this is an error.
 
@@ -7183,6 +7236,8 @@ repeat({expr}, {count})					*repeat()*
 			:let longlist = repeat(['a', 'b'], 3)
 <		Results in ['a', 'b', 'a', 'b', 'a', 'b'].
 
+		Can also be used as a |method|: >
+			mylist->repeat(count)
 
 resolve({filename})					*resolve()* *E655*
 		On MS-Windows, when {filename} is a shortcut (a .lnk file),
@@ -7200,13 +7255,15 @@ resolve({filename})					*resolve()* *E655*
 		current directory (provided the result is still a relative
 		path name) and also keeps a trailing path separator.
 
-							*reverse()*
-reverse({object})
+
+reverse({object})					*reverse()*
 		Reverse the order of items in {object} in-place.
 		{object} can be a |List| or a |Blob|.
 		Returns {object}.
 		If you want an object to remain unmodified make a copy first: >
 			:let revlist = reverse(copy(mylist))
+<		Can also be used as a |method|: >
+			mylist->reverse()
 
 round({expr})							*round()*
 		Round off {expr} to the nearest integral value and return it
@@ -8064,7 +8121,10 @@ sort({list} [, {func} [, {dict}]])			*sort()* *E702*
 		on numbers, text strings will sort next to each other, in the
 		same order as they were originally.
 
-		Also see |uniq()|.
+		Can also be used as a |method|: >
+			mylist->sort()
+
+<		Also see |uniq()|.
 
 		Example: >
 			func MyCompare(i1, i2)
@@ -8372,7 +8432,10 @@ string({expr})	Return {expr} converted to a String.  If {expr} is a Number,
 		replaced by "[...]" or "{...}".  Using eval() on the result
 		will then fail.
 
-		Also see |strtrans()|.
+		Can also be used as a |method|: >
+			mylist->string()
+
+<		Also see |strtrans()|.
 
 							*strlen()*
 strlen({expr})	The result is a Number, which is the length of the String
@@ -8828,7 +8891,7 @@ tempname()					*tempname()* *temp-file-name*
 
 term_ functions are documented here: |terminal-function-details|
 
-test_ functions are documented here: |test-functions|
+test_ functions are documented here: |test-functions-details|
 
 
 							*timer_info()*
@@ -8994,6 +9057,9 @@ type({expr})	The result is a Number representing the type of {expr}.
 <		To check if the v:t_ variables exist use this: >
 			:if exists('v:t_number')
 
+<		Can also be used as a |method|: >
+			mylist->type()
+
 undofile({name})					*undofile()*
 		Return the name of the undo file that would be used for a file
 		with name {name} when writing.  This uses the 'undodir'
@@ -9058,10 +9124,15 @@ uniq({list} [, {func} [, {dict}]])			*uniq()* *E882*
 <		The default compare function uses the string representation of
 		each item.  For the use of {func} and {dict} see |sort()|.
 
+		Can also be used as a |method|: >
+			mylist->uniq()
+
 values({dict})						*values()*
 		Return a |List| with all the values of {dict}.  The |List| is
 		in arbitrary order.  Also see |items()| and |keys()|.
 
+		Can also be used as a |method|: >
+			mydict->values()
 
 virtcol({expr})						*virtcol()*
 		The result is a Number, which is the screen column of the file

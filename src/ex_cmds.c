@@ -3177,6 +3177,10 @@ do_ecmd(
 #ifdef FEAT_TITLE
 	maketitle();
 #endif
+#ifdef FEAT_TEXT_PROP
+	if (popup_is_popup(curwin) && curwin->w_p_pvw)
+	    popup_set_title(curwin);
+#endif
     }
 
 #ifdef FEAT_DIFF
@@ -5143,7 +5147,7 @@ prepare_tagpreview(
 	{
 	    wp = popup_find_preview_window();
 	    if (wp != NULL)
-		popup_set_wantpos(wp);
+		popup_set_wantpos(wp, wp->w_minwidth);
 	}
 	else
 # endif
