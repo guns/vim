@@ -23,14 +23,25 @@ Most code can be found in a file with an obvious name (incomplete list):
 
 File name       | Description
 --------------- | -----------
+arglist.c	| handling argument list
 autocmd.c	| autocommands
+blob.c		| blob data type
 buffer.c	| manipulating buffers (loaded files)
+bufwrite.c	| writing a buffer to file
 change.c	| handling changes to text
+cmdexpand.c	| command-line completion
+cmdhist.c	| command-line history
 debugger.c	| vim script debugger
 diff.c		| diff mode (vimdiff)
+drawline.c	| drawing a window line
+drawscreen.c	| drawing the windows
 eval.c		| expression evaluation
+evalbuffer.c	| buffer related built-in functions
 evalfunc.c	| built-in functions
+evalvars.c	| vim variables
+evalwindow.c	| window related built-in functions
 fileio.c	| reading and writing files
+filepath.c	| dealing with file names and paths
 findfile.c	| search for files in 'path'
 fold.c		| folding
 getchar.c	| getting characters and key mapping
@@ -44,18 +55,24 @@ memfile.c	| storing lines for buffers in a swapfile
 memline.c	| storing lines for buffers in memory
 menu.c		| menus
 message.c	| (error) messages
+mouse.c		| handling the mouse
 ops.c		| handling operators ("d", "y", "p")
 option.c	| options
-popupmnu.c	| popup menu
+optionstr.c	| handling string options
+popupmenu.c	| popup menu
 popupwin.c	| popup window
 profiler.c	| vim script profiler
 quickfix.c	| quickfix commands (":make", ":cn")
 regexp.c	| pattern matching
-screen.c	| updating the windows
+register.c	| handling registers
+scriptfile.c	| runtime directory handling and sourcing scripts
+screen.c	| lower level screen functions
 search.c	| pattern searching
 session.c	| sessions and views
 sign.c		| signs
-spell.c		| spell checking
+spell.c		| spell checking core
+spellfile.c	| spell file handling
+spellsuggest.c	| spell correction suggestions
 syntax.c	| syntax and other highlighting
 tag.c		| tags
 term.c		| terminal handling, termcap codes

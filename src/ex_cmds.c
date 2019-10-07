@@ -20,7 +20,7 @@
 
 static int linelen(int *has_tab);
 static void do_filter(linenr_T line1, linenr_T line2, exarg_T *eap, char_u *cmd, int do_in, int do_out);
-
+static int not_writing(void);
 static int check_readonly(int *forceit, buf_T *buf);
 static void delbuf_msg(char_u *name);
 static int help_compare(const void *s1, const void *s2);
@@ -1767,35 +1767,46 @@ make_filter_cmd(
 	STRCAT(buf, itmp);
     }
 #else
-    /*
-     * For shells that don't understand braces around commands, at least allow
-     * the use of commands in a pipe.
-     */
-    STRCPY(buf, cmd);
-    if (itmp != NULL)
+    // For shells that don't understand braces around commands, at least allow
+    // the use of commands in a pipe.
+    if (*p_sxe != NUL && *p_sxq == '(')
     {
-	char_u	*p;
-
-	/*
-	 * If there is a pipe, we have to put the '<' in front of it.
-	 * Don't do this when 'shellquote' is not empty, otherwise the
-	 * redirection would be inside the quotes.
-	 */
-	if (*p_shq == NUL)
+	if (itmp != NULL || otmp != NULL)
+	    vim_snprintf((char *)buf, len, "(%s)", (char *)cmd);
+	else
+	    STRCPY(buf, cmd);
+	if (itmp != NULL)
 	{
-	    p = find_pipe(buf);
-	    if (p != NULL)
-		*p = NUL;
+	    STRCAT(buf, " < ");
+	    STRCAT(buf, itmp);
 	}
-	STRCAT(buf, " <");	/* " < " causes problems on Amiga */
-	STRCAT(buf, itmp);
-	if (*p_shq == NUL)
+    }
+    else
+    {
+	STRCPY(buf, cmd);
+	if (itmp != NULL)
 	{
-	    p = find_pipe(cmd);
-	    if (p != NULL)
+	    char_u	*p;
+
+	    // If there is a pipe, we have to put the '<' in front of it.
+	    // Don't do this when 'shellquote' is not empty, otherwise the
+	    // redirection would be inside the quotes.
+	    if (*p_shq == NUL)
 	    {
-		STRCAT(buf, " ");   /* insert a space before the '|' for DOS */
-		STRCAT(buf, p);
+		p = find_pipe(buf);
+		if (p != NULL)
+		    *p = NUL;
+	    }
+	    STRCAT(buf, " <");	// " < " causes problems on Amiga
+	    STRCAT(buf, itmp);
+	    if (*p_shq == NUL)
+	    {
+		p = find_pipe(cmd);
+		if (p != NULL)
+		{
+		    STRCAT(buf, " ");  // insert a space before the '|' for DOS
+		    STRCAT(buf, p);
+		}
 	    }
 	}
     }
@@ -1824,18 +1835,20 @@ append_redir(
     char_u	*end;
 
     end = buf + STRLEN(buf);
-    /* find "%s" */
+    // find "%s"
     for (p = opt; (p = vim_strchr(p, '%')) != NULL; ++p)
     {
-	if (p[1] == 's') /* found %s */
+	if (p[1] == 's') // found %s
 	    break;
-	if (p[1] == '%') /* skip %% */
+	if (p[1] == '%') // skip %%
 	    ++p;
     }
     if (p != NULL)
     {
-	*end = ' '; /* not really needed? Not with sh, ksh or bash */
-	vim_snprintf((char *)end + 1, (size_t)(buflen - (end + 1 - buf)),
+#ifdef MSWIN
+	*end++ = ' '; // not really needed? Not with sh, ksh or bash
+#endif
+	vim_snprintf((char *)end, (size_t)(buflen - (end - buf)),
 						  (char *)opt, (char *)fname);
     }
     else
@@ -1843,7 +1856,7 @@ append_redir(
 #ifdef FEAT_QUICKFIX
 		" %s %s",
 #else
-		" %s%s",	/* " > %s" causes problems on Amiga */
+		" %s%s",	// " > %s" causes problems on Amiga
 #endif
 		(char *)opt, (char *)fname);
 }
@@ -2459,9 +2472,9 @@ do_wqall(exarg_T *eap)
 
 /*
  * Check the 'write' option.
- * Return TRUE and give a message when it's not st.
+ * Return TRUE and give a message when it's not set.
  */
-    int
+    static int
 not_writing(void)
 {
     if (p_write)
@@ -3123,6 +3136,12 @@ do_ecmd(
 	topline = curwin->w_topline;
 	if (!oldbuf)			    /* need to read the file */
 	{
+#ifdef FEAT_TEXT_PROP
+	    // Don't use the swap-exists dialog for a popup window, can't edit
+	    // the buffer.
+	    if (WIN_IS_POPUP(curwin))
+		curbuf->b_flags |= BF_NO_SEA;
+#endif
 	    swap_exists_action = SEA_DIALOG;
 	    curbuf->b_flags |= BF_CHECK_RO; /* set/reset 'ro' flag */
 
@@ -3136,6 +3155,9 @@ do_ecmd(
 	    (void)open_buffer(FALSE, eap, readfile_flags);
 #endif
 
+#ifdef FEAT_TEXT_PROP
+	    curbuf->b_flags &= ~BF_NO_SEA;
+#endif
 	    if (swap_exists_action == SEA_QUIT)
 		retval = FAIL;
 	    handle_swap_exists(&old_curbuf);
@@ -3178,7 +3200,7 @@ do_ecmd(
 	maketitle();
 #endif
 #ifdef FEAT_TEXT_PROP
-	if (popup_is_popup(curwin) && curwin->w_p_pvw)
+	if (WIN_IS_POPUP(curwin) && curwin->w_p_pvw && retval != FAIL)
 	    popup_set_title(curwin);
 #endif
     }
@@ -3896,10 +3918,8 @@ do_sub(exarg_T *eap)
 
 	if (!cmdmod.keeppatterns)
 	    save_re_pat(RE_SUBST, pat, p_magic);
-#ifdef FEAT_CMDHIST
-	/* put pattern in history */
+	// put pattern in history
 	add_to_history(HIST_SEARCH, pat, TRUE, NUL);
-#endif
 
 	return;
     }
@@ -4219,9 +4239,7 @@ do_sub(exarg_T *eap)
 		     * properly */
 		    save_State = State;
 		    State = CONFIRM;
-#ifdef FEAT_MOUSE
-		    setmouse();		/* disable mouse in xterm */
-#endif
+		    setmouse();		// disable mouse in xterm
 		    curwin->w_cursor.col = regmatch.startpos[0].col;
 		    if (curwin->w_p_crb)
 			do_check_cursorbind();
@@ -4389,17 +4407,13 @@ do_sub(exarg_T *eap)
 			    subflags.do_ask = FALSE;
 			    break;
 			}
-#ifdef FEAT_INS_EXPAND
 			if (typed == Ctrl_E)
 			    scrollup_clamp();
 			else if (typed == Ctrl_Y)
 			    scrolldown_clamp();
-#endif
 		    }
 		    State = save_State;
-#ifdef FEAT_MOUSE
 		    setmouse();
-#endif
 		    if (vim_strchr(p_cpo, CPO_UNDO) != NULL)
 			--no_u_sync;
 
@@ -5129,7 +5143,9 @@ free_old_sub(void)
  */
     int
 prepare_tagpreview(
-    int		undo_sync)	/* sync undo when leaving the window */
+    int		undo_sync,	    // sync undo when leaving the window
+    int		use_previewpopup,   // use popup if 'previewpopup' set
+    int		use_popup)	    // use other popup window
 {
     win_T	*wp;
 
@@ -5143,11 +5159,17 @@ prepare_tagpreview(
     if (!curwin->w_p_pvw)
     {
 # ifdef FEAT_TEXT_PROP
-	if (*p_pvp != NUL)
+	if (use_previewpopup && *p_pvp != NUL)
 	{
 	    wp = popup_find_preview_window();
 	    if (wp != NULL)
-		popup_set_wantpos(wp, wp->w_minwidth);
+		popup_set_wantpos_cursor(wp, wp->w_minwidth);
+	}
+	else if (use_popup)
+	{
+	    wp = popup_find_info_window();
+	    if (wp != NULL)
+		popup_show(wp);
 	}
 	else
 # endif
@@ -5164,8 +5186,8 @@ prepare_tagpreview(
 	     * There is no preview window open yet.  Create one.
 	     */
 # ifdef FEAT_TEXT_PROP
-	    if (*p_pvp != NUL)
-		return popup_create_preview_window();
+	    if ((use_previewpopup && *p_pvp != NUL) || use_popup)
+		return popup_create_preview_window(use_popup);
 # endif
 	    if (win_split(g_do_tagpreview > 0 ? g_do_tagpreview : 0, 0) == FAIL)
 		return FALSE;
@@ -5530,12 +5552,22 @@ find_help_tags(
     if (STRNICMP(arg, "expr-", 5) == 0)
     {
 	// When the string starting with "expr-" and containing '?' and matches
-	// the table, it is taken literally.  Otherwise '?' is recognized as a
-	// wildcard.
+	// the table, it is taken literally (but ~ is escaped).  Otherwise '?'
+	// is recognized as a wildcard.
 	for (i = (int)(sizeof(expr_table) / sizeof(char *)); --i >= 0; )
 	    if (STRCMP(arg + 5, expr_table[i]) == 0)
 	    {
-		STRCPY(d, arg);
+		int si = 0, di = 0;
+
+		for (;;)
+		{
+		    if (arg[si] == '~')
+			d[di++] = '\\';
+		    d[di++] = arg[si];
+		    if (arg[si] == NUL)
+			break;
+		    ++si;
+		}
 		break;
 	    }
     }

@@ -210,7 +210,7 @@ dictitem_alloc(char_u *key)
 {
     dictitem_T *di;
 
-    di = alloc(sizeof(dictitem_T) + STRLEN(key));
+    di = alloc(offsetof(dictitem_T, di_key) + STRLEN(key) + 1);
     if (di != NULL)
     {
 	STRCPY(di->di_key, key);
@@ -228,7 +228,7 @@ dictitem_copy(dictitem_T *org)
 {
     dictitem_T *di;
 
-    di = alloc(sizeof(dictitem_T) + STRLEN(org->di_key));
+    di = alloc(offsetof(dictitem_T, di_key) + STRLEN(org->di_key) + 1);
     if (di != NULL)
     {
 	STRCPY(di->di_key, org->di_key);
@@ -617,11 +617,21 @@ dict_get_string(dict_T *d, char_u *key, int save)
     varnumber_T
 dict_get_number(dict_T *d, char_u *key)
 {
+    return dict_get_number_def(d, key, 0);
+}
+
+/*
+ * Get a number item from a dictionary.
+ * Returns "def" if the entry doesn't exist.
+ */
+    varnumber_T
+dict_get_number_def(dict_T *d, char_u *key, int def)
+{
     dictitem_T	*di;
 
     di = dict_find(d, key, -1);
     if (di == NULL)
-	return 0;
+	return def;
     return tv_get_number(&di->di_tv);
 }
 
@@ -812,7 +822,6 @@ dict_get_tv(char_u **arg, typval_T *rettv, int evaluate, int literal)
 		goto failret;
 	    }
 	    item = dictitem_alloc(key);
-	    clear_tv(&tvkey);
 	    if (item != NULL)
 	    {
 		item->di_tv = tv;
@@ -821,6 +830,7 @@ dict_get_tv(char_u **arg, typval_T *rettv, int evaluate, int literal)
 		    dictitem_free(item);
 	    }
 	}
+	clear_tv(&tvkey);
 
 	if (**arg == '}')
 	    break;
@@ -957,7 +967,7 @@ dict_equal(
  * "what" == 1: list of values
  * "what" == 2: list of items
  */
-    void
+    static void
 dict_list(typval_T *argvars, typval_T *rettv, int what)
 {
     list_T	*l2;

@@ -1,6 +1,8 @@
 " Tests for autocommands
 
 source shared.vim
+source check.vim
+source term_util.vim
 
 func s:cleanup_buffers() abort
   for bnr in range(1, bufnr('$'))
@@ -438,7 +440,7 @@ func Test_autocmd_bufwipe_in_SessLoadPost()
   [CODE]
 
   call writefile(content, 'Xvimrc')
-  call system(v:progpath. ' -u Xvimrc --not-a-term --noplugins -S Session.vim -c cq')
+  call system(GetVimCommand('Xvimrc') .. ' --not-a-term --noplugins -S Session.vim -c cq')
   let errors = join(readfile('Xerrors'))
   call assert_match('E814', errors)
 
@@ -478,7 +480,7 @@ func Test_autocmd_bufwipe_in_SessLoadPost2()
   [CODE]
 
   call writefile(content, 'Xvimrc')
-  call system(v:progpath. ' -u Xvimrc --not-a-term --noplugins -S Session.vim -c cq')
+  call system(GetVimCommand('Xvimrc') .. ' --not-a-term --noplugins -S Session.vim -c cq')
   let errors = join(readfile('Xerrors'))
   " This probably only ever matches on unix.
   call assert_notmatch('Caught deadly signal SEGV', errors)
@@ -1090,7 +1092,7 @@ func Test_OptionSet()
   call assert_equal(g:opt[0], g:opt[1])
 
 
-  " 33: Test autocomands when an option value is converted internally.
+  " 33: Test autocommands when an option value is converted internally.
   noa set backspace=1 " Reset global and local value (without triggering autocmd)
   let g:options=[['backspace', 'indent,eol', 'indent,eol', 'indent,eol', '2', 'global', 'set']]
   set backspace=2
@@ -1421,7 +1423,7 @@ func Test_bufunload_all()
   call writefile(content, 'Xtest')
 
   call delete('Xout')
-  call system(v:progpath. ' --clean -N --not-a-term -S Xtest')
+  call system(GetVimCommandClean() .. ' -N --not-a-term -S Xtest')
   call assert_true(filereadable('Xout'))
 
   call delete('Xxx1')
@@ -1861,9 +1863,9 @@ func Test_TextChangedI_with_setline()
 endfunc
 
 func Test_Changed_FirstTime()
-  if !has('terminal') || has('gui_running')
-    return
-  endif
+  CheckFeature terminal
+  CheckNotGui
+
   " Prepare file for TextChanged event.
   call writefile([''], 'Xchanged.txt')
   let buf = term_start([GetVimProg(), '--clean', '-c', 'set noswapfile'], {'term_rows': 3})
@@ -2223,4 +2225,66 @@ func Test_throw_in_BufWritePre()
 
   bwipe!
   au! throwing
+endfunc
+
+func Test_autocmd_SafeState()
+  CheckRunVimInTerminal
+
+  let lines =<< trim END
+	let g:safe = 0
+	let g:again = ''
+	au SafeState * let g:safe += 1
+	au SafeStateAgain * let g:again ..= 'x'
+	func CallTimer()
+	  call timer_start(10, {id -> execute('let g:again ..= "t"')})
+	endfunc
+  END
+  call writefile(lines, 'XSafeState')
+  let buf = RunVimInTerminal('-S XSafeState', #{rows: 6})
+
+  " Sometimes we loop to handle an K_IGNORE
+  call term_sendkeys(buf, ":echo g:safe\<CR>")
+  call WaitForAssert({-> assert_match('^[12] ', term_getline(buf, 6))}, 1000)
+
+  call term_sendkeys(buf, ":echo g:again\<CR>")
+  call WaitForAssert({-> assert_match('^xxxx', term_getline(buf, 6))}, 1000)
+
+  call term_sendkeys(buf, ":let g:again = ''\<CR>:call CallTimer()\<CR>")
+  call term_wait(buf)
+  call term_sendkeys(buf, ":\<CR>")
+  call term_wait(buf)
+  call term_sendkeys(buf, ":echo g:again\<CR>")
+  call WaitForAssert({-> assert_match('xtx', term_getline(buf, 6))}, 1000)
+
+  call StopVimInTerminal(buf)
+  call delete('XSafeState')
+endfunc
+
+func Test_autocmd_CmdWinEnter()
+  CheckRunVimInTerminal
+  " There is not cmdwin switch, so
+  " test for cmdline_hist
+  " (both are available with small builds)
+  CheckFeature cmdline_hist
+  let lines =<< trim END
+    let b:dummy_var = 'This is a dummy'
+    autocmd CmdWinEnter * quit
+    let winnr = winnr('$')
+  END
+  let filename='XCmdWinEnter'
+  call writefile(lines, filename)
+  let buf = RunVimInTerminal('-S '.filename, #{rows: 6})
+
+  call term_sendkeys(buf, "q:")
+  call term_wait(buf)
+  call term_sendkeys(buf, ":echo b:dummy_var\<cr>")
+  call WaitForAssert({-> assert_match('^This is a dummy', term_getline(buf, 6))}, 1000)
+  call term_sendkeys(buf, ":echo &buftype\<cr>")
+  call WaitForAssert({-> assert_notmatch('^nofile', term_getline(buf, 6))}, 1000)
+  call term_sendkeys(buf, ":echo winnr\<cr>")
+  call WaitForAssert({-> assert_match('^1', term_getline(buf, 6))}, 1000)
+
+  " clean up
+  call StopVimInTerminal(buf)
+  call delete(filename)
 endfunc
