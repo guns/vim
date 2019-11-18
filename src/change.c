@@ -58,7 +58,7 @@ change_warning(int col)
 		)
 	{
 	    out_flush();
-	    ui_delay(1000L, TRUE); // give the user time to think about it
+	    ui_delay(1002L, TRUE); // give the user time to think about it
 	}
 	curbuf->b_did_warn = TRUE;
 	redraw_cmdline = FALSE;	// don't redraw and erase the message
@@ -118,7 +118,7 @@ changed(void)
 	    if (need_wait_return && emsg_silent == 0)
 	    {
 		out_flush();
-		ui_delay(2000L, TRUE);
+		ui_delay(2002L, TRUE);
 		wait_return(TRUE);
 		msg_scroll = save_msg_scroll;
 	    }
@@ -371,9 +371,9 @@ invoke_listeners(buf_T *buf)
 	if (start > lnum)
 	    start = lnum;
 	lnum = dict_get_number(li->li_tv.vval.v_dict, (char_u *)"end");
-	if (lnum > end)
+	if (end < lnum)
 	    end = lnum;
-	added = dict_get_number(li->li_tv.vval.v_dict, (char_u *)"added");
+	added += dict_get_number(li->li_tv.vval.v_dict, (char_u *)"added");
     }
     argv[1].v_type = VAR_NUMBER;
     argv[1].vval.v_number = start;
@@ -609,16 +609,21 @@ changed_common(
 	    if (hasAnyFolding(wp))
 		set_topline(wp, wp->w_topline);
 #endif
-	    // Relative numbering may require updating more.  Cursor line
-	    // highlighting probably needs to be updated if it's below the
-	    // change (or is using screenline highlighting)
-	    if (wp->w_p_rnu
-#ifdef FEAT_SYN_HL
-		    || ((wp->w_p_cul && lnum <= wp->w_last_cursorline)
-			    || (wp->w_p_culopt_flags & CULOPT_SCRLINE))
-#endif
-		    )
+	    // Relative numbering may require updating more.
+	    if (wp->w_p_rnu)
 		redraw_win_later(wp, SOME_VALID);
+#ifdef FEAT_SYN_HL
+	    // Cursor line highlighting probably need to be updated with
+	    // "VALID" if it's below the change.
+	    // If the cursor line is inside the change we need to redraw more.
+	    if (wp->w_p_cul)
+	    {
+		if (xtra == 0)
+		    redraw_win_later(wp, VALID);
+		else if (lnum <= wp->w_last_cursorline)
+		    redraw_win_later(wp, SOME_VALID);
+	    }
+#endif
 	}
     }
 
@@ -1248,151 +1253,6 @@ del_bytes(
     inserted_bytes(lnum, curwin->w_cursor.col, -count);
 
     return OK;
-}
-
-/*
- * Copy the indent from ptr to the current line (and fill to size)
- * Leaves the cursor on the first non-blank in the line.
- * Returns TRUE if the line was changed.
- */
-    static int
-copy_indent(int size, char_u *src)
-{
-    char_u	*p = NULL;
-    char_u	*line = NULL;
-    char_u	*s;
-    int		todo;
-    int		ind_len;
-    int		line_len = 0;
-    int		tab_pad;
-    int		ind_done;
-    int		round;
-#ifdef FEAT_VARTABS
-    int		ind_col;
-#endif
-
-    // Round 1: compute the number of characters needed for the indent
-    // Round 2: copy the characters.
-    for (round = 1; round <= 2; ++round)
-    {
-	todo = size;
-	ind_len = 0;
-	ind_done = 0;
-#ifdef FEAT_VARTABS
-	ind_col = 0;
-#endif
-	s = src;
-
-	// Count/copy the usable portion of the source line
-	while (todo > 0 && VIM_ISWHITE(*s))
-	{
-	    if (*s == TAB)
-	    {
-#ifdef FEAT_VARTABS
-		tab_pad = tabstop_padding(ind_done, curbuf->b_p_ts,
-							curbuf->b_p_vts_array);
-#else
-		tab_pad = (int)curbuf->b_p_ts
-					   - (ind_done % (int)curbuf->b_p_ts);
-#endif
-		// Stop if this tab will overshoot the target
-		if (todo < tab_pad)
-		    break;
-		todo -= tab_pad;
-		ind_done += tab_pad;
-#ifdef FEAT_VARTABS
-		ind_col += tab_pad;
-#endif
-	    }
-	    else
-	    {
-		--todo;
-		++ind_done;
-#ifdef FEAT_VARTABS
-		++ind_col;
-#endif
-	    }
-	    ++ind_len;
-	    if (p != NULL)
-		*p++ = *s;
-	    ++s;
-	}
-
-	// Fill to next tabstop with a tab, if possible
-#ifdef FEAT_VARTABS
-	tab_pad = tabstop_padding(ind_done, curbuf->b_p_ts,
-							curbuf->b_p_vts_array);
-#else
-	tab_pad = (int)curbuf->b_p_ts - (ind_done % (int)curbuf->b_p_ts);
-#endif
-	if (todo >= tab_pad && !curbuf->b_p_et)
-	{
-	    todo -= tab_pad;
-	    ++ind_len;
-#ifdef FEAT_VARTABS
-	    ind_col += tab_pad;
-#endif
-	    if (p != NULL)
-		*p++ = TAB;
-	}
-
-	// Add tabs required for indent
-	if (!curbuf->b_p_et)
-	{
-#ifdef FEAT_VARTABS
-	    for (;;)
-	    {
-		tab_pad = tabstop_padding(ind_col, curbuf->b_p_ts,
-							curbuf->b_p_vts_array);
-		if (todo < tab_pad)
-		    break;
-		todo -= tab_pad;
-		++ind_len;
-		ind_col += tab_pad;
-		if (p != NULL)
-		    *p++ = TAB;
-	    }
-#else
-	    while (todo >= (int)curbuf->b_p_ts)
-	    {
-		todo -= (int)curbuf->b_p_ts;
-		++ind_len;
-		if (p != NULL)
-		    *p++ = TAB;
-	    }
-#endif
-	}
-
-	// Count/add spaces required for indent
-	while (todo > 0)
-	{
-	    --todo;
-	    ++ind_len;
-	    if (p != NULL)
-		*p++ = ' ';
-	}
-
-	if (p == NULL)
-	{
-	    // Allocate memory for the result: the copied indent, new indent
-	    // and the rest of the line.
-	    line_len = (int)STRLEN(ml_get_curline()) + 1;
-	    line = alloc(ind_len + line_len);
-	    if (line == NULL)
-		return FALSE;
-	    p = line;
-	}
-    }
-
-    // Append the original line
-    mch_memmove(p, ml_get_curline(), (size_t)line_len);
-
-    // Replace the line
-    ml_replace(curwin->w_cursor.lnum, line, FALSE);
-
-    // Put the cursor after the indent.
-    curwin->w_cursor.col = ind_len;
-    return TRUE;
 }
 
 /*

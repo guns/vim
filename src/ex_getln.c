@@ -373,6 +373,7 @@ may_do_incsearch_highlighting(
     pos_T	end_pos;
 #ifdef FEAT_RELTIME
     proftime_T	tm;
+    searchit_arg_T sia;
 #endif
     int		next_char;
     int		use_last_pat;
@@ -445,12 +446,16 @@ may_do_incsearch_highlighting(
 	if (search_first_line != 0)
 	    search_flags += SEARCH_START;
 	ccline.cmdbuff[skiplen + patlen] = NUL;
+#ifdef FEAT_RELTIME
+	vim_memset(&sia, 0, sizeof(sia));
+	sia.sa_tm = &tm;
+#endif
 	found = do_search(NULL, firstc == ':' ? '/' : firstc,
 				 ccline.cmdbuff + skiplen, count, search_flags,
 #ifdef FEAT_RELTIME
-		&tm, NULL
+		&sia
 #else
-		NULL, NULL
+		NULL
 #endif
 		);
 	ccline.cmdbuff[skiplen + patlen] = next_char;
@@ -520,6 +525,7 @@ may_do_incsearch_highlighting(
 	curwin->w_redr_status = TRUE;
 
     update_screen(SOME_VALID);
+    highlight_match = FALSE;
     restore_last_search_pattern();
 
     // Leave it at the end to make CTRL-R CTRL-W work.  But not when beyond the
@@ -597,8 +603,7 @@ may_adjust_incsearch_highlighting(
     pat[patlen] = NUL;
     i = searchit(curwin, curbuf, &t, NULL,
 		 c == Ctrl_G ? FORWARD : BACKWARD,
-		 pat, count, search_flags,
-		 RE_SEARCH, 0, NULL, NULL);
+		 pat, count, search_flags, RE_SEARCH, NULL);
     --emsg_off;
     pat[patlen] = save;
     if (i)
@@ -638,6 +643,7 @@ may_adjust_incsearch_highlighting(
 	highlight_match = TRUE;
 	save_viewstate(&is_state->old_viewstate);
 	update_screen(NOT_VALID);
+	highlight_match = FALSE;
 	redrawcmdline();
 	curwin->w_cursor = is_state->match_end;
     }
@@ -795,11 +801,9 @@ getcmdline_int(
     int		save_msg_scroll = msg_scroll;
     int		save_State = State;	/* remember State when called */
     int		some_key_typed = FALSE;	/* one of the keys was typed */
-#ifdef FEAT_MOUSE
     /* mouse drag and release events are ignored, unless they are
      * preceded with a mouse down event */
     int		ignore_drag_release = TRUE;
-#endif
 #ifdef FEAT_EVAL
     int		break_ctrl_c = FALSE;
 #endif
@@ -1403,6 +1407,9 @@ getcmdline_int(
 	 */
 	if ((c == p_wc && !gotesc && KeyTyped) || c == p_wcm)
 	{
+	    int options = WILD_NO_BEEP;
+	    if (wim_flags[wim_index] & WIM_BUFLASTUSED)
+		options |= WILD_BUFLASTUSED;
 	    if (xpc.xp_numfiles > 0)   /* typed p_wc at least twice */
 	    {
 		/* if 'wildmode' contains "list" may still need to list */
@@ -1415,10 +1422,10 @@ getcmdline_int(
 		    did_wild_list = TRUE;
 		}
 		if (wim_flags[wim_index] & WIM_LONGEST)
-		    res = nextwild(&xpc, WILD_LONGEST, WILD_NO_BEEP,
+		    res = nextwild(&xpc, WILD_LONGEST, options,
 							       firstc != '@');
 		else if (wim_flags[wim_index] & WIM_FULL)
-		    res = nextwild(&xpc, WILD_NEXT, WILD_NO_BEEP,
+		    res = nextwild(&xpc, WILD_NEXT, options,
 							       firstc != '@');
 		else
 		    res = OK;	    /* don't insert 'wildchar' now */
@@ -1430,10 +1437,10 @@ getcmdline_int(
 		/* if 'wildmode' first contains "longest", get longest
 		 * common part */
 		if (wim_flags[0] & WIM_LONGEST)
-		    res = nextwild(&xpc, WILD_LONGEST, WILD_NO_BEEP,
+		    res = nextwild(&xpc, WILD_LONGEST, options,
 							       firstc != '@');
 		else
-		    res = nextwild(&xpc, WILD_EXPAND_KEEP, WILD_NO_BEEP,
+		    res = nextwild(&xpc, WILD_EXPAND_KEEP, options,
 							       firstc != '@');
 
 		/* if interrupted while completing, behave like it failed */
@@ -1484,10 +1491,10 @@ getcmdline_int(
 			redrawcmd();
 			did_wild_list = TRUE;
 			if (wim_flags[wim_index] & WIM_LONGEST)
-			    nextwild(&xpc, WILD_LONGEST, WILD_NO_BEEP,
+			    nextwild(&xpc, WILD_LONGEST, options,
 							       firstc != '@');
 			else if (wim_flags[wim_index] & WIM_FULL)
-			    nextwild(&xpc, WILD_NEXT, WILD_NO_BEEP,
+			    nextwild(&xpc, WILD_NEXT, options,
 							       firstc != '@');
 		    }
 		    else
@@ -1856,7 +1863,6 @@ getcmdline_int(
 	    break;
 #endif
 
-#ifdef FEAT_MOUSE
 	case K_MIDDLEDRAG:
 	case K_MIDDLERELEASE:
 		goto cmdline_not_changed;	/* Ignore mouse */
@@ -1960,8 +1966,6 @@ getcmdline_int(
 	case K_X2RELEASE:
 	case K_MOUSEMOVE:
 		goto cmdline_not_changed;
-
-#endif	/* FEAT_MOUSE */
 
 #ifdef FEAT_GUI
 	case K_LEFTMOUSE_NM:	/* mousefocus click, ignored */
@@ -2195,9 +2199,7 @@ getcmdline_int(
 
 	case Ctrl_V:
 	case Ctrl_Q:
-#ifdef FEAT_MOUSE
 		ignore_drag_release = TRUE;
-#endif
 		putcmdline('^', TRUE);
 		c = get_literal();	    /* get next (two) character(s) */
 		do_abbr = FALSE;	    /* don't do abbreviation now */
@@ -2213,13 +2215,11 @@ getcmdline_int(
 
 #ifdef FEAT_DIGRAPHS
 	case Ctrl_K:
-#ifdef FEAT_MOUSE
 		ignore_drag_release = TRUE;
-#endif
 		putcmdline('?', TRUE);
-#ifdef USE_ON_FLY_SCROLL
+# ifdef USE_ON_FLY_SCROLL
 		dont_scroll = TRUE;	    /* disallow scrolling here */
-#endif
+# endif
 		c = get_digraph(TRUE);
 		extra_char = NUL;
 		if (c != NUL)
@@ -2227,7 +2227,7 @@ getcmdline_int(
 
 		redrawcmd();
 		goto cmdline_not_changed;
-#endif /* FEAT_DIGRAPHS */
+#endif // FEAT_DIGRAPHS
 
 #ifdef FEAT_RIGHTLEFT
 	case Ctrl__:	    /* CTRL-_: switch language mode */

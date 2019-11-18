@@ -51,7 +51,6 @@ static void f_ceil(typval_T *argvars, typval_T *rettv);
 #endif
 static void f_changenr(typval_T *argvars, typval_T *rettv);
 static void f_char2nr(typval_T *argvars, typval_T *rettv);
-static void f_cindent(typval_T *argvars, typval_T *rettv);
 static void f_col(typval_T *argvars, typval_T *rettv);
 static void f_confirm(typval_T *argvars, typval_T *rettv);
 static void f_copy(typval_T *argvars, typval_T *rettv);
@@ -108,7 +107,6 @@ static void f_hlID(typval_T *argvars, typval_T *rettv);
 static void f_hlexists(typval_T *argvars, typval_T *rettv);
 static void f_hostname(typval_T *argvars, typval_T *rettv);
 static void f_iconv(typval_T *argvars, typval_T *rettv);
-static void f_indent(typval_T *argvars, typval_T *rettv);
 static void f_index(typval_T *argvars, typval_T *rettv);
 static void f_input(typval_T *argvars, typval_T *rettv);
 static void f_inputdialog(typval_T *argvars, typval_T *rettv);
@@ -128,7 +126,6 @@ static void f_libcall(typval_T *argvars, typval_T *rettv);
 static void f_libcallnr(typval_T *argvars, typval_T *rettv);
 static void f_line(typval_T *argvars, typval_T *rettv);
 static void f_line2byte(typval_T *argvars, typval_T *rettv);
-static void f_lispindent(typval_T *argvars, typval_T *rettv);
 static void f_localtime(typval_T *argvars, typval_T *rettv);
 #ifdef FEAT_FLOAT
 static void f_log(typval_T *argvars, typval_T *rettv);
@@ -468,6 +465,7 @@ static funcentry_T global_functions[] =
     {"getline",		1, 2, FEARG_1,	  f_getline},
     {"getloclist",	1, 2, 0,	  f_getloclist},
     {"getmatches",	0, 1, 0,	  f_getmatches},
+    {"getmousepos",	0, 0, 0,	  f_getmousepos},
     {"getpid",		0, 0, 0,	  f_getpid},
     {"getpos",		1, 1, FEARG_1,	  f_getpos},
     {"getqflist",	0, 1, 0,	  f_getqflist},
@@ -818,9 +816,7 @@ static funcentry_T global_functions[] =
 #ifdef FEAT_GUI
     {"test_scrollbar",	3, 3, FEARG_2,	  f_test_scrollbar},
 #endif
-#ifdef FEAT_MOUSE
     {"test_setmouse",	2, 2, 0,	  f_test_setmouse},
-#endif
     {"test_settime",	1, 1, FEARG_1,	  f_test_settime},
 #ifdef FEAT_TIMERS
     {"timer_info",	0, 1, FEARG_1,	  f_timer_info},
@@ -1489,29 +1485,6 @@ f_char2nr(typval_T *argvars, typval_T *rettv)
     }
     else
 	rettv->vval.v_number = tv_get_string(&argvars[0])[0];
-}
-
-/*
- * "cindent(lnum)" function
- */
-    static void
-f_cindent(typval_T *argvars UNUSED, typval_T *rettv)
-{
-#ifdef FEAT_CINDENT
-    pos_T	pos;
-    linenr_T	lnum;
-
-    pos = curwin->w_cursor;
-    lnum = tv_get_lnum(argvars);
-    if (lnum >= 1 && lnum <= curbuf->b_ml.ml_line_count)
-    {
-	curwin->w_cursor.lnum = lnum;
-	rettv->vval.v_number = get_c_indent();
-	curwin->w_cursor = pos;
-    }
-    else
-#endif
-	rettv->vval.v_number = -1;
 }
 
     win_T *
@@ -2555,6 +2528,12 @@ common_function(typval_T *argvars, typval_T *rettv, int is_funcref)
 		list = argvars[arg_idx].vval.v_list;
 		if (list == NULL || list->lv_len == 0)
 		    arg_idx = 0;
+		else if (list->lv_len > MAX_FUNC_ARGS)
+		{
+		    emsg_funcname((char *)e_toomanyarg, name);
+		    vim_free(name);
+		    goto theend;
+		}
 	    }
 	}
 	if (dict_idx > 0 || arg_idx > 0 || arg_pt != NULL || is_funcref)
@@ -3459,9 +3438,7 @@ f_has(typval_T *argvars, typval_T *rettv)
 	"mksession",
 #endif
 	"modify_fname",
-#ifdef FEAT_MOUSE
 	"mouse",
-#endif
 #ifdef FEAT_MOUSESHAPE
 	"mouseshape",
 #endif
@@ -3943,21 +3920,6 @@ f_iconv(typval_T *argvars UNUSED, typval_T *rettv)
     convert_setup(&vimconv, NULL, NULL);
     vim_free(from);
     vim_free(to);
-}
-
-/*
- * "indent()" function
- */
-    static void
-f_indent(typval_T *argvars, typval_T *rettv)
-{
-    linenr_T	lnum;
-
-    lnum = tv_get_lnum(argvars);
-    if (lnum >= 1 && lnum <= curbuf->b_ml.ml_line_count)
-	rettv->vval.v_number = get_indent_lnum(lnum);
-    else
-	rettv->vval.v_number = -1;
 }
 
 /*
@@ -4448,29 +4410,6 @@ f_line2byte(typval_T *argvars UNUSED, typval_T *rettv)
     if (rettv->vval.v_number >= 0)
 	++rettv->vval.v_number;
 #endif
-}
-
-/*
- * "lispindent(lnum)" function
- */
-    static void
-f_lispindent(typval_T *argvars UNUSED, typval_T *rettv)
-{
-#ifdef FEAT_LISP
-    pos_T	pos;
-    linenr_T	lnum;
-
-    pos = curwin->w_cursor;
-    lnum = tv_get_lnum(argvars);
-    if (lnum >= 1 && lnum <= curbuf->b_ml.ml_line_count)
-    {
-	curwin->w_cursor.lnum = lnum;
-	rettv->vval.v_number = get_lisp_indent();
-	curwin->w_cursor = pos;
-    }
-    else
-#endif
-	rettv->vval.v_number = -1;
 }
 
 /*
@@ -5762,12 +5701,13 @@ search_cmn(typval_T *argvars, pos_T *match_pos, int *flagsp)
     int		dir;
     int		retval = 0;	/* default: FAIL */
     long	lnum_stop = 0;
-    proftime_T	tm;
 #ifdef FEAT_RELTIME
+    proftime_T	tm;
     long	time_limit = 0;
 #endif
     int		options = SEARCH_KEEP;
     int		subpatnum;
+    searchit_arg_T sia;
 
     pat = tv_get_string(&argvars[0]);
     dir = get_search_arg(&argvars[1], flagsp);	/* may set p_ws */
@@ -5816,8 +5756,13 @@ search_cmn(typval_T *argvars, pos_T *match_pos, int *flagsp)
     }
 
     pos = save_cursor = curwin->w_cursor;
+    vim_memset(&sia, 0, sizeof(sia));
+    sia.sa_stop_lnum = (linenr_T)lnum_stop;
+#ifdef FEAT_RELTIME
+    sia.sa_tm = &tm;
+#endif
     subpatnum = searchit(curwin, curbuf, &pos, NULL, dir, pat, 1L,
-			   options, RE_SEARCH, (linenr_T)lnum_stop, &tm, NULL);
+						     options, RE_SEARCH, &sia);
     if (subpatnum != FAIL)
     {
 	if (flags & SP_SUBPAT)
@@ -6215,7 +6160,9 @@ do_searchpair(
     int		use_skip = FALSE;
     int		err;
     int		options = SEARCH_KEEP;
+#ifdef FEAT_RELTIME
     proftime_T	tm;
+#endif
 
     /* Make 'cpoptions' empty, the 'l' flag should not be used here. */
     save_cpo = p_cpo;
@@ -6256,8 +6203,15 @@ do_searchpair(
     pat = pat3;
     for (;;)
     {
+	searchit_arg_T sia;
+
+	vim_memset(&sia, 0, sizeof(sia));
+	sia.sa_stop_lnum = lnum_stop;
+#ifdef FEAT_RELTIME
+	sia.sa_tm = &tm;
+#endif
 	n = searchit(curwin, curbuf, &pos, NULL, dir, pat, 1L,
-				     options, RE_SEARCH, lnum_stop, &tm, NULL);
+						     options, RE_SEARCH, &sia);
 	if (n == FAIL || (firstpos.lnum != 0 && EQUAL_POS(pos, firstpos)))
 	    /* didn't find it or found the first match again: FAIL */
 	    break;

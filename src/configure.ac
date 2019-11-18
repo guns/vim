@@ -2104,10 +2104,12 @@ else
 fi
 if test "$enable_terminal" = "yes" -a "$enable_channel" = "yes"; then
   AC_DEFINE(FEAT_TERMINAL)
-  TERM_SRC="libvterm/src/encoding.c libvterm/src/keyboard.c libvterm/src/mouse.c libvterm/src/parser.c libvterm/src/pen.c libvterm/src/termscreen.c libvterm/src/state.c libvterm/src/unicode.c libvterm/src/vterm.c"
+  TERM_SRC="libvterm/src/encoding.c libvterm/src/keyboard.c libvterm/src/mouse.c libvterm/src/parser.c libvterm/src/pen.c libvterm/src/creen.c libvterm/src/state.c libvterm/src/unicode.c libvterm/src/vterm.c"
   AC_SUBST(TERM_SRC)
-  TERM_OBJ="objects/encoding.o objects/keyboard.o objects/termmouse.o objects/parser.o objects/pen.o objects/termscreen.o objects/state.o objects/unicode.o objects/vterm.o"
+  TERM_OBJ="objects/vterm_encoding.o objects/vterm_keyboard.o objects/vterm_mouse.o objects/vterm_parser.o objects/vterm_pen.o objects/vterm_screen.o objects/vterm_state.o objects/vterm_unicode.o objects/vterm_vterm.o"
   AC_SUBST(TERM_OBJ)
+  TERM_TEST="test_libvterm"
+  AC_SUBST(TERM_TEST)
 fi
 
 AC_MSG_CHECKING(--enable-autoservername argument)
@@ -3787,7 +3789,7 @@ if test "$enable_canberra" = "yes"; then
      ca_context *hello;
      ca_context_create(&hello);],
        AC_MSG_RESULT(yes); AC_DEFINE(HAVE_CANBERRA),
-       AC_MSG_RESULT(no); CFLAGS="$ac_save_CFLAGS"; LIBS="$ac_save_LIBS")
+       AC_MSG_RESULT(no; try installing libcanberra-dev); CFLAGS="$ac_save_CFLAGS"; LIBS="$ac_save_LIBS")
 fi
 
 
@@ -4480,6 +4482,7 @@ if test "$GCC" = yes; then
   AC_MSG_CHECKING(whether we need -D_FORTIFY_SOURCE=1)
   if test "$gccmajor" -gt "3"; then
     CFLAGS=`echo "$CFLAGS" | sed -e 's/ *-Wp,-D_FORTIFY_SOURCE=.//g' -e 's/ *-D_FORTIFY_SOURCE=.//g' -e 's/ *-U_FORTIFY_SOURCE//g' -e 's/$/ -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=1/'`
+    CPPFLAGS=`echo "$CPPFLAGS" | sed -e 's/ *-Wp,-D_FORTIFY_SOURCE=.//g' -e 's/ *-D_FORTIFY_SOURCE=.//g' -e 's/ *-U_FORTIFY_SOURCE//g'`
     AC_MSG_RESULT(yes)
   else
     AC_MSG_RESULT(no)
