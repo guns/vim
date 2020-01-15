@@ -24,7 +24,7 @@ __build__() {
 }
 
 package_vim-nerv() {
-    depends=('ncurses' 'ruby' 'python2' 'lua' 'libx11' 'libsm' 'libice' 'libxt' 'gpm')
+    depends=('ncurses' 'ruby' 'python2' 'lua' 'libx11' 'libsm' 'libice' 'libxt' 'gpm' 'acl' 'libcanberra')
     PREFIX=/usr PYTHON=python2 rake configure
     __build__
 }
